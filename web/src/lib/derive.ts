@@ -14,6 +14,7 @@ function toOccupant(j: RawJob): Occupant {
     nodes: j.node_count,
     nodelist: j.nodelist,
     time_left: j.time_left,
+    time_limit: j.time_limit,
     end_time: j.end_time,
   };
 }

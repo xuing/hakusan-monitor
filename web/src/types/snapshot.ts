@@ -34,6 +34,7 @@ export interface Occupant {
   nodes: number;
   nodelist: string;
   time_left: string;
+  time_limit: string;
   end_time: string;
 }
 

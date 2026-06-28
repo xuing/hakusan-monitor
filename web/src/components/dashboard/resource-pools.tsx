@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Check, ChevronRight, Copy } from "lucide-react";
 import { Bar } from "@/components/common/bar";
 import { Tag } from "@/components/common/tag";
@@ -7,10 +7,10 @@ import { useLive } from "@/hooks/use-live";
 import { useResourceFilter } from "@/hooks/use-resource-filter";
 import { poolLabel, useT, type TFn } from "@/i18n";
 import { occupantsForPool } from "@/lib/derive";
-import { clockOf, fmtLeft, fmtMB, nf } from "@/lib/format";
+import { clockOf, fmtCountdown, fmtDur, fmtLeft, fmtMB, nf, parseDur } from "@/lib/format";
 import { matchPool, partitionCap } from "@/lib/slurm";
 import { cn } from "@/lib/utils";
-import type { Occupant, Pool } from "@/types/snapshot";
+import type { Occupant, Pool, PoolGpu } from "@/types/snapshot";
 
 // Single-node starter recipe per pool. On Hakusan memory is locked to cores
 // (DefMemPerCPU == MaxMemPerCPU), so we don't pass --mem — it auto-scales with -c.
@@ -163,7 +163,11 @@ function PoolCard({ pool, t }: { pool: Pool; t: TFn }) {
           </div>
         </div>
 
-        <Bar value={maint ? 0 : util} tone={maint ? "neutral" : undefined} className="mt-2" />
+        {isGpu && pool.gpu ? (
+          <GpuBlocks gpu={pool.gpu} className="mt-2" />
+        ) : (
+          <Bar value={maint ? 0 : util} tone={maint ? "neutral" : undefined} className="mt-2" />
+        )}
 
         <div className="mt-2.5 flex flex-wrap items-center gap-x-4 text-[11px] text-muted-foreground">
           <span>
@@ -293,6 +297,21 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
   );
 }
 
+/** One block per physical GPU — free (green) first, then used (red), then down (grey). */
+function GpuBlocks({ gpu, className }: { gpu: PoolGpu; className?: string }) {
+  const seg = (n: number, cls: string, key: string) =>
+    Array.from({ length: Math.max(0, n) }, (_, i) => (
+      <span key={key + i} className={cn("h-2.5 min-w-0 flex-1 rounded-sm", cls)} />
+    ));
+  return (
+    <div className={cn("flex gap-0.5", className)} title={`${gpu.free} free · ${gpu.used} used${gpu.down ? ` · ${gpu.down} down` : ""}`}>
+      {seg(gpu.free, "bg-ok", "f")}
+      {seg(gpu.used, "bg-bad", "u")}
+      {seg(gpu.down, "bg-muted-foreground/40", "d")}
+    </div>
+  );
+}
+
 function isMaintPool(pool: Pool) {
   return pool.kind === "gpu" && !!pool.gpu?.maint;
 }
@@ -305,6 +324,11 @@ function Occupants({ pool, t }: { pool: Pool; t: TFn }) {
   const { snap } = useLive();
   const [q, setQ] = useState("");
   const [sort, setSort] = useState<"usage" | "ending">("ending");
+  const [now, setNow] = useState(() => Date.now() / 1000); // ticks the live countdown
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now() / 1000), 1000);
+    return () => clearInterval(id);
+  }, []);
   if (!snap) return null;
 
   const isGpu = pool.kind === "gpu";
@@ -317,10 +341,6 @@ function Occupants({ pool, t }: { pool: Pool; t: TFn }) {
   if (effectiveSort === "ending") {
     list = [...list].sort((a, b) => (a.end_time || "~").localeCompare(b.end_time || "~"));
   }
-  // bar is relative to the biggest current occupant, so it stays meaningful even
-  // in huge pools (where share-of-pool would be an invisible sliver).
-  const maxVal = Math.max(1, ...list.map((o) => (isGpu ? o.gpus : o.cpus)));
-
   return (
     <div className="mt-2">
       <div className="mb-2 flex flex-wrap items-center gap-2">
@@ -358,7 +378,7 @@ function Occupants({ pool, t }: { pool: Pool; t: TFn }) {
       </div>
       <div className="max-h-72 space-y-1 overflow-y-auto pr-1">
         {list.map((o) => (
-          <OccupantRow key={String(o.job_id)} o={o} unitGpu={isGpu} max={maxVal} t={t} />
+          <OccupantRow key={String(o.job_id)} o={o} now={now} generatedAt={snap.generated_at} t={t} />
         ))}
         {list.length === 0 && (
           <div className="py-3 text-center text-[11px] text-muted-foreground">{t("table.noresults")}</div>
@@ -373,8 +393,24 @@ function Occupants({ pool, t }: { pool: Pool; t: TFn }) {
   );
 }
 
-function OccupantRow({ o, unitGpu, max, t }: { o: Occupant; unitGpu: boolean; max: number; t: TFn }) {
-  const share = max ? (unitGpu ? o.gpus : o.cpus) / max : 0;
+function OccupantRow({
+  o,
+  now,
+  generatedAt,
+  t,
+}: {
+  o: Occupant;
+  now: number;
+  generatedAt: number;
+  t: TFn;
+}) {
+  // live remaining = remaining-at-snapshot minus seconds elapsed since the snapshot
+  const total = parseDur(o.time_limit);
+  const remaining = Math.max(0, parseDur(o.time_left) - (now - generatedAt));
+  const remFrac = total > 0 ? Math.min(1, remaining / total) : 0;
+  const elapsed = 1 - remFrac;
+  // bar drains as the job runs; greens → amber → red as it nears its end
+  const barColor = elapsed >= 0.85 ? "bg-bad" : elapsed >= 0.6 ? "bg-warn" : "bg-ok";
   return (
     <div className="rounded-md bg-muted/40 px-2.5 py-1.5 text-[11px]">
       <div className="flex items-center justify-between gap-2">
@@ -382,11 +418,19 @@ function OccupantRow({ o, unitGpu, max, t }: { o: Occupant; unitGpu: boolean; ma
         <div className="flex items-center gap-2 font-mono text-muted-foreground">
           <span className="text-foreground">{o.gpus ? `${o.gpus} ${t("unit.gpu")}` : `${o.cpus}c`}</span>
           <span className="max-w-[8rem] truncate">{o.nodelist}</span>
-          <span className="text-ok-fg">{t("releases.in", { t: fmtLeft(o.time_left) })}</span>
         </div>
       </div>
-      <div className="mt-1 h-1 overflow-hidden rounded-full bg-muted">
-        <div className="h-full rounded-full bg-info" style={{ width: `${Math.max(2, Math.min(100, share * 100))}%` }} />
+      <div className="mt-1 flex items-center gap-2">
+        <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-muted">
+          <div
+            className={cn("h-full rounded-full transition-all duration-1000 ease-linear", barColor)}
+            style={{ width: `${remFrac * 100}%` }}
+          />
+        </div>
+        <span className="tnum shrink-0 font-mono text-[10px]">
+          <span className="text-foreground">{fmtCountdown(remaining)}</span>
+          {total > 0 && <span className="text-muted-foreground"> / {fmtDur(total)}</span>}
+        </span>
       </div>
     </div>
   );
