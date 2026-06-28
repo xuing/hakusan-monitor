@@ -1,0 +1,100 @@
+/* Radix Colors — light scales on :root, dark scales under .dark.
+   These are the semantic foundation for status colours + charts. */
+@import "@radix-ui/colors/slate.css";
+@import "@radix-ui/colors/gray.css";
+@import "@radix-ui/colors/blue.css";
+@import "@radix-ui/colors/blue-alpha.css";
+@import "@radix-ui/colors/green.css";
+@import "@radix-ui/colors/green-alpha.css";
+@import "@radix-ui/colors/amber.css";
+@import "@radix-ui/colors/amber-alpha.css";
+@import "@radix-ui/colors/red.css";
+@import "@radix-ui/colors/red-alpha.css";
+@import "@radix-ui/colors/slate-dark.css";
+@import "@radix-ui/colors/gray-dark.css";
+@import "@radix-ui/colors/blue-dark.css";
+@import "@radix-ui/colors/blue-dark-alpha.css";
+@import "@radix-ui/colors/green-dark.css";
+@import "@radix-ui/colors/green-dark-alpha.css";
+@import "@radix-ui/colors/amber-dark.css";
+@import "@radix-ui/colors/amber-dark-alpha.css";
+@import "@radix-ui/colors/red-dark.css";
+@import "@radix-ui/colors/red-dark-alpha.css";
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  /* light theme (default :root) */
+  :root {
+    color-scheme: light;
+    --background: 0 0% 100%;
+    --foreground: 222 45% 12%;
+    --card: 0 0% 100%;
+    --card-foreground: 222 45% 12%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 222 45% 12%;
+    --primary: 204 100% 40%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 210 40% 96%;
+    --secondary-foreground: 222 45% 12%;
+    --muted: 210 40% 96.5%;
+    --muted-foreground: 215 16% 42%;
+    --accent: 210 40% 93%;
+    --accent-foreground: 222 45% 12%;
+    --destructive: 358 68% 50%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 214 24% 89%;
+    --input: 214 24% 86%;
+    --ring: 204 100% 40%;
+    --radius: 0.6rem;
+  }
+
+  /* dark theme */
+  .dark {
+    color-scheme: dark;
+    --background: 240 6% 7%;
+    --foreground: 220 14% 93%;
+    --card: 225 7% 10%;
+    --card-foreground: 220 14% 93%;
+    --popover: 225 8% 9%;
+    --popover-foreground: 220 14% 93%;
+    --primary: 206 100% 50%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 222 7% 16%;
+    --secondary-foreground: 220 14% 93%;
+    --muted: 222 7% 14%;
+    --muted-foreground: 218 9% 64%;
+    --accent: 222 8% 18%;
+    --accent-foreground: 220 14% 93%;
+    --destructive: 358 65% 49%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 220 7% 17%;
+    --input: 220 7% 20%;
+    --ring: 206 100% 50%;
+  }
+
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  }
+  .tnum {
+    font-variant-numeric: tabular-nums;
+  }
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: hsl(var(--border));
+    border-radius: 9999px;
+    border: 2px solid hsl(var(--background));
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: hsl(var(--muted-foreground) / 0.5);
+  }
+}

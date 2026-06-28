@@ -1,0 +1,20 @@
+# python
+__pycache__/
+*.pyc
+# data / runtime
+/data/
+*.sqlite
+*.sqlite-*
+# node / web build
+web/node_modules/
+web/dist/
+# local config (per-developer; never commit — keeps your SSH user/ID private)
+.env
+# misc
+.playwright-mcp/
+*.log
+# editor
+.idea/
+.vscode/
+# session-local (not part of the project)
+.remember/

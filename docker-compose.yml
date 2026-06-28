@@ -1,0 +1,27 @@
+# Hakusan Monitor — Docker Compose.
+#   SSH_AUTH_SOCK=$SSH_AUTH_SOCK docker compose up -d --build
+# (run after `source ~/.ssh/.agent_env` so the agent socket is forwarded in).
+services:
+  hakusan-monitor:
+    build: .
+    image: hakusan-monitor
+    container_name: hakusan-monitor
+    restart: unless-stopped
+    ports:
+      - "8787:8787"
+    environment:
+      HM_SOURCE: ssh
+      # set HM_SSH_HOST in a local .env (e.g. HM_SSH_HOST=you@hakusan2); see .env.example
+      HM_SSH_HOST: ${HM_SSH_HOST:?set HM_SSH_HOST in .env (e.g. you@hakusan2)}
+      HM_SAMPLE_INTERVAL: "${HM_SAMPLE_INTERVAL:-300}"
+      HM_DB: /data/hakusan.sqlite
+      # agent-forwarding + container-writable ControlPath + mounted known_hosts
+      SSH_AUTH_SOCK: /ssh-agent
+      HM_SSH_OPTS: >-
+        -o BatchMode=yes -o ConnectTimeout=8 -o ServerAliveInterval=15
+        -o UserKnownHostsFile=/root/.ssh/known_hosts
+        -o ControlMaster=auto -o ControlPath=/tmp/hm-cm -o ControlPersist=120
+    volumes:
+      - ./data:/data
+      - ${SSH_AUTH_SOCK:?run 'source ~/.ssh/.agent_env' first}:/ssh-agent
+      - ${HOME}/.ssh/known_hosts:/root/.ssh/known_hosts:ro

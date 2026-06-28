@@ -1,0 +1,12 @@
+.git
+data
+*.sqlite
+*.sqlite-*
+__pycache__
+**/__pycache__
+*.pyc
+web/node_modules
+web/dist
+docs
+.playwright-mcp
+*.log

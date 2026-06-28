@@ -1,0 +1,33 @@
+# systemd *user* service for Hakusan Monitor.
+# Install:
+#   loginctl enable-linger "$USER"                       # survive logout/reboot (already on here)
+#   mkdir -p ~/.config/systemd/user
+#   cp deploy/hakusan-monitor.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now hakusan-monitor
+# Logs:   journalctl --user -u hakusan-monitor -f
+# Update: git pull / edit, then  systemctl --user restart hakusan-monitor
+
+[Unit]
+Description=Hakusan Monitor (Slurm load & queue dashboard)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/temp/hakusan-monitor
+# HM_SSH_HOST (and any overrides) come from the repo .env — see .env.example.
+# The server loads .env at startup; EnvironmentFile keeps systemd in sync too.
+EnvironmentFile=-%h/temp/hakusan-monitor/.env
+Environment=HM_SOURCE=ssh
+Environment=HM_PORT=8787
+Environment=HM_DB=%h/temp/hakusan-monitor/data/hakusan.sqlite
+Environment=TZ=Asia/Tokyo
+# Reuse the interactive ssh-agent so the passphrase-protected key works without
+# a prompt. (For fully unattended reboots, switch to a dedicated key — see DEPLOY.md.)
+ExecStart=/bin/bash -lc 'source %h/.ssh/.agent_env 2>/dev/null; exec python3 backend/server.py'
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

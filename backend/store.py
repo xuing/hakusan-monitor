@@ -1,0 +1,173 @@
+"""SQLite time-series store for Hakusan Monitor (stdlib `sqlite3` only).
+
+Two tables, the classic raw + rollup TSDB pattern:
+  • samples         — one compact row per sample; pruned to a retention window.
+  • samples_hourly  — running hourly aggregate (avg/max); kept indefinitely so
+                      peak/trough analysis works over months without huge tables.
+
+Thread-safe: one connection per thread (works under ThreadingHTTPServer).
+"""
+from __future__ import annotations
+import os, json, sqlite3, threading
+
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS samples (
+  ts          INTEGER PRIMARY KEY,           -- unix seconds
+  cpu_util    REAL, gpu_util REAL, mem_util REAL,
+  cpus_total  INTEGER, cpus_alloc INTEGER,
+  gpus_total  INTEGER, gpus_used  INTEGER,
+  nodes_total INTEGER, nodes_avail INTEGER, nodes_down INTEGER,
+  running     INTEGER, pending INTEGER,
+  detail      TEXT                            -- JSON: per-pool / per-gpu utilization
+);
+CREATE TABLE IF NOT EXISTS samples_hourly (
+  hour        INTEGER PRIMARY KEY,            -- unix seconds truncated to the hour
+  n           INTEGER,
+  cpu_avg     REAL, cpu_max REAL,
+  gpu_avg     REAL, gpu_max REAL,
+  pending_avg REAL, pending_max INTEGER,
+  running_avg REAL
+);
+"""
+
+
+def _metrics(snap):
+    t = snap["totals"]
+    return {
+        "cpu_util": t["cpus"]["util"], "gpu_util": t["gpus"]["util"],
+        "mem_util": t["memory"]["util"],
+        "cpus_total": t["cpus"]["total"], "cpus_alloc": t["cpus"]["alloc"],
+        "gpus_total": t["gpus"]["total"], "gpus_used": t["gpus"]["used"],
+        "nodes_total": t["nodes"]["total"], "nodes_avail": t["nodes"]["available"],
+        "nodes_down": t["nodes"]["down"],
+        "running": snap["queue"]["running"], "pending": snap["queue"]["pending"],
+    }
+
+
+class Store:
+    def __init__(self, path, retain_days=60):
+        self.path = path
+        self.retain_days = retain_days
+        self._last_ts = None        # guard against same-second double-counting
+        self._local = threading.local()
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        self._conn().executescript(SCHEMA)
+
+    def _conn(self):
+        c = getattr(self._local, "conn", None)
+        if c is None:
+            c = sqlite3.connect(self.path, check_same_thread=False, timeout=10)
+            c.row_factory = sqlite3.Row
+            c.execute("PRAGMA journal_mode=WAL")
+            c.execute("PRAGMA synchronous=NORMAL")
+            self._local.conn = c
+        return c
+
+    # ---- write -------------------------------------------------------------
+    def record(self, snap, ts):
+        if ts == self._last_ts:   # same-second resample would double-count the hourly rollup
+            return
+        self._last_ts = ts
+        m = _metrics(snap)
+        detail = json.dumps({"pools": snap.get("pools"), "gpus": snap.get("gpus")})
+        c = self._conn()
+        with c:
+            c.execute(
+                """INSERT OR REPLACE INTO samples
+                   (ts,cpu_util,gpu_util,mem_util,cpus_total,cpus_alloc,
+                    gpus_total,gpus_used,nodes_total,nodes_avail,nodes_down,
+                    running,pending,detail)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (ts, m["cpu_util"], m["gpu_util"], m["mem_util"], m["cpus_total"],
+                 m["cpus_alloc"], m["gpus_total"], m["gpus_used"], m["nodes_total"],
+                 m["nodes_avail"], m["nodes_down"], m["running"], m["pending"], detail))
+            hour = ts - ts % 3600
+            c.execute(
+                """INSERT INTO samples_hourly
+                     (hour,n,cpu_avg,cpu_max,gpu_avg,gpu_max,pending_avg,pending_max,running_avg)
+                   VALUES (?,1,?,?,?,?,?,?,?)
+                   ON CONFLICT(hour) DO UPDATE SET
+                     cpu_avg     = (cpu_avg*n + excluded.cpu_avg)/(n+1),
+                     cpu_max     = max(cpu_max, excluded.cpu_max),
+                     gpu_avg     = (gpu_avg*n + excluded.gpu_avg)/(n+1),
+                     gpu_max     = max(gpu_max, excluded.gpu_max),
+                     pending_avg = (pending_avg*n + excluded.pending_avg)/(n+1),
+                     pending_max = max(pending_max, excluded.pending_max),
+                     running_avg = (running_avg*n + excluded.running_avg)/(n+1),
+                     n = n+1""",
+                (hour, m["cpu_util"], m["cpu_util"], m["gpu_util"], m["gpu_util"],
+                 m["pending"], m["pending"], m["running"]))
+
+    def prune(self, now):
+        cutoff = int(now) - self.retain_days * 86400
+        c = self._conn()
+        with c:
+            c.execute("DELETE FROM samples WHERE ts < ?", (cutoff,))
+
+    # ---- read --------------------------------------------------------------
+    def history(self, since, until, max_points=600):
+        """Raw samples in [since, until], evenly down-sampled to <= max_points."""
+        c = self._conn()
+        n = c.execute("SELECT count(*) AS n FROM samples WHERE ts BETWEEN ? AND ?",
+                      (since, until)).fetchone()["n"]
+        step = max(1, (n // max_points) + 1)
+        rows = c.execute(
+            """SELECT ts,cpu_util,gpu_util,mem_util,running,pending,
+                      nodes_avail,nodes_down,
+                      row_number() OVER (ORDER BY ts) AS rn
+               FROM samples WHERE ts BETWEEN ? AND ? ORDER BY ts""",
+            (since, until)).fetchall()
+        return [dict(r) for r in rows if r["rn"] % step == 0]
+
+    def usage_pattern(self, days=30):
+        """Peak/trough analysis from the hourly rollup, in **local** time.
+
+        Returns averages by hour-of-day (0-23), by weekday (0=Sun..6=Sat), and a
+        weekday×hour heatmap, plus the busiest/quietest hour-of-day by GPU load.
+        """
+        c = self._conn()
+        since = c.execute("SELECT max(hour) AS h FROM samples_hourly").fetchone()["h"]
+        since = (since or 0) - days * 86400
+        rows = c.execute(
+            """SELECT
+                 CAST(strftime('%w', hour, 'unixepoch', 'localtime') AS INTEGER) AS wd,
+                 CAST(strftime('%H', hour, 'unixepoch', 'localtime') AS INTEGER) AS hod,
+                 cpu_avg, gpu_avg, pending_avg, n
+               FROM samples_hourly WHERE hour >= ?""", (since,)).fetchall()
+
+        by_hour = {h: {"cpu": 0.0, "gpu": 0.0, "pending": 0.0, "n": 0} for h in range(24)}
+        by_wd = {d: {"cpu": 0.0, "gpu": 0.0, "pending": 0.0, "n": 0} for d in range(7)}
+        heat = {}
+        for r in rows:
+            for bucket, key in ((by_hour, r["hod"]), (by_wd, r["wd"])):
+                b = bucket[key]
+                b["cpu"] += r["cpu_avg"]; b["gpu"] += r["gpu_avg"]
+                b["pending"] += r["pending_avg"]; b["n"] += 1
+            hk = (r["wd"], r["hod"])
+            h = heat.setdefault(hk, {"cpu": 0.0, "gpu": 0.0, "n": 0})
+            h["cpu"] += r["cpu_avg"]; h["gpu"] += r["gpu_avg"]; h["n"] += 1
+
+        def avg(b):
+            n = b["n"] or 1
+            return {"cpu": round(b["cpu"]/n, 3), "gpu": round(b["gpu"]/n, 3),
+                    "pending": round(b["pending"]/n, 1), "samples": b["n"]}
+
+        hours = [{"hour": h, **avg(by_hour[h])} for h in range(24)]
+        weekdays = [{"weekday": d, **avg(by_wd[d])} for d in range(7)]
+        heatmap = [{"weekday": wd, "hour": hod,
+                    "gpu": round(v["gpu"]/(v["n"] or 1), 3),
+                    "cpu": round(v["cpu"]/(v["n"] or 1), 3), "samples": v["n"]}
+                   for (wd, hod), v in sorted(heat.items())]
+        ranked = [h for h in hours if h["samples"]]
+        busiest = max(ranked, key=lambda x: x["gpu"], default=None)
+        quietest = min(ranked, key=lambda x: x["gpu"], default=None)
+        return {"days": days, "by_hour": hours, "by_weekday": weekdays,
+                "heatmap": heatmap, "busiest_hour": busiest, "quietest_hour": quietest,
+                "total_hours": len(ranked)}
+
+    def stats(self):
+        c = self._conn()
+        s = c.execute("SELECT count(*) n, min(ts) a, max(ts) b FROM samples").fetchone()
+        h = c.execute("SELECT count(*) n FROM samples_hourly").fetchone()
+        return {"samples": s["n"], "first_ts": s["a"], "last_ts": s["b"],
+                "hours": h["n"], "retain_days": self.retain_days}
