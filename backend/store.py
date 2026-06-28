@@ -28,6 +28,25 @@ CREATE TABLE IF NOT EXISTS samples_hourly (
   pending_avg REAL, pending_max INTEGER,
   running_avg REAL
 );
+CREATE TABLE IF NOT EXISTS login_samples (
+  ts              INTEGER,
+  node_id         TEXT,
+  load1           REAL,
+  load_per_core   REAL,
+  cpu_busy        REAL,
+  cpu_iowait      REAL,
+  mem_used_ratio  REAL,
+  swap_used_ratio REAL,
+  disk_used_max   REAL,
+  inode_used_max  REAL,
+  d_state         INTEGER,
+  pressure_score  REAL,
+  pressure_level  TEXT,
+  detail          TEXT,
+  PRIMARY KEY (ts, node_id)
+);
+CREATE INDEX IF NOT EXISTS idx_login_samples_node_ts
+  ON login_samples(node_id, ts);
 """
 
 
@@ -98,6 +117,43 @@ class Store:
                 (hour, m["cpu_util"], m["cpu_util"], m["gpu_util"], m["gpu_util"],
                  m["pending"], m["pending"], m["running"]))
 
+    def record_login(self, payload, ts):
+        nodes = [n for n in (payload or {}).get("nodes", []) if n.get("ok")]
+        if not nodes:
+            return
+        c = self._conn()
+        with c:
+            for node in nodes:
+                disks = node.get("disks") or []
+                c.execute(
+                    """INSERT OR REPLACE INTO login_samples
+                       (ts,node_id,load1,load_per_core,cpu_busy,cpu_iowait,
+                        mem_used_ratio,swap_used_ratio,disk_used_max,inode_used_max,
+                        d_state,pressure_score,pressure_level,detail)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    (
+                        ts,
+                        node.get("id", ""),
+                        (node.get("load") or {}).get("1m"),
+                        (node.get("load") or {}).get("per_core"),
+                        (node.get("cpu") or {}).get("busy"),
+                        (node.get("cpu") or {}).get("iowait"),
+                        (node.get("memory") or {}).get("used_ratio"),
+                        (node.get("memory") or {}).get("swap_ratio"),
+                        max((d.get("use_pct", 0) for d in disks), default=0) / 100.0,
+                        max((d.get("inode_use_pct", 0) for d in disks), default=0) / 100.0,
+                        (node.get("processes") or {}).get("d_state", 0),
+                        (node.get("pressure") or {}).get("score", 0.0),
+                        (node.get("pressure") or {}).get("level", "low"),
+                        json.dumps({
+                            "pressure": node.get("pressure"),
+                            "top_cpu": (node.get("processes") or {}).get("top_cpu", []),
+                            "top_mem": (node.get("processes") or {}).get("top_mem", []),
+                            "users": node.get("users", []),
+                        }),
+                    ),
+                )
+
     def prune(self, now):
         cutoff = int(now) - self.retain_days * 86400
         c = self._conn()
@@ -117,7 +173,33 @@ class Store:
                       row_number() OVER (ORDER BY ts) AS rn
                FROM samples WHERE ts BETWEEN ? AND ? ORDER BY ts""",
             (since, until)).fetchall()
-        return [dict(r) for r in rows if r["rn"] % step == 0]
+        out = []
+        for r in rows:
+            if r["rn"] % step == 0:
+                d = dict(r)
+                d.pop("rn", None)
+                out.append(d)
+        return out
+
+    def login_history(self, since, until, max_points=600):
+        c = self._conn()
+        n = c.execute("SELECT count(*) AS n FROM login_samples WHERE ts BETWEEN ? AND ?",
+                      (since, until)).fetchone()["n"]
+        step = max(1, (n // max_points) + 1)
+        rows = c.execute(
+            """SELECT ts,node_id,load1,load_per_core,cpu_busy,cpu_iowait,
+                      mem_used_ratio,swap_used_ratio,disk_used_max,inode_used_max,
+                      d_state,pressure_score,pressure_level,
+                      row_number() OVER (ORDER BY ts,node_id) AS rn
+               FROM login_samples WHERE ts BETWEEN ? AND ? ORDER BY ts,node_id""",
+            (since, until)).fetchall()
+        out = []
+        for r in rows:
+            if r["rn"] % step == 0:
+                d = dict(r)
+                d.pop("rn", None)
+                out.append(d)
+        return out
 
     def usage_pattern(self, days=30):
         """Peak/trough analysis from the hourly rollup, in **local** time.
@@ -169,5 +251,7 @@ class Store:
         c = self._conn()
         s = c.execute("SELECT count(*) n, min(ts) a, max(ts) b FROM samples").fetchone()
         h = c.execute("SELECT count(*) n FROM samples_hourly").fetchone()
+        l = c.execute("SELECT count(*) n FROM login_samples").fetchone()
         return {"samples": s["n"], "first_ts": s["a"], "last_ts": s["b"],
-                "hours": h["n"], "retain_days": self.retain_days}
+                "hours": h["n"], "login_samples": l["n"],
+                "retain_days": self.retain_days}

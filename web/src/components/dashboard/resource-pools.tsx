@@ -5,23 +5,23 @@ import { Tag } from "@/components/common/tag";
 import { Card, CardContent } from "@/components/ui/card";
 import { useLive } from "@/hooks/use-live";
 import { useResourceFilter } from "@/hooks/use-resource-filter";
-import { poolLabel, useT, type TFn } from "@/i18n";
-import { occupantsForPool } from "@/lib/derive";
+import { poolLabel, reasonLabel, useT, type TFn, type TranslationKey } from "@/i18n";
+import { copyText } from "@/lib/clipboard";
+import { expandHostlist, occupantsForPool, poolCapacity } from "@/lib/derive";
 import { clockOf, fmtCountdown, fmtDur, fmtLeft, fmtMB, nf, parseDur } from "@/lib/format";
-import { matchPool, partitionCap } from "@/lib/slurm";
+import { matchPool, partitionCap, partitionPolicy, type PartitionPolicy } from "@/lib/slurm";
 import { cn } from "@/lib/utils";
-import type { Occupant, Pool, PoolGpu } from "@/types/snapshot";
+import type { Occupant, Partition, Pool, PoolGpu, RawJob, RawNode, Snapshot } from "@/types/snapshot";
 
-// Single-node starter recipe per pool. On Hakusan memory is locked to cores
-// (DefMemPerCPU == MaxMemPerCPU), so we don't pass --mem — it auto-scales with -c.
-// memPerCoreMb mirrors the cluster's DefMemPerCPU, used only to *show* the implied RAM.
-const SAMPLE: Record<string, { partition: string; cores: number; memPerCoreMb: number; gres?: string }> = {
-  "vm-cpu": { partition: "VM-CPU", cores: 8, memPerCoreMb: 14900 },
-  cpu: { partition: "DEF", cores: 16, memPerCoreMb: 6000 },
-  lm: { partition: "VM-LM", cores: 8, memPerCoreMb: 39300 },
-  a40: { partition: "GPU-1", cores: 8, memPerCoreMb: 10000, gres: "nvidia_a40" },
-  a100: { partition: "GPU-1A", cores: 8, memPerCoreMb: 10000, gres: "nvidia_a100" },
-  "h100-80": { partition: "VM-GPU-L", cores: 8, memPerCoreMb: 14900, gres: "h100-80c" },
+// Minimal starter per pool. Hakusan's submit plugin applies the partition
+// defaults, including the GPU partition's default one GPU per node.
+const SAMPLE: Record<string, { partition: string; requiredFlags?: string[] }> = {
+  "vm-cpu": { partition: "VM-CPU" },
+  cpu: { partition: "DEF" },
+  lm: { partition: "VM-LM", requiredFlags: ["-n 1"] },
+  a40: { partition: "GPU-1" },
+  a100: { partition: "GPU-1A" },
+  "h100-80": { partition: "VM-GPU-L" },
 };
 
 export function ResourcePools() {
@@ -44,15 +44,15 @@ export function ResourcePools() {
       <h2 className="mb-3 text-xs font-medium uppercase tracking-wide text-muted-foreground">{t("section.pools")}</h2>
       <div className="space-y-5">
         {groups.map((g) => (
-          <PoolGroup key={g.key} label={g.label} pools={g.pools} t={t} />
+          <PoolGroup key={g.key} label={g.label} pools={g.pools} snap={snap} t={t} />
         ))}
       </div>
     </div>
   );
 }
 
-function PoolGroup({ label, pools, t }: { label: string; pools: Pool[]; t: TFn }) {
-  const available = pools.filter(hasAvailableNodes).length;
+function PoolGroup({ label, pools, snap, t }: { label: string; pools: Pool[]; snap: Snapshot; t: TFn }) {
+  const available = pools.filter((p) => hasAvailableNodes(p, snap)).length;
   const maint = pools.every(isMaintPool);
   return (
     <section className="space-y-2">
@@ -65,23 +65,30 @@ function PoolGroup({ label, pools, t }: { label: string; pools: Pool[]; t: TFn }
       </div>
       <div className={cn("grid gap-4", pools.length > 1 && "lg:grid-cols-2")}>
         {pools.map((p) => (
-          <PoolCard key={p.id} pool={p} t={t} />
+          <PoolCard key={p.id} pool={p} snap={snap} t={t} />
         ))}
       </div>
     </section>
   );
 }
 
-function PoolCard({ pool, t }: { pool: Pool; t: TFn }) {
+function PoolCard({ pool, snap, t }: { pool: Pool; snap: Snapshot; t: TFn }) {
   const [open, setOpen] = useState(false);
+  const [queueOpen, setQueueOpen] = useState(false);
   const isGpu = pool.kind === "gpu";
   const maint = isMaintPool(pool);
   const availableNodes = pool.available_nodes ?? pool.idle_nodes ?? 0;
-  const hasAvailable = availableNodes > 0 && !maint;
+  const samplePartition = SAMPLE[pool.id]?.partition ?? "";
+  const gpuFit = isGpu ? gpuFitSnapshot(snap, pool, partitionCap(samplePartition), samplePartition) : null;
+  const gpuSched = gpuFit?.schedulable ?? 0;
+  const rawGpuFree = isGpu ? pool.gpu?.free ?? 0 : 0;
+  const displayFree = isGpu ? rawGpuFree : pool.cores.free;
+  const hasAvailable = (isGpu ? gpuSched > 0 : availableNodes > 0) && !maint;
+  const hasStrandedGpu = isGpu && rawGpuFree > 0 && gpuSched <= 0 && !maint;
   const availableNodesLabel = isGpu
-    ? t("pool.gpuNodesWithFree", { n: availableNodes })
+    ? t("pool.gpuFreePhysical", { n: rawGpuFree })
     : t("pool.availableNodes", { n: availableNodes });
-  const free = isGpu ? pool.gpu?.free ?? 0 : pool.cores.free;
+  const free = displayFree;
   const total = isGpu && pool.gpu ? pool.gpu.total : pool.cores.total;
   const used = isGpu && pool.gpu ? pool.gpu.used : pool.cores.alloc;
   const util = total ? used / total : 0;   // bar fills as the pool gets used (full = red)
@@ -89,6 +96,8 @@ function PoolCard({ pool, t }: { pool: Pool; t: TFn }) {
   // colour by how much is free: none = red, scarce (<10%) = amber, plenty = green
   const freeColor = maint
     ? "text-muted-foreground"
+    : hasStrandedGpu
+      ? "text-warn-fg"
     : free === 0
       ? "text-bad-fg"
       : freeRatio < 0.1
@@ -103,7 +112,9 @@ function PoolCard({ pool, t }: { pool: Pool; t: TFn }) {
           ? "border-dashed border-muted-foreground/30 opacity-60"
           : hasAvailable
             ? "border-ok/40"
-            : "border-bad/40",
+            : hasStrandedGpu
+              ? "border-warn/40"
+              : "border-bad/40",
       )}
     >
       <CardContent className="p-4">
@@ -116,7 +127,9 @@ function PoolCard({ pool, t }: { pool: Pool; t: TFn }) {
                   ? "bg-muted-foreground/45 ring-muted-foreground/10"
                   : hasAvailable
                     ? "bg-ok ring-ok/20"
-                    : "bg-bad ring-bad/20",
+                    : hasStrandedGpu
+                      ? "bg-warn ring-warn/20"
+                      : "bg-bad ring-bad/20",
               )}
             />
             <span className="font-semibold">{poolLabel(t, pool.id)}</span>
@@ -135,21 +148,21 @@ function PoolCard({ pool, t }: { pool: Pool; t: TFn }) {
               <span className="text-lg font-semibold text-muted-foreground">{t("pool.maint")}</span>
             ) : (
               <div className={cn("tnum text-2xl font-bold", freeColor)}>
-                {nf(free)}
-                <span className="text-sm font-normal text-muted-foreground">
-                  {" / "}
-                  {nf(total)} {isGpu ? t("unit.gpu") : t("unit.cores")}
-                </span>
+                {isGpu ? (
+                  t("pool.gpuCount", { n: nf(free) })
+                ) : (
+                  <>
+                    {nf(free)}
+                    <span className="text-sm font-normal text-muted-foreground">
+                      {" / "}
+                      {nf(total)} {t("unit.cores")}
+                    </span>
+                  </>
+                )}
               </div>
             )}
             <div className="text-[11px] text-muted-foreground">
-              {maint
-                ? null
-                : free === 0
-                  ? t("gpu.full")
-                  : availableNodes > 0
-                    ? `${t("part.available")} · ${availableNodesLabel}`
-                    : t("part.available")}
+              {maint ? null : gpuAvailabilityText(isGpu, gpuFit, gpuSched, rawGpuFree, availableNodesLabel, t)}
             </div>
           </div>
           <div className="flex flex-col items-end gap-1 text-right text-[11px]">
@@ -164,7 +177,7 @@ function PoolCard({ pool, t }: { pool: Pool; t: TFn }) {
         </div>
 
         {isGpu && pool.gpu ? (
-          <GpuBlocks gpu={pool.gpu} className="mt-2" />
+          <GpuBlocks gpu={pool.gpu} schedulableFree={gpuSched} className="mt-2" />
         ) : (
           <Bar value={maint ? 0 : util} tone={maint ? "neutral" : undefined} className="mt-2" />
         )}
@@ -178,6 +191,8 @@ function PoolCard({ pool, t }: { pool: Pool; t: TFn }) {
             {t("queue.pending")}
           </span>
         </div>
+
+        {gpuFit && gpuFit.rawFree > 0 && gpuFit.schedulable <= 0 && <GpuFitExplanation fit={gpuFit} pool={pool} t={t} />}
 
         {pool.queue.running > 0 && (
           <>
@@ -193,6 +208,20 @@ function PoolCard({ pool, t }: { pool: Pool; t: TFn }) {
           </>
         )}
 
+        {pool.queue.pending > 0 && (
+          <>
+            <button
+              type="button"
+              onClick={() => setQueueOpen(!queueOpen)}
+              className="mt-2 flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+            >
+              <ChevronRight className={cn("h-3.5 w-3.5 transition-transform", queueOpen && "rotate-90")} />
+              {t("pool.pendingJobs")} ({pool.queue.pending})
+            </button>
+            {queueOpen && <PendingJobs pool={pool} t={t} />}
+          </>
+        )}
+
         {!maint && <RequestSample pool={pool} t={t} />}
       </CardContent>
     </Card>
@@ -200,44 +229,66 @@ function PoolCard({ pool, t }: { pool: Pool; t: TFn }) {
 }
 
 /** Collapsible, editable starter request for this pool. Collapsed by default;
- *  pre-filled with sensible single-node defaults, fields let you adjust. */
+ *  starts from the selected policy and lets Slurm apply partition defaults. */
 function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
+  const { snap } = useLive();
   const base = SAMPLE[pool.id];
   const [open, setOpen] = useState(false);
   const [partChoice, setPartChoice] = useState("");
-  const [cores, setCores] = useState(base?.cores ?? 8);
-  const [gpus, setGpus] = useState(1);
+  const [mode, setMode] = useState<"interactive" | "script">("interactive");
+  const [scriptFile, setScriptFile] = useState("job.sh");
+  const [advanced, setAdvanced] = useState(false);
+  const [nodes, setNodes] = useState("");
+  const [cores, setCores] = useState("");
+  const [time, setTime] = useState("");
   const [copied, setCopied] = useState(false);
   if (!base) return null;
 
   const isGpu = pool.kind === "gpu";
   const partition = pool.partitions.includes(partChoice) ? partChoice : base.partition;
   const cap = partitionCap(partition);
-  // clamp every field to the selected partition's policy → the command is never over-limit
-  const clamp = (v: number, fallback: number, max?: number) => {
-    const n = v > 0 ? v : fallback;
-    return max ? Math.min(n, max) : n;
-  };
-  const c = clamp(cores, base.cores, cap.maxCores);
-  const g = clamp(gpus, 1, cap.maxGpus);
-  // no --mem: Hakusan locks memory to cores, so RAM = cores × DefMemPerCPU (shown, not requested)
-  const autoMemGb = Math.round((c * base.memPerCoreMb) / 1024);
-  const flags = [`-p ${partition}`, "-N 1", "-n 1", `-c ${c}`];
-  if (base.gres) flags.push(`--gres=gpu:${base.gres}:${g}`);
-  const cmd = `salloc ${flags.join(" ")}`;
-  const capLabel = (label: string, max?: number) => (max ? `${label} ≤${max}` : label);
+  const policy = partitionPolicy(partition);
+  const selectedPart = snap?.partitions.find((p) => p.name === partition);
+  const groupRunning = snap ? partitionRunningJobs(snap.jobs, partition) : 0;
+  const gpuFit = snap && isGpu ? gpuFitSnapshot(snap, pool, cap, partition) : null;
+  const queueFact = snap ? poolQueueFact(snap.jobs, snap.part_pool, pool.id, isGpu, pool, gpuFit?.schedulable ?? 0) : null;
+  const limits = policyLimitRows(policy, groupRunning, t);
+  const groupLimitReached = Boolean(policy.grpJobs && groupRunning >= policy.grpJobs);
+  const nodeCount = clampPositiveInt(nodes, cap.maxNodes);
+  const coreCount = clampPositiveInt(cores, cap.maxCores);
+  const queueHint = requestQueueHint({
+    part: selectedPart,
+    policy,
+    groupRunning,
+    nodeCount,
+    coreCount,
+    isGpu,
+    poolFree: snap ? poolCapacity(snap, pool.id) : null,
+    queueFact,
+    gpuFit,
+    t,
+  });
+  const flags = [`-p ${partition}`, ...(base.requiredFlags ?? [])];
+  if (nodeCount) flags.push(`-N ${nodeCount}`);
+  if (coreCount) flags.push(`-c ${coreCount}`);
+  if (time.trim()) flags.push(`-t ${time.trim()}`);
+  const script = scriptFile.trim() || "job.sh";
+  const cmd = mode === "interactive" ? `salloc ${flags.join(" ")}` : `sbatch ${flags.join(" ")} ${script}`;
+  const policyName = trMaybe(t, `policy.${partition}`, partition);
+  const policyDesc = trMaybe(t, `policy.${partition}.desc`, "");
+  const policyLimit = fmtPolicyLimit(cap, t, isGpu);
+  const multiNodeCpuPolicy = !isGpu && (cap.maxNodes ?? 1) > 1;
+  const nodeOptions = numberOptions(cap.maxNodes, [1, 2, 3, 4, 8, 16, 32]);
+  const coreOptions = numberOptions(cap.maxCores, [1, 2, 4, 8, 16, 26, 32, 52, 64, 96, 128, 208, 256, 512, 768, 1024, 2048, 4096, 8192]);
+  const timeOptions = timeOptionsFor(cap.wall, t);
+  const fieldCls = "h-7 w-full rounded-md border border-border bg-background px-2 text-[11px] outline-none focus:border-primary";
 
   const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(cmd);
+    if (await copyText(cmd)) {
       setCopied(true);
       setTimeout(() => setCopied(false), 1200);
-    } catch {
-      /* clipboard unavailable */
     }
   };
-
-  const fieldCls = "h-7 w-full rounded-md border border-border bg-background px-2 text-[11px] outline-none focus:border-primary";
 
   return (
     <div className="mt-3 border-t border-border pt-2.5">
@@ -261,16 +312,102 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
                 </select>
               </Field>
             )}
-            <Field label={capLabel(t("unit.cores"), cap.maxCores)}>
-              <input type="number" min={1} max={cap.maxCores} value={c} onChange={(e) => setCores(Number(e.target.value))} className={fieldCls} />
+            <Field label={t("pool.mode")}>
+              <div className="flex h-7 rounded-md border border-border p-0.5">
+                {(["interactive", "script"] as const).map((m) => (
+                  <button
+                    key={m}
+                    type="button"
+                    onClick={() => setMode(m)}
+                    className={cn(
+                      "flex-1 rounded-[4px] px-2 text-[11px] transition-colors",
+                      mode === m ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground",
+                    )}
+                  >
+                    {t(m === "interactive" ? "pool.modeInteractive" : "pool.modeScript")}
+                  </button>
+                ))}
+              </div>
             </Field>
-            {isGpu && base.gres && (
-              <Field label={capLabel(t("unit.gpu"), cap.maxGpus)}>
-                <input type="number" min={1} max={cap.maxGpus} value={g} onChange={(e) => setGpus(Number(e.target.value))} className={fieldCls} />
+            {mode === "script" && (
+              <Field label={t("pool.scriptFile")}>
+                <input value={scriptFile} onChange={(e) => setScriptFile(e.target.value)} className={fieldCls} />
               </Field>
             )}
           </div>
-          <div className="text-[10px] text-muted-foreground">{t("pool.autoMem", { n: autoMemGb })}</div>
+          <div className="rounded-md border border-border bg-muted/30 px-2.5 py-2">
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+              <span className="text-xs font-medium text-foreground">{policyName}</span>
+              {policyLimit && <span className="font-mono text-[10px] text-muted-foreground">{policyLimit}</span>}
+            </div>
+            {policyDesc && <div className="mt-1 text-[10px] leading-relaxed text-muted-foreground">{policyDesc}</div>}
+            {multiNodeCpuPolicy && <div className="mt-1 text-[10px] leading-relaxed text-warn-fg">{t("pool.multiNodeHint")}</div>}
+            {queueHint && (
+              <div className="mt-1 flex flex-wrap items-center gap-1 text-[10px]">
+                <Tag tone={queueHint.tone}>{queueHint.label}</Tag>
+                {queueHint.detail && <span className="text-muted-foreground">{queueHint.detail}</span>}
+              </div>
+            )}
+            <div className="mt-1 text-[10px] leading-relaxed text-muted-foreground">{t("pool.queueLimitHint")}</div>
+            {limits.length > 0 && (
+              <div className="mt-2 flex flex-wrap gap-1">
+                {limits.map((row) => (
+                  <span
+                    key={row.key}
+                    className={cn(
+                      "rounded-md border px-1.5 py-0.5 text-[10px]",
+                      row.reached
+                        ? "border-bad/40 bg-bad-soft text-bad-fg"
+                        : row.near
+                          ? "border-warn/40 bg-warn-soft text-warn-fg"
+                          : "border-border bg-background/70 text-muted-foreground",
+                    )}
+                  >
+                    {row.label}
+                  </span>
+                ))}
+              </div>
+            )}
+            {groupLimitReached && <div className="mt-1 text-[10px] leading-relaxed text-bad-fg">{t("pool.limitReached")}</div>}
+          </div>
+          <button
+            type="button"
+            onClick={() => setAdvanced(!advanced)}
+            className="flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground"
+          >
+            <ChevronRight className={cn("h-3 w-3 transition-transform", advanced && "rotate-90")} />
+            {t("pool.advanced")}
+          </button>
+          {advanced && (
+            <div className="space-y-1.5">
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                <Field label={capSuffix(t("spec.nodes"), cap.maxNodes)}>
+                  <select value={nodes} onChange={(e) => setNodes(e.target.value)} className={fieldCls}>
+                    <option value="">{t("pool.default")}</option>
+                    {nodeOptions.map((n) => (
+                      <option key={n} value={String(n)}>{n}</option>
+                    ))}
+                  </select>
+                </Field>
+                <Field label={capSuffix(t("unit.cores"), cap.maxCores)}>
+                  <select value={cores} onChange={(e) => setCores(e.target.value)} className={fieldCls}>
+                    <option value="">{t("pool.default")}</option>
+                    {coreOptions.map((n) => (
+                      <option key={n} value={String(n)}>{n}</option>
+                    ))}
+                  </select>
+                </Field>
+                <Field label={t("pool.time")}>
+                  <select value={time} onChange={(e) => setTime(e.target.value)} className={fieldCls}>
+                    {timeOptions.map((opt) => (
+                      <option key={opt.value || "default"} value={opt.value}>{opt.label}</option>
+                    ))}
+                  </select>
+                </Field>
+              </div>
+              <div className="text-[10px] leading-relaxed text-muted-foreground">{t("pool.nodeRequestHint")}</div>
+            </div>
+          )}
           <div className="flex items-center gap-2 rounded-md border border-border bg-muted/40 px-2.5 py-1.5">
             <code className="flex-1 overflow-x-auto whitespace-nowrap font-mono text-[11px]">{cmd}</code>
             <button
@@ -288,6 +425,200 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
   );
 }
 
+function clampPositiveInt(value: string, max?: number) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) return 0;
+  const n = Math.floor(parsed);
+  return max ? Math.min(n, max) : n;
+}
+
+function capSuffix(label: string, max?: number) {
+  return max ? `${label} <=${max}` : label;
+}
+
+function numberOptions(max: number | undefined, values: number[]) {
+  const limit = max ?? Math.max(...values);
+  const out = new Set(values.filter((n) => n > 0 && n <= limit));
+  if (max && max > 0) out.add(max);
+  return [...out].sort((a, b) => a - b);
+}
+
+function timeOptionsFor(wall: string | undefined, t: TFn) {
+  const limit = parseWallMinutes(wall);
+  const base = [
+    { value: "00:30:00", label: "30m", minutes: 30 },
+    { value: "01:00:00", label: "1h", minutes: 60 },
+    { value: "02:00:00", label: "2h", minutes: 120 },
+    { value: "06:00:00", label: "6h", minutes: 360 },
+    { value: "12:00:00", label: "12h", minutes: 720 },
+    { value: "1-00:00:00", label: "1d", minutes: 1440 },
+    { value: "2-00:00:00", label: "2d", minutes: 2880 },
+    { value: "3-00:00:00", label: "3d", minutes: 4320 },
+    { value: "5-00:00:00", label: "5d", minutes: 7200 },
+    { value: "7-00:00:00", label: "7d", minutes: 10080 },
+    { value: "14-00:00:00", label: "14d", minutes: 20160 },
+    { value: "21-00:00:00", label: "21d", minutes: 30240 },
+  ];
+  return [
+    { value: "", label: t("pool.timeDefault") },
+    ...base.filter((opt) => !limit || opt.minutes <= limit),
+  ];
+}
+
+function parseWallMinutes(wall: string | undefined) {
+  if (!wall) return 0;
+  const m = wall.match(/^(\d+)([mhd])$/);
+  if (!m) return 0;
+  const n = Number(m[1]);
+  if (m[2] === "m") return n;
+  if (m[2] === "h") return n * 60;
+  return n * 24 * 60;
+}
+
+function requestQueueHint({
+  part,
+  policy,
+  groupRunning,
+  nodeCount,
+  coreCount,
+  isGpu,
+  poolFree,
+  queueFact,
+  gpuFit,
+  t,
+}: {
+  part?: Partition;
+  policy: PartitionPolicy;
+  groupRunning: number;
+  nodeCount: number;
+  coreCount: number;
+  isGpu: boolean;
+  poolFree: ReturnType<typeof poolCapacity> | null;
+  queueFact: QueueFact | null;
+  gpuFit: GpuFitInfo | null;
+  t: TFn;
+}) {
+  if (!part) return null;
+  const warn = (detail: string) => ({ tone: "warn" as const, label: t("pool.queueHintWillQueue"), detail });
+  const down = (part.nodes_state.down ?? 0) + (part.nodes_state.drain ?? 0);
+  if (down >= part.nodes && part.nodes > 0) return warn(t("pool.queueReasonMaint"));
+  if (policy.grpJobs && groupRunning >= policy.grpJobs) return warn(t("pool.queueReasonGroup"));
+  if ((part.available_nodes ?? 0) <= 0) return warn(t("pool.queueReasonNoNode"));
+  if (nodeCount > 0 && nodeCount > (part.available_nodes ?? 0)) return warn(t("pool.queueReasonNodes"));
+  if (isGpu && (part.gpu?.free ?? 0) <= 0) return warn(t("pool.queueReasonNoGpu"));
+  if (isGpu && gpuFit && gpuFit.rawFree > 0 && gpuFit.schedulable <= 0) return warn(gpuFitShortText(gpuFit, t));
+  if (isGpu && queueFact && queueFact.free <= 0 && (part.gpu?.free ?? 0) > 0) return warn(t("pool.queueReasonGpuFit"));
+  if (!isGpu && coreCount > 0 && poolFree && coreCount > poolFree.emptiestNodeFree) return warn(t("pool.queueReasonCores"));
+
+  if (queueFact && queueFact.pending > 0) {
+    return {
+      tone: "warn" as const,
+      label: t("pool.queueHintQueued"),
+      detail: queueFactText(queueFact, t),
+    };
+  }
+  return { tone: "ok" as const, label: t("pool.queueHintCanStart"), detail: "" };
+}
+
+interface QueueFact {
+  pending: number;
+  priority: number;
+  limited: number;
+  free: number;
+  maxGpus: number;
+  maxCpus: number;
+  isGpu: boolean;
+}
+
+function poolQueueFact(jobs: RawJob[], partPool: Record<string, string>, poolId: string, isGpu: boolean, pool: Pool, schedulableGpuFree = 0): QueueFact {
+  const pending = pendingForPool(jobs, partPool, poolId);
+  const active = pending.filter((j) => !isLimitBlocked(j));
+  const basis = active.length ? active : pending;
+  return {
+    pending: pending.length,
+    priority: pending.filter((j) => j.state_reason === "Priority").length,
+    limited: pending.filter(isLimitBlocked).length,
+    free: isGpu ? schedulableGpuFree : pool.cores.free,
+    maxGpus: Math.max(0, ...basis.map((j) => j.gpus || 0)),
+    maxCpus: Math.max(0, ...basis.map((j) => j.cpus || 0)),
+    isGpu,
+  };
+}
+
+function queueFactText(fact: QueueFact, t: TFn) {
+  const free = fact.isGpu
+    ? t("pool.queueFactFreeGpu", { n: fact.free })
+    : t("pool.queueFactFreeCpu", { n: fact.free });
+  const largest = fact.maxGpus > 0
+    ? t("pool.queueFactMaxGpu", { n: fact.maxGpus })
+    : t("pool.queueFactMaxCpu", { n: fact.maxCpus });
+  const priority = fact.priority > 0 ? ` · ${t("pool.queueFactPriority", { n: fact.priority })}` : "";
+  const limited = fact.limited > 0 ? ` · ${t("pool.queueFactLimited", { n: fact.limited })}` : "";
+  return `${free} · ${t("pool.queueFactPool", { n: fact.pending })}${priority}${limited} · ${largest}`;
+}
+
+function partitionRunningJobs(jobs: RawJob[], partition: string) {
+  let groupRunning = 0;
+  for (const job of jobs) {
+    const parts = String(job.partition || "").split(",");
+    if (!parts.includes(partition)) continue;
+    const state = String(job.job_state || "").toUpperCase();
+    if (state === "RUNNING") groupRunning += 1;
+  }
+  return groupRunning;
+}
+
+function limitLevel(current: number, max: number) {
+  return {
+    reached: current >= max,
+    near: max > 1 && current >= Math.ceil(max * 0.8),
+  };
+}
+
+function policyLimitRows(policy: PartitionPolicy, groupRunning: number, t: TFn) {
+  const rows: Array<{ key: string; label: string; reached: boolean; near: boolean }> = [];
+  if (policy.grpJobs) {
+    rows.push({
+      key: "grp",
+      label: t("pool.limitGroup", { n: groupRunning, max: policy.grpJobs }),
+      ...limitLevel(groupRunning, policy.grpJobs),
+    });
+  }
+  if (policy.maxJobsPerUser) {
+    rows.push({
+      key: "userRun",
+      label: t("pool.limitUserRunning", { max: policy.maxJobsPerUser }),
+      reached: false,
+      near: false,
+    });
+  }
+  if (policy.maxSubmitPerUser) {
+    rows.push({
+      key: "userSubmit",
+      label: t("pool.limitUserSubmitted", { max: policy.maxSubmitPerUser }),
+      reached: false,
+      near: false,
+    });
+  }
+  return rows;
+}
+
+function trMaybe(t: TFn, key: string, fallback: string) {
+  const translated = t(key as TranslationKey);
+  return translated === key ? fallback : translated;
+}
+
+function fmtPolicyLimit(cap: ReturnType<typeof partitionCap>, t: TFn, isGpu: boolean) {
+  const parts = [
+    cap.maxNodes ? `${cap.maxNodes} ${t("spec.nodes")}` : "",
+    isGpu && cap.maxGpus ? `${cap.maxGpus} ${t("pool.gpuTotal")}` : "",
+    cap.maxCores ? `${cap.maxCores} ${t("unit.cores")}` : "",
+    cap.maxMemGb ? `${cap.maxMemGb} GB` : "",
+    cap.wall ?? "",
+  ].filter(Boolean);
+  return parts.length ? `${t("part.policyLimit")}: ${parts.join(" / ")}` : "";
+}
+
 function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
     <label className="min-w-0 text-[10px] text-muted-foreground">
@@ -297,15 +628,334 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
   );
 }
 
+function gpuAvailabilityText(isGpu: boolean, fit: GpuFitInfo | null, schedulable: number, rawFree: number, availableLabel: string, t: TFn) {
+  if (!isGpu) return availableLabel;
+  if (schedulable > 0) return availableLabel;
+  if (rawFree > 0) return gpuStrandedText(fit, rawFree, t);
+  return t("gpu.full");
+}
+
+function gpuStrandedText(fit: GpuFitInfo | null, rawFree: number, t: TFn) {
+  const rows = fit?.stranded ?? [];
+  const mem = rows.some((row) => row.missingMemMb > 0);
+  const cpu = rows.some((row) => row.missingCores > 0);
+  if (cpu && mem) return t("pool.gpuStrandedCpuMem", { n: rawFree });
+  if (cpu) return t("pool.gpuStrandedCpu", { n: rawFree });
+  if (mem) return t("pool.gpuStrandedMem", { n: rawFree });
+  return t("pool.gpuStranded", { n: rawFree });
+}
+
+interface GpuFitNeed {
+  partition: string;
+  gpus: number;
+  cores: number;
+  memMb: number;
+}
+
+interface GpuFitNode {
+  node: RawNode;
+  freeGpu: number;
+  usedGpu: number;
+  freeCores: number;
+  freeMemMb: number;
+  missingGpu: number;
+  missingCores: number;
+  missingMemMb: number;
+  occupants: RawJob[];
+}
+
+interface GpuFitInfo {
+  need: GpuFitNeed;
+  rawFree: number;
+  schedulable: number;
+  stranded: GpuFitNode[];
+  fitNodes: GpuFitNode[];
+}
+
+interface GpuFitTipData {
+  cmd: string;
+  mem: string;
+  node: string;
+}
+
+function schedulableGpuSlots(nodes: RawNode[], pool: Pool, cap: ReturnType<typeof partitionCap>) {
+  return gpuFitFromNodes(nodes, [], pool, cap, "").schedulable;
+}
+
+function gpuFitSnapshot(snap: Snapshot, pool: Pool, cap: ReturnType<typeof partitionCap>, partition: string): GpuFitInfo {
+  return gpuFitFromNodes(snap.nodes, snap.jobs, pool, cap, partition);
+}
+
+function gpuFitFromNodes(nodes: RawNode[], jobs: RawJob[], pool: Pool, cap: ReturnType<typeof partitionCap>, partition: string): GpuFitInfo {
+  const need = gpuFitNeed(nodes, pool, cap, partition);
+  const byNode = jobs.length ? runningJobsByNode(jobs) : new Map<string, RawJob[]>();
+  const stranded: GpuFitNode[] = [];
+  const fitNodes: GpuFitNode[] = [];
+  if (!pool.gpu) return { need, rawFree: 0, schedulable: 0, stranded, fitNodes };
+  const perGpuCores = need.cores;
+  const perGpuMemMb = need.memMb;
+  let rawFree = 0;
+  let slots = 0;
+  for (const node of nodes) {
+    if (node.pool !== pool.id || !nodeUp(node)) continue;
+    const freeGpu = Math.max(0, parseGpuCount(node.gres, pool.gpu.type) - parseGpuCount(node.gres_used, pool.gpu.type));
+    if (freeGpu <= 0) continue;
+    rawFree += freeGpu;
+    const freeCores = Math.max(0, node.cpus - node.alloc_cpus);
+    const freeMem = Math.max(0, node.real_memory - node.alloc_memory);
+    const nodeSlots = Math.min(
+      freeGpu,
+      Math.floor(freeCores / perGpuCores),
+      perGpuMemMb ? Math.floor(freeMem / perGpuMemMb) : freeGpu,
+    );
+    slots += nodeSlots;
+    const row: GpuFitNode = {
+      node,
+      freeGpu,
+      usedGpu: parseGpuCount(node.gres_used, pool.gpu.type),
+      freeCores,
+      freeMemMb: freeMem,
+      missingGpu: Math.max(0, need.gpus - freeGpu),
+      missingCores: Math.max(0, perGpuCores - freeCores),
+      missingMemMb: perGpuMemMb ? Math.max(0, perGpuMemMb - freeMem) : 0,
+      occupants: byNode.get(node.name) ?? [],
+    };
+    if (nodeSlots > 0) fitNodes.push(row);
+    else stranded.push(row);
+  }
+  stranded.sort((a, b) => shortageScore(a) - shortageScore(b) || a.node.name.localeCompare(b.node.name));
+  fitNodes.sort((a, b) => b.freeGpu - a.freeGpu || b.freeCores - a.freeCores || b.freeMemMb - a.freeMemMb);
+  return { need, rawFree, schedulable: slots, stranded, fitNodes };
+}
+
+function gpuFitNeed(nodes: RawNode[], pool: Pool, cap: ReturnType<typeof partitionCap>, partition: string): GpuFitNeed {
+  const maxGpus = Math.max(1, cap.maxGpus ?? 1);
+  const cores = Math.max(1, Math.ceil((cap.maxCores ?? 1) / maxGpus));
+  const capMemMb = cap.maxMemGb ? Math.ceil((cap.maxMemGb * 1000) / maxGpus) : 0;
+  const observedMem = pool.gpu
+    ? Math.max(0, ...nodes
+        .filter((node) => node.pool === pool.id)
+        .map((node) => {
+          const usedGpu = parseGpuCount(node.gres_used, pool.gpu!.type);
+          if (usedGpu <= 0) return 0;
+          const mem = parseTresMemoryMb(node.alloc_tres) || node.alloc_memory;
+          return mem > 0 ? Math.ceil(mem / usedGpu) : 0;
+        }))
+    : 0;
+  return {
+    partition,
+    gpus: 1,
+    cores,
+    memMb: Math.max(capMemMb, observedMem),
+  };
+}
+
+function runningJobsByNode(jobs: RawJob[]) {
+  const byNode = new Map<string, RawJob[]>();
+  for (const job of jobs) {
+    if (String(job.job_state || "").toUpperCase() !== "RUNNING" || !job.nodelist) continue;
+    for (const node of expandHostlist(job.nodelist)) {
+      const list = byNode.get(node) ?? [];
+      list.push(job);
+      byNode.set(node, list);
+    }
+  }
+  for (const list of byNode.values()) {
+    list.sort((a, b) => (b.gpus || 0) - (a.gpus || 0) || (b.cpus || 0) - (a.cpus || 0));
+  }
+  return byNode;
+}
+
+function shortageScore(row: GpuFitNode) {
+  return row.missingGpu * 1_000_000_000 + row.missingCores * 1_000_000 + row.missingMemMb;
+}
+
+function parseTresMemoryMb(text: string) {
+  if (!text) return 0;
+  const m = text.match(/(?:^|,)mem=(\d+(?:\.\d+)?)([KMGTP]?)/i);
+  if (!m) return 0;
+  const n = Number(m[1]);
+  const unit = m[2].toUpperCase();
+  const mult: Record<string, number> = { "": 1, K: 1 / 1024, M: 1, G: 1024, T: 1024 * 1024, P: 1024 * 1024 * 1024 };
+  return Math.round(n * (mult[unit] ?? 1));
+}
+
+function gpuFitTipCommand(fit: GpuFitInfo, pool: Pool): GpuFitTipData | null {
+  if (!pool.gpu || fit.schedulable > 0) return null;
+  const best = fit.stranded.find((row) => row.freeGpu >= 1 && row.freeCores >= fit.need.cores && row.freeMemMb > 1024);
+  if (!best) return null;
+  const memGb = conservativeMemGb(best.freeMemMb);
+  if (memGb <= 0) return null;
+  const mem = `${memGb}G`;
+  return {
+    mem,
+    node: best.node.name,
+    cmd: `salloc -p ${fit.need.partition} --gres=gpu:${pool.gpu.type}:1 --mem=${mem}`,
+  };
+}
+
+function conservativeMemGb(freeMemMb: number) {
+  const freeGiB = freeMemMb / 1024;
+  const rounded = Math.floor((freeGiB - 4) / 10) * 10;
+  if (rounded >= 10) return rounded;
+  return Math.max(1, Math.floor(freeGiB - 1));
+}
+
+function GpuFitExplanation({ fit, pool, t }: { fit: GpuFitInfo; pool: Pool; t: TFn }) {
+  const rows = fit.stranded.slice(0, 4);
+  if (rows.length === 0) return null;
+  const more = Math.max(0, fit.stranded.length - rows.length);
+  const tip = gpuFitTipCommand(fit, pool);
+  return (
+    <div className="mt-2 rounded-md border border-warn/35 bg-warn-soft/45 px-2.5 py-2 text-[10px] leading-relaxed">
+      <div className="flex flex-wrap items-center gap-1.5">
+        <Tag tone="warn">{t("pool.fitBlocked")}</Tag>
+        <span className="text-foreground">{t("pool.fitNeed", { partition: fit.need.partition, need: resourceText(fit.need, t) })}</span>
+      </div>
+      <div className="mt-1 text-muted-foreground">
+        {t("pool.fitRawFree", { gpu: fit.rawFree, nodes: fit.stranded.length, sched: fit.schedulable })}
+      </div>
+      <div className="mt-1.5 space-y-1">
+        {rows.map((row) => (
+          <GpuFitNodeRow key={row.node.name} row={row} t={t} />
+        ))}
+      </div>
+      {more > 0 && <div className="mt-1 text-muted-foreground">{t("pool.fitMoreNodes", { n: more })}</div>}
+      {tip && <GpuFitTip tip={tip} t={t} />}
+    </div>
+  );
+}
+
+function GpuFitTip({ tip, t }: { tip: GpuFitTipData; t: TFn }) {
+  const [copied, setCopied] = useState(false);
+  const copy = async () => {
+    if (await copyText(tip.cmd)) {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1200);
+    }
+  };
+  return (
+    <div className="mt-2 rounded-md border border-warn/45 bg-background/75 px-2 py-1.5">
+      <div className="flex flex-wrap items-center gap-1.5">
+        <Tag tone="warn">{t("pool.fitTip")}</Tag>
+        <span className="text-muted-foreground">{t("pool.fitTipText", { mem: tip.mem, node: tip.node })}</span>
+      </div>
+      <div className="mt-1 flex items-center gap-2 rounded-md border border-border bg-muted/40 px-2 py-1">
+        <code className="flex-1 overflow-x-auto whitespace-nowrap font-mono text-[10px]">{tip.cmd}</code>
+        <button
+          type="button"
+          onClick={copy}
+          className="inline-flex shrink-0 items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground"
+        >
+          {copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
+          {t(copied ? "helper.copied" : "helper.copy")}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function GpuFitNodeRow({ row, t }: { row: GpuFitNode; t: TFn }) {
+  const occupants = row.occupants.slice(0, 3);
+  const more = Math.max(0, row.occupants.length - occupants.length);
+  return (
+    <div className="rounded-md border border-border/70 bg-background/70 px-2 py-1.5">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+        <span className="font-mono text-info-fg">{row.node.name}</span>
+        <span className="font-mono text-muted-foreground">
+          {t("pool.fitNodeLeft", { free: nodeFreeText(row, t) })}
+        </span>
+        <span className="font-mono text-bad-fg">{t("pool.fitNodeMissing", { missing: missingText(row, t) })}</span>
+      </div>
+      <div className="mt-0.5 font-mono text-muted-foreground">
+        {t("pool.fitNodeAllocated", {
+          used: resourceParts(row.usedGpu, row.node.alloc_cpus, row.node.alloc_memory, t),
+        })}
+      </div>
+      {occupants.length > 0 && (
+        <div className="mt-0.5 text-muted-foreground">
+          {t("pool.fitOccupants")}:{" "}
+          {occupants.map((job, i) => (
+            <span key={String(job.job_id)} className="font-mono">
+              {i > 0 ? " · " : ""}
+              {job.user_name} #{job.job_id} {job.partition} {jobResourceText(job, t)}
+            </span>
+          ))}
+          {more > 0 && <span className="font-mono"> · +{more}</span>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function gpuFitShortText(fit: GpuFitInfo, t: TFn) {
+  const best = fit.stranded[0];
+  if (!best) return t("pool.queueReasonGpuFit");
+  return t("pool.fitShort", {
+    partition: fit.need.partition,
+    need: resourceText(fit.need, t),
+    node: best.node.name,
+    free: nodeFreeText(best, t),
+    missing: missingText(best, t),
+  });
+}
+
+function resourceText(need: GpuFitNeed, t: TFn) {
+  return resourceParts(need.gpus, need.cores, need.memMb, t);
+}
+
+function nodeFreeText(row: GpuFitNode, t: TFn) {
+  return resourceParts(row.freeGpu, row.freeCores, row.freeMemMb, t);
+}
+
+function resourceParts(gpus: number, cores: number, memMb: number, t: TFn) {
+  return `${nf(gpus)} ${t("unit.gpu")} / ${nf(cores)} ${t("unit.cores")} / ${fmtMemRaw(memMb)}`;
+}
+
+function jobResourceText(job: RawJob, t: TFn) {
+  const parts = [];
+  if (job.gpus) parts.push(`${nf(job.gpus)} ${t("unit.gpu")}`);
+  if (job.cpus) parts.push(`${nf(job.cpus)} ${t("unit.cores")}`);
+  if (job.min_memory) parts.push(job.min_memory);
+  return parts.length ? `(${parts.join(" / ")})` : "";
+}
+
+function missingText(row: GpuFitNode, t: TFn) {
+  const parts = [];
+  if (row.missingGpu > 0) parts.push(`${nf(row.missingGpu)} ${t("unit.gpu")}`);
+  if (row.missingCores > 0) parts.push(`${nf(row.missingCores)} ${t("unit.cores")}`);
+  if (row.missingMemMb > 0) parts.push(`${fmtMemRaw(row.missingMemMb)} ${t("kpi.memory")}`);
+  return parts.length ? parts.join(" / ") : "0";
+}
+
+function fmtMemRaw(mb: number) {
+  return `${nf(Math.max(0, Math.round(mb)))}M`;
+}
+
+function parseGpuCount(text: string, type: string) {
+  if (!text) return 0;
+  const typed = new RegExp(`gpu:${type.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}:?(\\d+)|gres/gpu:${type.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}=(\\d+)`);
+  const m = text.match(typed) ?? text.match(/gpu:[A-Za-z0-9_-]+:?(\\d+)|gres\/gpu:[A-Za-z0-9_-]+=(\d+)|gpu:(\d+)/);
+  if (!m) return 0;
+  return Number(m[1] ?? m[2] ?? m[3] ?? 0);
+}
+
+function nodeUp(node: RawNode) {
+  return !node.state.some((s) => ["DOWN", "DRAIN", "NOT_RESPONDING"].includes(String(s).toUpperCase()));
+}
+
 /** One block per physical GPU — free (green) first, then used (red), then down (grey). */
-function GpuBlocks({ gpu, className }: { gpu: PoolGpu; className?: string }) {
+function GpuBlocks({ gpu, schedulableFree, className }: { gpu: PoolGpu; schedulableFree?: number; className?: string }) {
+  const ready = Math.max(0, Math.min(gpu.free, schedulableFree ?? gpu.free));
+  const stranded = Math.max(0, gpu.free - ready);
   const seg = (n: number, cls: string, key: string) =>
     Array.from({ length: Math.max(0, n) }, (_, i) => (
       <span key={key + i} className={cn("h-2.5 min-w-0 flex-1 rounded-sm", cls)} />
     ));
   return (
-    <div className={cn("flex gap-0.5", className)} title={`${gpu.free} free · ${gpu.used} used${gpu.down ? ` · ${gpu.down} down` : ""}`}>
-      {seg(gpu.free, "bg-ok", "f")}
+    <div className={cn("flex gap-0.5", className)} title={`${ready} schedulable · ${stranded} stranded · ${gpu.used} used${gpu.down ? ` · ${gpu.down} down` : ""}`}>
+      {seg(ready, "bg-ok", "f")}
+      {seg(stranded, "bg-warn", "s")}
       {seg(gpu.used, "bg-bad", "u")}
       {seg(gpu.down, "bg-muted-foreground/40", "d")}
     </div>
@@ -316,8 +966,62 @@ function isMaintPool(pool: Pool) {
   return pool.kind === "gpu" && !!pool.gpu?.maint;
 }
 
-function hasAvailableNodes(pool: Pool) {
-  return !isMaintPool(pool) && (pool.available_nodes ?? pool.idle_nodes ?? 0) > 0;
+function hasAvailableNodes(pool: Pool, snap: Snapshot) {
+  if (isMaintPool(pool)) return false;
+  if (pool.kind === "gpu") return schedulableGpuSlots(snap.nodes, pool, partitionCap(SAMPLE[pool.id]?.partition ?? "")) > 0;
+  return (pool.available_nodes ?? pool.idle_nodes ?? 0) > 0;
+}
+
+function pendingForPool(jobs: RawJob[], partPool: Record<string, string>, poolId: string) {
+  return jobs
+    .filter((j) => String(j.job_state).toUpperCase() === "PENDING")
+    .filter((j) => String(j.partition || "").split(",").some((p) => partPool[p] === poolId));
+}
+
+function PendingJobs({ pool, t }: { pool: Pool; t: TFn }) {
+  const { snap } = useLive();
+  if (!snap) return null;
+  const all = pendingForPool(snap.jobs, snap.part_pool, pool.id)
+    .map((job, i) => ({ job, i }))
+    .sort((a, b) => pendingRank(a.job) - pendingRank(b.job) || a.i - b.i)
+    .map(({ job }) => job);
+  const list = all.slice(0, 12);
+  if (list.length === 0) return null;
+  return (
+    <div className="mt-2 max-h-64 space-y-1 overflow-y-auto pr-1">
+      <div className="pb-1 text-[10px] text-muted-foreground">{t("pool.pendingShowing", { shown: list.length, total: all.length })}</div>
+      {list.map((j) => (
+        <PendingJobRow key={String(j.job_id)} job={j} t={t} />
+      ))}
+    </div>
+  );
+}
+
+function PendingJobRow({ job, t }: { job: RawJob; t: TFn }) {
+  const res = job.gpus ? `${job.gpus} ${t("unit.gpu")}` : `${job.cpus}c`;
+  return (
+    <div className="rounded-md bg-muted/40 px-2.5 py-1.5 text-[11px]">
+      <div className="flex items-center justify-between gap-2">
+        <span className="font-mono text-info-fg">{job.user_name}</span>
+        <div className="flex items-center gap-2 font-mono text-muted-foreground">
+          <span>{job.partition}</span>
+          <span className="text-foreground">{res}</span>
+        </div>
+      </div>
+      <div className="mt-1 truncate text-[10px] text-muted-foreground">
+        {reasonLabel(t, job.state_reason || "None")}
+      </div>
+    </div>
+  );
+}
+
+function isLimitBlocked(job: RawJob) {
+  const reason = String(job.state_reason || "");
+  return reason.startsWith("QOSMax") || reason === "Dependency" || reason === "JobArrayTaskLimit";
+}
+
+function pendingRank(job: RawJob) {
+  return isLimitBlocked(job) ? 1 : 0;
 }
 
 function Occupants({ pool, t }: { pool: Pool; t: TFn }) {

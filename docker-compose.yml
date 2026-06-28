@@ -13,7 +13,9 @@ services:
       HM_SOURCE: ssh
       # set HM_SSH_HOST in a local .env (e.g. HM_SSH_HOST=you@hakusan2); see .env.example
       HM_SSH_HOST: ${HM_SSH_HOST:?set HM_SSH_HOST in .env (e.g. you@hakusan2)}
+      HM_LOGIN_NODES: ${HM_LOGIN_NODES:-}
       HM_SAMPLE_INTERVAL: "${HM_SAMPLE_INTERVAL:-300}"
+      HM_LOGIN_INTERVAL: "${HM_LOGIN_INTERVAL:-300}"
       HM_DB: /data/hakusan.sqlite
       # agent-forwarding + container-writable ControlPath + mounted known_hosts
       SSH_AUTH_SOCK: /ssh-agent

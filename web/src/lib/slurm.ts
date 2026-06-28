@@ -65,6 +65,12 @@ export interface PartitionCap {
   wall?: string;
 }
 
+export interface PartitionPolicy {
+  grpJobs?: number;
+  maxJobsPerUser?: number;
+  maxSubmitPerUser?: number;
+}
+
 export const PARTITION_CAPS: Record<string, PartitionCap> = {
   DEF: { maxCores: 64, maxMemGb: 384, maxNodes: 1, wall: "7d" },
   TINY: { maxCores: 16, maxMemGb: 96, maxNodes: 1, wall: "30m" },
@@ -93,3 +99,29 @@ export const PARTITION_CAPS: Record<string, PartitionCap> = {
 };
 
 export const partitionCap = (name: string): PartitionCap => PARTITION_CAPS[name] ?? {};
+
+export const PARTITION_POLICIES: Record<string, PartitionPolicy> = {
+  DEF: { maxJobsPerUser: 300, maxSubmitPerUser: 40 },
+  TINY: { maxJobsPerUser: 5 },
+  SINGLE: { grpJobs: 100, maxJobsPerUser: 10, maxSubmitPerUser: 40 },
+  SMALL: { grpJobs: 30, maxJobsPerUser: 4, maxSubmitPerUser: 30 },
+  LARGE: { grpJobs: 10, maxJobsPerUser: 2, maxSubmitPerUser: 15 },
+  XLARGE: { grpJobs: 4, maxJobsPerUser: 1, maxSubmitPerUser: 7 },
+  X2LARGE: { grpJobs: 2, maxJobsPerUser: 1, maxSubmitPerUser: 7 },
+  LONG: { grpJobs: 15, maxJobsPerUser: 1, maxSubmitPerUser: 15 },
+  "LONG-L": { grpJobs: 5, maxJobsPerUser: 1, maxSubmitPerUser: 10 },
+  "GPU-1": { grpJobs: 30, maxJobsPerUser: 4, maxSubmitPerUser: 30 },
+  "GPU-S": { grpJobs: 10, maxJobsPerUser: 2, maxSubmitPerUser: 15 },
+  "GPU-L": { grpJobs: 3, maxJobsPerUser: 1, maxSubmitPerUser: 5 },
+  "GPU-1A": { grpJobs: 20, maxJobsPerUser: 2, maxSubmitPerUser: 20 },
+  "GPU-LA": { grpJobs: 2, maxJobsPerUser: 1, maxSubmitPerUser: 5 },
+  "VM-CPU": { maxJobsPerUser: 1, maxSubmitPerUser: 10 },
+  "VM-GPU-L": { maxJobsPerUser: 1, maxSubmitPerUser: 3 },
+  "VM-LM": { maxJobsPerUser: 1, maxSubmitPerUser: 60 },
+  MS_Forcite: { grpJobs: 1 },
+  MS_Compass: { grpJobs: 1 },
+  MS_Dftbplus: { grpJobs: 1 },
+  MS_Amorphous: { grpJobs: 1 },
+};
+
+export const partitionPolicy = (name: string): PartitionPolicy => PARTITION_POLICIES[name] ?? {};

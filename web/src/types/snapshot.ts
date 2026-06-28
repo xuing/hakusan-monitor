@@ -192,6 +192,12 @@ export interface Meta {
   slurm_version: string;
   source: string;
   interval: number;
+  login_nodes?: {
+    configured: boolean;
+    interval: number;
+    top_n: number;
+    show_args: boolean;
+  };
   container: ContainerInfo;
   docs: Record<string, string>;
   partitions: { name: string; kind: string }[];
@@ -235,6 +241,8 @@ export interface RawJob {
   cpus: number;
   gpus: number;
   tres_req_str: string;
+  min_memory?: string;
+  min_memory_mb?: number;
   container: string;
   submit_time: number;
   end_time: string;
@@ -290,4 +298,93 @@ export interface UsagePattern {
   busiest_hour: UsageHour | null;
   quietest_hour: UsageHour | null;
   total_hours: number;
+}
+
+export interface LoginProcess {
+  pid: number;
+  user: string;
+  stat: string;
+  cpu_pct: number;
+  mem_pct: number;
+  rss: number;
+  elapsed_s: number;
+  command: string;
+  args: string;
+}
+
+export interface LoginDisk {
+  filesystem: string;
+  size: number;
+  used: number;
+  available: number;
+  use_pct: number;
+  mount: string;
+  inodes_total?: number;
+  inodes_used?: number;
+  inodes_free?: number;
+  inode_use_pct?: number;
+}
+
+export interface LoginUser {
+  user: string;
+  cpu_pct: number;
+  mem_pct: number;
+  rss: number;
+  processes: number;
+}
+
+export interface LoginNode {
+  id: string;
+  target: string;
+  hostname?: string;
+  ok: boolean;
+  sampled_at: number;
+  error?: string;
+  cores?: number;
+  load?: { "1m": number; "5m": number; "15m": number; per_core: number };
+  cpu?: { busy: number | null; iowait: number | null };
+  memory?: {
+    total: number;
+    available: number;
+    used: number;
+    used_ratio: number;
+    swap_total: number;
+    swap_used: number;
+    swap_ratio: number;
+  };
+  disks?: LoginDisk[];
+  processes?: {
+    top_cpu: LoginProcess[];
+    top_mem: LoginProcess[];
+    d_state: number;
+  };
+  users?: LoginUser[];
+  pressure?: { score: number; level: PressureLevel; reasons: string[] };
+}
+
+export interface LoginNodesResponse {
+  generated_at: number;
+  age_s: number;
+  interval: number;
+  configured: boolean;
+  stale: boolean;
+  error?: string;
+  nodes: LoginNode[];
+  top_users: LoginUser[];
+}
+
+export interface LoginHistoryPoint {
+  ts: number;
+  node_id: string;
+  load1: number;
+  load_per_core: number;
+  cpu_busy: number | null;
+  cpu_iowait: number | null;
+  mem_used_ratio: number;
+  swap_used_ratio: number;
+  disk_used_max: number;
+  inode_used_max: number;
+  d_state: number;
+  pressure_score: number;
+  pressure_level: PressureLevel;
 }

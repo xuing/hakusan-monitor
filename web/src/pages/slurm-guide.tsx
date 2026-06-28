@@ -4,6 +4,7 @@ import { SectionCard } from "@/components/common/section-card";
 import { Tag } from "@/components/common/tag";
 import { Button } from "@/components/ui/button";
 import { useT, type TFn, type TranslationKey } from "@/i18n";
+import { copyText } from "@/lib/clipboard";
 import type { Tone } from "@/lib/slurm";
 
 // Language-neutral data: the shell text and tone are the same in every language.
@@ -18,20 +19,20 @@ const COMMANDS: Command[] = [
   { key: "myqueue", command: 'squeue -u "$USER" -o "%.18i %.9P %.8T %.10M %.9l %.6D %R"', tone: "info" },
   { key: "policy", command: "spart", tone: "info" },
   { key: "sinfo", command: 'sinfo -o "%P %a %l %D %t %N"', tone: "info" },
-  { key: "cpu", command: "salloc -p TINY -c 2", tone: "ok" },
-  { key: "gpu", command: "salloc -p GPU-1 -c 2 -G 1", tone: "ok" },
-  { key: "srun", command: "srun -p SMALL -n 1 -c 16 --mem=64G bash run.sh", tone: "neutral" },
+  { key: "cpu", command: "salloc -p TINY", tone: "ok" },
+  { key: "gpu", command: "salloc -p GPU-1", tone: "ok" },
+  { key: "srun", command: "srun -p SMALL bash run.sh", tone: "neutral" },
   { key: "sbatch", command: "sbatch job.sh", tone: "neutral" },
   {
     key: "batchtpl",
     command:
-      "#!/bin/bash\n#SBATCH -J myjob\n#SBATCH -p SMALL\n#SBATCH -N 1\n#SBATCH -n 1\n#SBATCH -c 16\n#SBATCH --mem=64G\n#SBATCH -t 02:00:00\n#SBATCH -o %x_%j.log\n#SBATCH -e %x_%j.log\n\nsource /etc/profile.d/modules.sh\ncd ${SLURM_SUBMIT_DIR}\nbash run.sh",
+      "#!/bin/bash\n#SBATCH -J myjob\n#SBATCH -p SMALL\n#SBATCH -N 1\n#SBATCH -n 1\n#SBATCH -c 16\n#SBATCH -t 02:00:00\n#SBATCH -o %x_%j.log\n#SBATCH -e %x_%j.log\n\nsource /etc/profile.d/modules.sh\ncd ${SLURM_SUBMIT_DIR}\nbash run.sh",
     tone: "neutral",
   },
   {
     key: "gputpl",
     command:
-      "#!/bin/bash\n#SBATCH -J gpujob\n#SBATCH -p GPU-1\n#SBATCH -N 1\n#SBATCH -n 1\n#SBATCH -c 8\n#SBATCH --gres=gpu:nvidia_a40:1\n#SBATCH --mem=48G\n#SBATCH -o %x_%j.log\n#SBATCH -e %x_%j.log\n\nsource /etc/profile.d/modules.sh\nmodule load singularity/3.9.5\ncd ${SLURM_SUBMIT_DIR}\nsingularity exec --nv /app/container_images/tensorflow_2.20.0.sif python train.py",
+      "#!/bin/bash\n#SBATCH -J gpujob\n#SBATCH -p GPU-1\n#SBATCH -N 1\n#SBATCH -n 1\n#SBATCH -c 8\n#SBATCH -t 02:00:00\n#SBATCH -o %x_%j.log\n#SBATCH -e %x_%j.log\n\nsource /etc/profile.d/modules.sh\nmodule load singularity/3.9.5\ncd ${SLURM_SUBMIT_DIR}\nsingularity exec --nv /app/container_images/tensorflow_2.20.0.sif python train.py",
     tone: "neutral",
   },
   { key: "sacct", command: "sacct -j <job_id> --format=JobID,JobName,State,Elapsed,MaxRSS,ExitCode", tone: "info" },
@@ -51,11 +52,14 @@ const REFS: [string, string][] = [
   ["Hakusan seminar 2026-04-09", "https://jstorage.app.box.com/v/hakusan20260409ja"],
   ["MPC orientation 2026-06", "https://jstorage.app.box.com/v/mpcorientation202606-ja"],
   ["Hakusan seminar 2026-06-18", "https://jstorage.app.box.com/v/hakusan20260618ja"],
+  ["Slurm Documentation", "https://slurm.schedmd.com/documentation.html"],
   ["Slurm Quick Start", "https://slurm.schedmd.com/quickstart.html"],
+  ["salloc", "https://slurm.schedmd.com/salloc.html"],
   ["squeue", "https://slurm.schedmd.com/squeue.html"],
   ["srun", "https://slurm.schedmd.com/srun.html"],
   ["sbatch", "https://slurm.schedmd.com/sbatch.html"],
   ["sacct", "https://slurm.schedmd.com/sacct.html"],
+  ["GRES / GPUs", "https://slurm.schedmd.com/gres.html"],
 ];
 
 export default function SlurmGuidePage() {
@@ -129,12 +133,9 @@ export default function SlurmGuidePage() {
 function CommandCard({ item, t }: { item: Command; t: TFn }) {
   const [copied, setCopied] = useState(false);
   const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(item.command);
+    if (await copyText(item.command)) {
       setCopied(true);
       setTimeout(() => setCopied(false), 1200);
-    } catch {
-      /* clipboard unavailable */
     }
   };
 

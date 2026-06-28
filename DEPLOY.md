@@ -48,7 +48,9 @@ docker logs -f hakusan-monitor
 ## SSH auth — the thing that actually matters for "always on"
 
 The collector logs in to your SSH target (`HM_SSH_HOST`, set in `.env` — e.g.
-`you@hakusan2`). Today that uses your **interactive
+`you@hakusan2`). If `HM_LOGIN_NODES` is set, the login-node health sampler uses
+the same SSH options/agent for each configured target, e.g.
+`hakusan1=you@hakusan1,hakusan2=you@hakusan2`. Today that uses your **interactive
 ssh-agent** (`~/.ssh/.agent_env`) holding the passphrase-protected key. That works
 while the agent (and the box) stays up — but **after a reboot the agent is gone**,
 so the service can't SSH until you re-run `ssh-add` and refresh `~/.ssh/.agent_env`.
@@ -70,6 +72,9 @@ service account. (Ask and I'll wire this up.)
 
 - The service is read-only and login-node-friendly: one compact query every
   `HM_SAMPLE_INTERVAL` seconds (default 300 = 5 min) over a reused SSH connection.
+- Login-node health sampling is also read-only and TTL-paced by
+  `HM_LOGIN_INTERVAL` (default 300 s), collecting `/proc`, `df`, and compact `ps`
+  summaries for the Login nodes page.
 - Set `TZ=Asia/Tokyo` (both unit and compose already do) so *Usage patterns*
   hour-of-day is in cluster time.
 - Change the port with `HM_PORT`; anonymize usernames with `HM_MASK_USERS=1`

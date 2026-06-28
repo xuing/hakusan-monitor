@@ -21,6 +21,7 @@ from urllib.parse import urlparse, parse_qs
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import normalize as nz          # noqa: E402
+from login_nodes import LoginNodeCollector, summarize_users  # noqa: E402
 from sources import Source      # noqa: E402
 from store import Store         # noqa: E402
 
@@ -60,12 +61,18 @@ CFG = {
                   "-o ControlMaster=auto -o ControlPath=~/.ssh/hm-%r@%h:%p "
                   "-o ControlPersist=120"),   # reuse one warm connection
     "port":       int(env("HM_PORT", "8787")),
+    "source_timeout": float(env("HM_SOURCE_TIMEOUT", "75")),
     "interval":   float(env("HM_SAMPLE_INTERVAL", "300")),   # 5 min — gentle on the login node
     "mask_users": env("HM_MASK_USERS", "0") in ("1", "true", "yes"),
     "mock_dir":   env("HM_MOCK_DIR", os.path.join(ROOT, "mock")),
     "db":         env("HM_DB", os.path.join(ROOT, "data", "hakusan.sqlite")),
     "retain_days": int(env("HM_RETAIN_DAYS", "60")),
     "max_sse":    int(env("HM_MAX_SSE", "64")),   # cap concurrent SSE connections
+    "login_nodes": env("HM_LOGIN_NODES", ""),
+    "login_interval": float(env("HM_LOGIN_INTERVAL", env("HM_SAMPLE_INTERVAL", "300"))),
+    "login_top_n": int(env("HM_LOGIN_TOP_N", "12")),
+    "login_show_args": env("HM_LOGIN_SHOW_ARGS", "0") in ("1", "true", "yes"),
+    "login_timeout": float(env("HM_LOGIN_TIMEOUT", "25")),
 }
 
 CONTAINER_INFO = {
@@ -87,7 +94,12 @@ class Engine:
     def __init__(self, cfg):
         self.cfg = cfg
         self.src = Source(cfg["source"], cfg["ssh_host"], cfg["ssh_opts"],
-                          cfg["mock_dir"])
+                          cfg["mock_dir"], timeout=cfg["source_timeout"])
+        self.login = LoginNodeCollector(
+            mode=cfg["source"], nodes=cfg["login_nodes"], ssh_opts=cfg["ssh_opts"],
+            mock_dir=cfg["mock_dir"], interval=cfg["login_interval"],
+            timeout=cfg["login_timeout"], top_n=cfg["login_top_n"],
+            show_args=cfg["login_show_args"], mask_users=cfg["mask_users"])
         self.store = Store(cfg["db"], retain_days=cfg["retain_days"])
         self.max_sse = cfg["max_sse"]
         self.latest = None
@@ -95,6 +107,7 @@ class Engine:
         self.sing_version = None
         self.raw_nodes = []        # full parsed lists for the raw-data tables
         self.raw_jobs = []
+        self.login_nodes = None
         self._subs = set()
         self._lock = threading.Lock()
         self._fetch_lock = threading.Lock()   # only one collection at a time
@@ -136,6 +149,18 @@ class Engine:
             self._n += 1
             if self._n % 120 == 1:
                 self.store.prune(now)
+            try:
+                login_payload, refreshed = self.login.fetch(now)
+                login_payload = {**login_payload,
+                                 "top_users": summarize_users(login_payload.get("nodes", []))}
+                self.login_nodes = login_payload
+                if refreshed:
+                    self.store.record_login(login_payload, int(now))
+            except Exception as e:
+                self.login_nodes = {"generated_at": int(now), "age_s": 0,
+                                    "configured": bool(self.cfg["login_nodes"]),
+                                    "nodes": [], "top_users": [], "stale": True,
+                                    "error": str(e)}
             self._broadcast(snap)
             return snap
         except Exception as e:
@@ -192,6 +217,10 @@ class Engine:
         return {"cluster": snap.get("cluster", "hakusan"),
                 "slurm_version": snap.get("slurm_version", ""),
                 "source": self.cfg["source"], "interval": self.cfg["interval"],
+                "login_nodes": {"configured": bool(self.cfg["login_nodes"]) or self.cfg["source"] in ("mock", "local"),
+                                "interval": self.cfg["login_interval"],
+                                "top_n": self.cfg["login_top_n"],
+                                "show_args": self.cfg["login_show_args"]},
                 "container": ci, "docs": DOCS,
                 "partitions": [{"name": p["name"], "kind": p["kind"]}
                                for p in snap.get("partitions", [])],
@@ -202,6 +231,14 @@ class Engine:
         return {"ok": ok, "source": self.cfg["source"], "error": self.error,
                 "age_s": round(time.time() - self.latest["generated_at"], 1)
                 if self.latest else None}
+
+    def login_snapshot(self):
+        if self.login_nodes is None:
+            payload, _ = self.login.fetch(time.time())
+            self.login_nodes = {**payload, "top_users": summarize_users(payload.get("nodes", []))}
+        s = dict(self.login_nodes)
+        s["age_s"] = round(time.time() - s.get("generated_at", time.time()), 1)
+        return s
 
 
 # --------------------------------------------------------------------------- #
@@ -276,6 +313,15 @@ class Handler(BaseHTTPRequestHandler):
             mp = int(q.get("points", ["600"])[0])
             return self._json(200, {"since": since, "until": until,
                                     "points": eng.store.history(since, until, mp)})
+        if path == "/api/login-nodes":
+            return self._json(200, eng.login_snapshot())
+        if path == "/api/login-nodes/history":
+            hours = float(q.get("hours", ["24"])[0])
+            until = int(time.time())
+            since = until - int(hours * 3600)
+            mp = int(q.get("points", ["600"])[0])
+            return self._json(200, {"since": since, "until": until,
+                                    "points": eng.store.login_history(since, until, mp)})
         if path == "/api/usage":
             days = int(q.get("days", ["30"])[0])
             return self._json(200, eng.store.usage_pattern(days))

@@ -1,4 +1,3 @@
-import { Bar } from "@/components/common/bar";
 import { Empty } from "@/components/common/empty";
 import { SectionCard } from "@/components/common/section-card";
 import { Tag } from "@/components/common/tag";
@@ -174,6 +173,24 @@ function PoolHeader({
   const util = total ? used / total : 0;
   const unit = isGpu ? t("unit.gpu") : t("unit.cores");
   const dim = isGpu ? t("dim.gpu") : t("dim.cpu");
+  const downNodes = pool?.down_nodes ?? ((pool?.nodes_state.down ?? 0) + (pool?.nodes_state.drain ?? 0));
+  const availableNodeCount = pool?.available_nodes ?? pool?.idle_nodes ?? 0;
+  const busyNodes = Math.max((pool?.nodes ?? 0) - availableNodeCount - downNodes, 0);
+  const blocks = isGpu
+    ? {
+        free: pool?.gpu?.free ?? 0,
+        used: pool?.gpu?.used ?? 0,
+        down: pool?.gpu?.down ?? 0,
+        total: pool?.gpu?.total ?? 0,
+        unit: t("unit.gpu"),
+      }
+    : {
+        free: availableNodeCount,
+        used: busyNodes,
+        down: downNodes,
+        total: pool?.nodes ?? 0,
+        unit: t("spec.nodes"),
+      };
   return (
     <div className="mb-1.5 border-b border-border pb-1.5">
       <div className="flex flex-wrap items-baseline gap-x-2">
@@ -185,6 +202,7 @@ function PoolHeader({
         </span>
       </div>
       <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-muted-foreground">
+        <UnitBlocks {...blocks} />
         {maint ? (
           <>
             <Tag tone="neutral">{t("pool.maint")}</Tag>
@@ -192,7 +210,6 @@ function PoolHeader({
           </>
         ) : (
           <>
-            <Bar value={util} className="w-24" />
             <span className="font-mono">
               {dim} {Math.round(util * 100)}% {t("kpi.used")} ({nf(used)}/{nf(total)} {unit})
             </span>
@@ -219,6 +236,55 @@ function PoolHeader({
       </div>
     </div>
   );
+}
+
+function UnitBlocks({
+  free,
+  used,
+  down,
+  total,
+  unit,
+}: {
+  free: number;
+  used: number;
+  down: number;
+  total: number;
+  unit: string;
+}) {
+  if (total <= 0) return null;
+  const [freeCells, usedCells, downCells] = scaleCells([free, used, down], total);
+  const cell = (n: number, cls: string, key: string) =>
+    Array.from({ length: n }, (_, i) => (
+      <span key={`${key}-${i}`} className={cn("h-2.5 min-w-0 flex-1 rounded-sm", cls)} />
+    ));
+  return (
+    <div
+      className="flex h-2.5 w-36 shrink-0 gap-px"
+      title={`${nf(free)} ${unit} ${unit === "GPU" ? "free" : "available"} · ${nf(used)} used${down ? ` · ${nf(down)} down` : ""}`}
+    >
+      {cell(freeCells, "bg-ok", "free")}
+      {cell(usedCells, "bg-bad", "used")}
+      {cell(downCells, "bg-muted-foreground/40", "down")}
+    </div>
+  );
+}
+
+function scaleCells(values: number[], total: number, maxCells = 48): number[] {
+  const cells = Math.max(1, Math.min(maxCells, Math.round(total)));
+  if (total <= maxCells) return values.map((v) => Math.max(0, Math.round(v)));
+  const raw = values.map((v) => (Math.max(0, v) / total) * cells);
+  const out = raw.map(Math.floor);
+  let remaining = cells - out.reduce((sum, n) => sum + n, 0);
+  raw
+    .map((v, i) => ({ i, frac: v - Math.floor(v) }))
+    .sort((a, b) => b.frac - a.frac)
+    .forEach(({ i }) => {
+      if (remaining > 0) {
+        out[i] += 1;
+        remaining -= 1;
+      }
+    });
+  return out;
 }
 
 function PartitionRow({ p, isGpu, pc, t }: { p: Partition; isGpu: boolean; pc: PoolCapacity; t: TFn }) {

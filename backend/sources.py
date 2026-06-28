@@ -17,7 +17,7 @@ MARK = "@@HM@@"
 SEP = "|@|"   # field separator unlikely to occur in any value (e.g. job names)
 # order matters — see parse_queue()
 SQUEUE_FIELDS = ["%i", "%u", "%a", "%P", "%T", "%r", "%D", "%C", "%b", "%V",
-                 "%e", "%S", "%L", "%j", "%q", "%N", "%M", "%l"]
+                 "%e", "%S", "%L", "%j", "%q", "%N", "%M", "%l", "%m"]
 SQUEUE_FMT = SEP.join(SQUEUE_FIELDS)
 CONTAINER_FMT = "JobID:64,Container:512"
 
@@ -83,6 +83,19 @@ def _clean(s):
     return "" if s in ("N/A", "INVALID", "Unknown", "") else s
 
 
+def _mem_mb(s):
+    """Slurm memory strings (`260000M`, `1500G`, `3.6T`) -> MB."""
+    if not s or s in ("N/A", "(null)", "None", "NULL"):
+        return 0
+    m = re.match(r"^(\d+(?:\.\d+)?)([KMGTP]?)", str(s).strip(), re.I)
+    if not m:
+        return 0
+    n = float(m.group(1))
+    unit = m.group(2).upper()
+    mult = {"": 1, "K": 1 / 1024, "M": 1, "G": 1024, "T": 1024 * 1024, "P": 1024 * 1024 * 1024}
+    return int(n * mult.get(unit, 1))
+
+
 def parse_containers(text):
     """`squeue -O JobID,Container` -> {job_id: container image/path}.
 
@@ -109,7 +122,7 @@ def parse_queue(text, containers=None):
         if len(p) < len(SQUEUE_FIELDS):
             continue
         (jid, user, acct, part, state, reason, nnodes, cpus, gres, submit,
-         end, start_est, left, name, qos, nodelist, used, timelimit) = p[:18]
+         end, start_est, left, name, qos, nodelist, used, timelimit, min_mem) = p[:19]
         gm = re.search(r"gpu:(?:[A-Za-z0-9_\-]+:)?(\d+)", gres or "")
         nnodes_i = int(nnodes) if nnodes.isdigit() else 0
         # squeue %b reports GRES *per node* (Slurm --gres is per-node); the job's
@@ -128,6 +141,7 @@ def parse_queue(text, containers=None):
             "time_left": _clean(left),
             "name": name, "qos": qos, "nodelist": _clean(nodelist),
             "time_used": _clean(used), "time_limit": _clean(timelimit),
+            "min_memory": _clean(min_mem), "min_memory_mb": _mem_mb(min_mem),
         })
     return {"jobs": jobs}
 

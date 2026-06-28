@@ -43,6 +43,8 @@ from one result: the in-memory *latest* snapshot (real-time), the SQLite store
 
 - `backend/sources.py` — acquire raw Slurm data (ssh / local / mock) as compact
   text, parse to a JSON-shaped dict.
+- `backend/login_nodes.py` — optional Hakusan 1 / Hakusan 2 health sampler:
+  `/proc`, `df`, `ps` summaries, top processes, top users.
 - `backend/normalize.py` — pure transform: dedupe overlapping partitions by node,
   count GPUs (incl. ones offline for maintenance), per-partition pressure score.
 - `backend/store.py` — SQLite: raw `samples` (retention-pruned) + `samples_hourly`
@@ -59,6 +61,8 @@ from one result: the in-memory *latest* snapshot (real-time), the SQLite store
   insights, down nodes, top users.
 - **Partitions** — per-partition load and queue (per-node specs + node states).
 - **Analytics** — peak/trough usage (hour-of-day + weekday × hour heatmap) and 24 h trends.
+- **Login nodes** — Hakusan 1 / Hakusan 2 load, CPU/iowait, memory, disk, top
+  processes and top users contributing to login-node slowness.
 - **Nodes** / **Jobs** — full sortable, filterable tables of all raw node/job data.
 - **Containers** (Guide) — how to run Singularity on Hakusan.
 
@@ -89,6 +93,12 @@ This was a hard requirement: **do not burden the Hakusan login node.**
   viewers; 100 browsers still cause just one query stream. Everything is
   read-only — no `sbatch`/`scancel`/installs.
 
+The optional **Login nodes** page monitors Hakusan 1 / Hakusan 2 themselves. It
+uses one short read-only command per configured node per interval
+(`HM_LOGIN_INTERVAL`, default 300 s): `/proc/loadavg`, `/proc/stat`,
+`/proc/meminfo`, `df`, and compact `ps` summaries. It stores only summary
+metrics plus Top N process/user rows in SQLite.
+
 ## Quick start (demo, no cluster)
 
 ```bash
@@ -111,6 +121,7 @@ working key/agent (no password prompts). Put your own SSH target in a local
 
 ```bash
 cp .env.example .env        # then edit HM_SSH_HOST=you@hakusan2
+# optional: edit HM_LOGIN_NODES=hakusan1=you@hakusan1,hakusan2=you@hakusan2
 # ensure your key is loaded, e.g.  ssh-add ~/.ssh/id_ed25519
 HM_SOURCE=ssh python3 backend/server.py      # reads HM_SSH_HOST from .env
 ```
@@ -141,7 +152,13 @@ npm run lint     # oxlint
 | `HM_SSH_HOST` | _(unset — put `you@hakusan2` in `.env`)_ | SSH target for `ssh` mode |
 | `HM_SSH_OPTS` | sane defaults | ssh options (incl. ControlMaster reuse) |
 | `HM_PORT` | `8787` | listen port |
+| `HM_SOURCE_TIMEOUT` | `75` | Slurm collection timeout, seconds |
 | `HM_SAMPLE_INTERVAL` | `300` | seconds between samples (login-node cadence) |
+| `HM_LOGIN_NODES` | _(unset)_ | optional comma list, e.g. `hakusan1=you@hakusan1,hakusan2=you@hakusan2` |
+| `HM_LOGIN_INTERVAL` | `HM_SAMPLE_INTERVAL` | seconds between login-node health samples |
+| `HM_LOGIN_TOP_N` | `12` | top process/user rows kept per login node |
+| `HM_LOGIN_SHOW_ARGS` | `0` | `1` shows truncated full command args; default shows command name only |
+| `HM_LOGIN_TIMEOUT` | `25` | per-node login health command timeout, seconds |
 | `HM_MASK_USERS` | `0` | `1` anonymizes usernames in the public view |
 | `HM_DB` | `data/hakusan.sqlite` | time-series database path |
 | `HM_RETAIN_DAYS` | `60` | raw-sample retention (hourly rollup kept beyond) |
@@ -154,6 +171,8 @@ npm run lint     # oxlint
 | `GET /api/snapshot` | current normalized snapshot (real-time) |
 | `GET /api/stream` | **SSE** — pushes the snapshot on every new sample |
 | `GET /api/history?hours=24` | down-sampled time-series for trend charts |
+| `GET /api/login-nodes` | current Hakusan login-node health: load, CPU, memory, disk, processes, users |
+| `GET /api/login-nodes/history?hours=24` | down-sampled login-node health history |
 | `GET /api/usage?days=30` | peak/trough by hour-of-day & weekday (local time) |
 | `GET /api/nodes` | full raw node list (every field) — for the Nodes table |
 | `GET /api/jobs` | full raw job list (every field) — for the Jobs table |

@@ -11,6 +11,7 @@ import { I18nProvider } from "@/i18n";
 const OverviewPage = lazy(() => import("@/pages/overview"));
 const PartitionsPage = lazy(() => import("@/pages/partitions"));
 const AnalyticsPage = lazy(() => import("@/pages/analytics"));
+const LoginNodesPage = lazy(() => import("@/pages/login-nodes"));
 const NodesPage = lazy(() => import("@/pages/nodes"));
 const JobsPage = lazy(() => import("@/pages/jobs"));
 const SlurmGuidePage = lazy(() => import("@/pages/slurm-guide"));
@@ -48,6 +49,14 @@ export default function App() {
                   element={
                     <Suspense fallback={<PageFallback />}>
                       <AnalyticsPage />
+                    </Suspense>
+                  }
+                />
+                <Route
+                  path="/login-nodes"
+                  element={
+                    <Suspense fallback={<PageFallback />}>
+                      <LoginNodesPage />
                     </Suspense>
                   }
                 />
