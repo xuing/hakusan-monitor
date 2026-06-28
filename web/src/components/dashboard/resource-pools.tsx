@@ -1,5 +1,6 @@
 import { useState, type ReactNode } from "react";
 import { Check, ChevronRight, Copy } from "lucide-react";
+import { Bar } from "@/components/common/bar";
 import { Tag } from "@/components/common/tag";
 import { Card, CardContent } from "@/components/ui/card";
 import { useLive } from "@/hooks/use-live";
@@ -82,6 +83,8 @@ function PoolCard({ pool, t }: { pool: Pool; t: TFn }) {
     : t("pool.availableNodes", { n: availableNodes });
   const free = isGpu ? pool.gpu?.free ?? 0 : pool.cores.free;
   const total = isGpu && pool.gpu ? pool.gpu.total : pool.cores.total;
+  const used = isGpu && pool.gpu ? pool.gpu.used : pool.cores.alloc;
+  const util = total ? used / total : 0;   // bar fills as the pool gets used (full = red)
   const freeRatio = total ? free / total : 0;
   // colour by how much is free: none = red, scarce (<10%) = amber, plenty = green
   const freeColor = maint
@@ -160,7 +163,7 @@ function PoolCard({ pool, t }: { pool: Pool; t: TFn }) {
           </div>
         </div>
 
-        <AvailabilityBar free={maint ? 0 : free} total={total} maint={maint} className="mt-2" />
+        <Bar value={maint ? 0 : util} tone={maint ? "neutral" : undefined} className="mt-2" />
 
         <div className="mt-2.5 flex flex-wrap items-center gap-x-4 text-[11px] text-muted-foreground">
           <span>
@@ -298,28 +301,6 @@ function hasAvailableNodes(pool: Pool) {
   return !isMaintPool(pool) && (pool.available_nodes ?? pool.idle_nodes ?? 0) > 0;
 }
 
-function AvailabilityBar({
-  free,
-  total,
-  maint,
-  className,
-}: {
-  free: number;
-  total: number;
-  maint: boolean;
-  className?: string;
-}) {
-  const ratio = total ? free / total : 0;
-  return (
-    <div className={cn("h-2 overflow-hidden rounded-full bg-muted", className)}>
-      <div
-        className={cn("h-full rounded-full transition-all duration-500", maint ? "bg-muted-foreground/40" : "bg-ok")}
-        style={{ width: `${Math.min(100, Math.round(ratio * 100))}%` }}
-      />
-    </div>
-  );
-}
-
 function Occupants({ pool, t }: { pool: Pool; t: TFn }) {
   const { snap } = useLive();
   const [q, setQ] = useState("");
@@ -336,7 +317,9 @@ function Occupants({ pool, t }: { pool: Pool; t: TFn }) {
   if (effectiveSort === "ending") {
     list = [...list].sort((a, b) => (a.end_time || "~").localeCompare(b.end_time || "~"));
   }
-  const total = isGpu && pool.gpu ? pool.gpu.total : pool.cores.total;
+  // bar is relative to the biggest current occupant, so it stays meaningful even
+  // in huge pools (where share-of-pool would be an invisible sliver).
+  const maxVal = Math.max(1, ...list.map((o) => (isGpu ? o.gpus : o.cpus)));
 
   return (
     <div className="mt-2">
@@ -375,7 +358,7 @@ function Occupants({ pool, t }: { pool: Pool; t: TFn }) {
       </div>
       <div className="max-h-72 space-y-1 overflow-y-auto pr-1">
         {list.map((o) => (
-          <OccupantRow key={String(o.job_id)} o={o} unitGpu={isGpu} total={total} t={t} />
+          <OccupantRow key={String(o.job_id)} o={o} unitGpu={isGpu} max={maxVal} t={t} />
         ))}
         {list.length === 0 && (
           <div className="py-3 text-center text-[11px] text-muted-foreground">{t("table.noresults")}</div>
@@ -390,8 +373,8 @@ function Occupants({ pool, t }: { pool: Pool; t: TFn }) {
   );
 }
 
-function OccupantRow({ o, unitGpu, total, t }: { o: Occupant; unitGpu: boolean; total: number; t: TFn }) {
-  const share = total ? (unitGpu ? o.gpus : o.cpus) / total : 0;
+function OccupantRow({ o, unitGpu, max, t }: { o: Occupant; unitGpu: boolean; max: number; t: TFn }) {
+  const share = max ? (unitGpu ? o.gpus : o.cpus) / max : 0;
   return (
     <div className="rounded-md bg-muted/40 px-2.5 py-1.5 text-[11px]">
       <div className="flex items-center justify-between gap-2">
