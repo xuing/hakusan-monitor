@@ -21,8 +21,6 @@ cluster is usually busy, and how to run your job (including containers).
   modern React app (Vite + Tailwind + shadcn/ui + Tremor + Radix Colors) built to
   static files the backend serves.
 
-![overview](docs/overview.png)
-
 ## Architecture
 
 ```
