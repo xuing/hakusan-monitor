@@ -76,12 +76,12 @@ CFG = {
 }
 
 CONTAINER_INFO = {
-    "runtime": "Singularity-CE", "version": "4.3.7", "has_docker": False,
-    "login_module": None, "compute_module": "singularity/3.9.5",
+    "runtime": "SingularityCE", "version": "4.3.7-noble", "has_docker": False,
+    "login_module": None, "compute_module": None, "command": "singularity",
     "examples": [
-        "singularity pull docker://python:3.12",
+        "singularity pull python_3.12.sif docker://python:3.12",
         "srun -p VM-CPU -c 8 --mem 16G --pty bash -lc "
-        "'module load singularity/3.9.5 && singularity run python_3.12.sif python3 -V'",
+        "'singularity exec python_3.12.sif python3 -V'",
     ],
 }
 DOCS = {"course_material": "https://jstorage.app.box.com/v/hakusan20260618ja"}
@@ -138,6 +138,7 @@ class Engine:
                                 mask_users=self.cfg["mask_users"])
             snap.update(generated_at=int(now), age_s=0.0,
                         source=self.cfg["source"], stale=False)
+            snap["cpu_submit_probes"] = squeue.get("cpu_submit_probes", [])
             # ship the raw data in the same payload — one pull feeds tables,
             # occupancy and the derived dashboard alike (no repeated fetching).
             snap["nodes"] = self.raw_nodes

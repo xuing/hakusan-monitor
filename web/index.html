@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en" class="dark">
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
@@ -7,8 +7,12 @@
     <meta name="description" content="Live load & queue dashboard for the JAIST Hakusan HPC cluster." />
     <title>Hakusan Monitor</title>
     <script>
-      // apply saved theme before paint (default dark) — avoids a flash
-      try { if (localStorage.getItem("hm_theme") === "light") document.documentElement.classList.remove("dark"); } catch (e) {}
+      // Apply saved theme before paint; otherwise follow the browser preference.
+      try {
+        const saved = localStorage.getItem("hm_theme");
+        const dark = saved === "dark" || (!saved && window.matchMedia("(prefers-color-scheme: dark)").matches);
+        document.documentElement.classList.toggle("dark", dark);
+      } catch (e) {}
     </script>
   </head>
   <body>

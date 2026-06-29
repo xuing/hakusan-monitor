@@ -15,7 +15,8 @@ cluster is usually busy, and how to run your job (including containers).
   when GPUs next free up. The resource filter re-scopes the entire page.
 - **All the raw data, too** — sortable, filterable tables of every node and every
   job, not just the summary.
-- **Multilingual from day one** — 日本語 / English / 中文 (JA is the default).
+- **Multilingual and theme-aware** — 日本語 / English / 中文; the theme follows
+  the browser unless a user chooses one manually.
 - **Zero-dependency backend** — Python 3 standard library only. The frontend is a
   modern React app (Vite + Tailwind + shadcn/ui + Tremor + Radix Colors) built to
   static files the backend serves.
@@ -44,7 +45,8 @@ from one result: the in-memory *latest* snapshot (real-time), the SQLite store
 - `backend/sources.py` — acquire raw Slurm data (ssh / local / mock) as compact
   text, parse to a JSON-shaped dict.
 - `backend/login_nodes.py` — optional Hakusan 1 / Hakusan 2 health sampler:
-  `/proc`, `df`, `ps` summaries, top processes, top users.
+  `/proc`, `df`/`df -i`, `iostat` if available, compact `ps`, top processes,
+  top users.
 - `backend/normalize.py` — pure transform: dedupe overlapping partitions by node,
   count GPUs (incl. ones offline for maintenance), per-partition pressure score.
 - `backend/store.py` — SQLite: raw `samples` (retention-pruned) + `samples_hourly`
@@ -55,16 +57,22 @@ from one result: the in-memory *latest* snapshot (real-time), the SQLite store
 
 ## Pages
 
-- **Overview** — KPIs that adapt to the selected resource, **resource pools**
-  (free cores / free GPUs per hardware pool, each expandable to show **who's using
-  it** + submission targets), "where can I run now?", upcoming releases, queue
-  insights, down nodes, top users.
-- **Partitions** — per-partition load and queue (per-node specs + node states).
+- **Overview** — KPIs that adapt to the selected resource, physical **resource
+  pools** (free cores / free GPUs per hardware pool, expandable to show who's
+  using it + submission targets), "where can I run now?", upcoming releases,
+  queue insights, down nodes, top users.
+- **Partitions** — per-partition load and queue (per-node specs + node states)
+  and whether each default request can start. CPU `salloc` commands are copyable
+  only when backed by `sbatch --test-only`; GPU quick request and `--mem`
+  workarounds live in the resource pool cards.
 - **Analytics** — peak/trough usage (hour-of-day + weekday × hour heatmap) and 24 h trends.
-- **Login nodes** — Hakusan 1 / Hakusan 2 load, CPU/iowait, memory, disk, top
-  processes and top users contributing to login-node slowness.
+- **Login nodes** — Hakusan 1 / Hakusan 2 load, CPU/iowait, memory, `iostat`
+  disk pressure, top processes and top users. Disk space is shown only as a
+  reference.
 - **Nodes** / **Jobs** — full sortable, filterable tables of all raw node/job data.
-- **Containers** (Guide) — how to run Singularity on Hakusan.
+- **Containers** (Guide) — Hakusan-oriented SingularityCE notes: SIF-first
+  workflow, Docker/OCI image conversion, GPU `--nv`, bind mounts, clean
+  environments, and container services.
 
 The topbar **resource filter** (All / A40 / A100 / H100-80 / H100-MIG / CPU /
 VM-CPU / Large-mem) **transforms the whole view** — KPIs, pools and lists all
@@ -89,15 +97,19 @@ This was a hard requirement: **do not burden the Hakusan login node.**
 - **One round trip per sample** (nodes + queue + singularity version combined),
   over a **reused SSH connection** (`ControlMaster`/`ControlPersist`) — no repeated
   handshakes.
-- A **single TTL-paced sampler** (default **45 s**, configurable) serves all
-  viewers; 100 browsers still cause just one query stream. Everything is
-  read-only — no `sbatch`/`scancel`/installs.
+- A **single TTL-paced sampler** (default **300 s**, configurable) serves all
+  viewers; 100 browsers still cause just one query stream. Updates are pushed to
+  clients over Server-Sent Events (SSE). Everything is non-mutating: CPU probes
+  use `sbatch --test-only`, and the app never submits real jobs, cancels jobs, or
+  installs software.
 
 The optional **Login nodes** page monitors Hakusan 1 / Hakusan 2 themselves. It
 uses one short read-only command per configured node per interval
 (`HM_LOGIN_INTERVAL`, default 300 s): `/proc/loadavg`, `/proc/stat`,
-`/proc/meminfo`, `df`, and compact `ps` summaries. It stores only summary
-metrics plus Top N process/user rows in SQLite.
+`/proc/meminfo`, `df`, `df -i`, `iostat -x -y 1 1` when available, and compact
+`ps` summaries. It stores only summary metrics plus Top N process/user rows in
+SQLite. Disk space is displayed for reference; pressure signals come from load,
+CPU, memory, D-state processes, and `iostat`.
 
 ## Quick start (demo, no cluster)
 
@@ -153,7 +165,7 @@ npm run lint     # oxlint
 | `HM_SSH_OPTS` | sane defaults | ssh options (incl. ControlMaster reuse) |
 | `HM_PORT` | `8787` | listen port |
 | `HM_SOURCE_TIMEOUT` | `75` | Slurm collection timeout, seconds |
-| `HM_SAMPLE_INTERVAL` | `300` | seconds between samples (login-node cadence) |
+| `HM_SAMPLE_INTERVAL` | `300` | seconds between cluster samples |
 | `HM_LOGIN_NODES` | _(unset)_ | optional comma list, e.g. `hakusan1=you@hakusan1,hakusan2=you@hakusan2` |
 | `HM_LOGIN_INTERVAL` | `HM_SAMPLE_INTERVAL` | seconds between login-node health samples |
 | `HM_LOGIN_TOP_N` | `12` | top process/user rows kept per login node |
@@ -171,7 +183,7 @@ npm run lint     # oxlint
 | `GET /api/snapshot` | current normalized snapshot (real-time) |
 | `GET /api/stream` | **SSE** — pushes the snapshot on every new sample |
 | `GET /api/history?hours=24` | down-sampled time-series for trend charts |
-| `GET /api/login-nodes` | current Hakusan login-node health: load, CPU, memory, disk, processes, users |
+| `GET /api/login-nodes` | current Hakusan login-node health: load, CPU, memory, disk pressure, processes, users |
 | `GET /api/login-nodes/history?hours=24` | down-sampled login-node health history |
 | `GET /api/usage?days=30` | peak/trough by hour-of-day & weekday (local time) |
 | `GET /api/nodes` | full raw node list (every field) — for the Nodes table |

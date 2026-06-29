@@ -98,6 +98,18 @@ export const PARTITION_CAPS: Record<string, PartitionCap> = {
   "VM-LM": { maxCores: 96, maxMemGb: 3840, maxNodes: 1, wall: "7d" },
 };
 
+export const MATERIALS_STUDIO_PARTITIONS = [
+  "MS_Castep",
+  "MS_Dmol3",
+  "MS_Forcite",
+  "MS_Compass",
+  "MS_Dftbplus",
+  "MS_Amorphous",
+  "MatStudio",
+];
+
+export const isMaterialsStudioPartition = (name: string) => MATERIALS_STUDIO_PARTITIONS.includes(name);
+
 export const partitionCap = (name: string): PartitionCap => PARTITION_CAPS[name] ?? {};
 
 export const PARTITION_POLICIES: Record<string, PartitionPolicy> = {

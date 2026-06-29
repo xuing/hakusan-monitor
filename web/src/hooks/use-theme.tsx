@@ -10,7 +10,18 @@ interface ThemeValue {
 
 const ThemeContext = createContext<ThemeValue | null>(null);
 
-const detectTheme = (): Theme => (localStorage.getItem("hm_theme") === "light" ? "light" : "dark");
+const THEME_KEY = "hm_theme";
+
+function savedTheme(): Theme | null {
+  const saved = localStorage.getItem(THEME_KEY);
+  return saved === "dark" || saved === "light" ? saved : null;
+}
+
+function systemTheme(): Theme {
+  return window.matchMedia?.("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+}
+
+const detectTheme = (): Theme => savedTheme() ?? systemTheme();
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
   const [theme, setThemeState] = useState<Theme>(detectTheme);
@@ -19,13 +30,22 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     document.documentElement.classList.toggle("dark", theme === "dark");
   }, [theme]);
 
+  useEffect(() => {
+    if (savedTheme()) return;
+    const query = window.matchMedia?.("(prefers-color-scheme: dark)");
+    if (!query) return;
+    const sync = () => setThemeState(query.matches ? "dark" : "light");
+    query.addEventListener("change", sync);
+    return () => query.removeEventListener("change", sync);
+  }, []);
+
   const setTheme = useCallback((t: Theme) => {
-    localStorage.setItem("hm_theme", t);
+    localStorage.setItem(THEME_KEY, t);
     setThemeState(t);
   }, []);
   const toggle = useCallback(() => setThemeState((p) => {
     const next = p === "dark" ? "light" : "dark";
-    localStorage.setItem("hm_theme", next);
+    localStorage.setItem(THEME_KEY, next);
     return next;
   }), []);
 

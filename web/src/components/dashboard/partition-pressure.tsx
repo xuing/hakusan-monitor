@@ -1,3 +1,5 @@
+import { useState } from "react";
+import { Check, Copy } from "lucide-react";
 import { Empty } from "@/components/common/empty";
 import { SectionCard } from "@/components/common/section-card";
 import { Tag } from "@/components/common/tag";
@@ -5,9 +7,18 @@ import { useLive } from "@/hooks/use-live";
 import { useResourceFilter } from "@/hooks/use-resource-filter";
 import { poolLabel, useT, type TFn } from "@/i18n";
 import type { TranslationKey } from "@/i18n/en";
+import { copyText } from "@/lib/clipboard";
 import { poolCapacity, type PoolCapacity } from "@/lib/derive";
-import { fmtMB, nf } from "@/lib/format";
-import { matchPartition, partitionCap, type PartitionCap } from "@/lib/slurm";
+import { clockOf, fmtMB, nf } from "@/lib/format";
+import { cleanCpuProbeRaw, cpuProbeForPartition, cpuProbeState, type CpuProbeRow, type CpuProbeState } from "@/lib/cpu-probes";
+import {
+  isMaterialsStudioPartition,
+  matchPartition,
+  partitionCap,
+  partitionPolicy as slurmPartitionPolicy,
+  type PartitionCap,
+  type PartitionPolicy,
+} from "@/lib/slurm";
 import { cn } from "@/lib/utils";
 import type { Partition, Pool } from "@/types/snapshot";
 
@@ -39,7 +50,7 @@ const PARTITION_POLICIES: Record<string, { title: TranslationKey; desc: Translat
   i112: { title: "policy.i112", desc: "policy.i112.desc" },
 };
 
-function partitionPolicy(name: string): { title: TranslationKey; desc: TranslationKey } {
+function partitionLabelPolicy(name: string): { title: TranslationKey; desc: TranslationKey } {
   return PARTITION_POLICIES[name] ?? { title: "policy.other", desc: "policy.other.desc" };
 }
 
@@ -102,45 +113,80 @@ export function PartitionPressure() {
   if (!snap) return null;
 
   const matched = snap.partitions.filter((p) => matchPartition(p, filter));
-  // group partitions by their hardware pool — same nodes shown once, not 16×
-  const groups = new Map<string, Partition[]>();
+  // Group by hardware pool; app-specific partitions remain under the same pool.
+  const groups = new Map<string, PartitionGroup>();
   for (const p of matched) {
-    const k = p.pool ?? "other";
-    const arr = groups.get(k) ?? [];
-    arr.push(p);
-    groups.set(k, arr);
+    const poolKey = p.pool ?? "other";
+    const group = groups.get(poolKey) ?? { key: poolKey, poolKey, parts: [] };
+    group.parts.push(p);
+    groups.set(poolKey, group);
   }
   const order = snap.pools.map((p) => p.id);
   const poolById = new Map(snap.pools.map((p) => [p.id, p]));
-  const keys = [...groups.keys()].sort((a, b) =>
-    Number(!!poolById.get(a)?.gpu?.maint) - Number(!!poolById.get(b)?.gpu?.maint)
-      || order.indexOf(a) - order.indexOf(b),
+  const partitionGroups = [...groups.values()].sort((a, b) =>
+    Number(!!poolById.get(a.poolKey)?.gpu?.maint) - Number(!!poolById.get(b.poolKey)?.gpu?.maint)
+      || order.indexOf(a.poolKey) - order.indexOf(b.poolKey),
   );
 
   return (
     <SectionCard title={t("section.partitions")} extra={`${matched.length} · ${t("part.requestNow")}`}>
-      {keys.length === 0 ? (
+      {partitionGroups.length === 0 ? (
         <Empty>—</Empty>
       ) : (
         <div className="space-y-5">
-          {keys.map((k) => {
-            const parts = groups.get(k)!.sort((a, b) =>
+          {partitionGroups.map((group) => {
+            const cpuRank = (p: Partition) => {
+              if (p.kind === "gpu") return 0;
+              const runtimePolicy = slurmPartitionPolicy(p.name);
+              if (runtimePolicy.grpJobs && p.jobs.running >= runtimePolicy.grpJobs) return 1;
+              const row = cpuProbeForPartition(snap, p.name);
+              if (!row) return 0;
+              const state = cpuProbeState(row.probe, snap.generated_at);
+              if (state === "now") return 0;
+              if (state === "queued") return 2;
+              if (state === "unknown") return 3;
+              return 4;
+            };
+            const parts = group.parts.sort((a, b) =>
               Number(isMaintPartition(a)) - Number(isMaintPartition(b))
+                || cpuRank(a) - cpuRank(b)
                 || availableNodes(b) - availableNodes(a)
                 || b.pressure - a.pressure,
             );
+            const generalParts = parts.filter((p) => !isMaterialsStudioPartition(p.name));
+            const materialsParts = parts.filter((p) => isMaterialsStudioPartition(p.name));
             const spec = parts[0].spec;
             const isGpu = parts[0].kind === "gpu";
-            const pool = poolById.get(k);
-            const pc = poolCapacity(snap, k);
+            const pool = poolById.get(group.poolKey);
+            const pc = poolCapacity(snap, group.poolKey);
             return (
-              <div key={k}>
-                <PoolHeader pool={pool} label={poolLabel(t, k)} spec={spec} isGpu={isGpu} pc={pc} t={t} />
+              <div key={group.key}>
+                <PoolHeader pool={pool} label={poolLabel(t, group.poolKey)} spec={spec} isGpu={isGpu} pc={pc} t={t} />
                 {parts.length > 1 && <p className="mb-1.5 text-[11px] text-muted-foreground/80">{t("part.shared")}</p>}
-                <div className="divide-y divide-border">
-                  {parts.map((p) => (
-                    <PartitionRow key={p.name} p={p} isGpu={isGpu} pc={pc} t={t} />
-                  ))}
+                <div className="space-y-2">
+                  {generalParts.length > 0 && (
+                    <PartitionRows
+                      label={materialsParts.length > 0 ? t("part.generalCpuPolicies") : ""}
+                      parts={generalParts}
+                      isGpu={isGpu}
+                      pc={pc}
+                      cpuProbeFor={(p) => (!isGpu ? cpuProbeForPartition(snap, p.name) : null)}
+                      generatedAt={snap.generated_at}
+                      t={t}
+                    />
+                  )}
+                  {materialsParts.length > 0 && (
+                    <PartitionRows
+                      label={t("part.materialsStudioGroup")}
+                      note={t("part.materialsStudioNote")}
+                      parts={materialsParts}
+                      isGpu={isGpu}
+                      pc={pc}
+                      cpuProbeFor={(p) => (!isGpu ? cpuProbeForPartition(snap, p.name) : null)}
+                      generatedAt={snap.generated_at}
+                      t={t}
+                    />
+                  )}
                 </div>
               </div>
             );
@@ -148,6 +194,56 @@ export function PartitionPressure() {
         </div>
       )}
     </SectionCard>
+  );
+}
+
+interface PartitionGroup {
+  key: string;
+  poolKey: string;
+  parts: Partition[];
+}
+
+function PartitionRows({
+  label,
+  note,
+  parts,
+  isGpu,
+  pc,
+  cpuProbeFor,
+  generatedAt,
+  t,
+}: {
+  label: string;
+  note?: string;
+  parts: Partition[];
+  isGpu: boolean;
+  pc: PoolCapacity;
+  cpuProbeFor: (p: Partition) => CpuProbeRow | null;
+  generatedAt: number;
+  t: TFn;
+}) {
+  return (
+    <div>
+      {label && (
+        <div className="mb-1 flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-[11px]">
+          <span className="font-medium text-foreground">{label}</span>
+          {note && <span className="text-muted-foreground/80">{note}</span>}
+        </div>
+      )}
+      <div className="divide-y divide-border">
+        {parts.map((p) => (
+          <PartitionRow
+            key={p.name}
+            p={p}
+            isGpu={isGpu}
+            pc={pc}
+            cpuProbe={cpuProbeFor(p)}
+            generatedAt={generatedAt}
+            t={t}
+          />
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -287,19 +383,47 @@ function scaleCells(values: number[], total: number, maxCells = 48): number[] {
   return out;
 }
 
-function PartitionRow({ p, isGpu, pc, t }: { p: Partition; isGpu: boolean; pc: PoolCapacity; t: TFn }) {
+function PartitionRow({
+  p,
+  isGpu,
+  pc,
+  cpuProbe,
+  generatedAt,
+  t,
+}: {
+  p: Partition;
+  isGpu: boolean;
+  pc: PoolCapacity;
+  cpuProbe: CpuProbeRow | null;
+  generatedAt: number;
+  t: TFn;
+}) {
+  const [copied, setCopied] = useState(false);
   const maint = isMaintPartition(p);
-  const policy = partitionPolicy(p.name);
+  const labelPolicy = partitionLabelPolicy(p.name);
+  const runtimePolicy = slurmPartitionPolicy(p.name);
+  const groupRunning = p.jobs.running;
+  const limitRows = partitionPolicyLimitRows(runtimePolicy, groupRunning, t);
+  const groupLimitReached = Boolean(runtimePolicy.grpJobs && groupRunning >= runtimePolicy.grpJobs);
   const cap = partitionCap(p.name);
   const hero = requestableNow(p, cap, isGpu, pc);
-  const canRun = !maint && hero.n > 0;
+  const probeState = cpuProbe ? cpuProbeState(cpuProbe.probe, generatedAt) : null;
+  const canRun = !maint && !groupLimitReached && (probeState ? probeState === "now" : hero.n > 0);
+  const showTestedCommand = Boolean(cpuProbe?.probe && !maint && (probeState === "now" || probeState === "queued"));
+  const copyCommand = async () => {
+    if (!cpuProbe || !showTestedCommand) return;
+    if (await copyText(cpuProbe.command)) {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1200);
+    }
+  };
 
   return (
     <div className={maint ? "py-2 opacity-55" : "py-2"}>
       <div className="grid gap-x-3 gap-y-1 sm:grid-cols-[9rem_minmax(0,1fr)_auto] sm:items-center">
         <div className="min-w-0">
           <div className="truncate text-sm font-medium">{p.name}</div>
-          <div className="truncate text-[11px] text-muted-foreground">{t(policy.title)}</div>
+          <div className="truncate text-[11px] text-muted-foreground">{t(labelPolicy.title)}</div>
         </div>
         <div className="min-w-0">
           <div className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5">
@@ -317,11 +441,38 @@ function PartitionRow({ p, isGpu, pc, t }: { p: Partition; isGpu: boolean; pc: P
               {t("part.run")}{nf(p.jobs.running)} {t("part.pend")}{nf(p.jobs.pending)}
             </span>
           </div>
-          <div className="mt-0.5 truncate text-[11px] text-muted-foreground/80">{t(policy.desc)}</div>
+          <div className="mt-0.5 truncate text-[11px] text-muted-foreground/80">{t(labelPolicy.desc)}</div>
+          {limitRows.length > 0 && <PartitionPolicyLimits rows={limitRows} />}
+          {cpuProbe && !maint && (
+            <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px]">
+              {showTestedCommand && (
+                <span className="inline-flex max-w-full min-w-0 items-center gap-1 text-muted-foreground">
+                  <span className="min-w-0 truncate font-mono text-foreground">{cpuProbe.command}</span>
+                  <button
+                    type="button"
+                    onClick={copyCommand}
+                    title={t(copied ? "helper.copied" : "helper.copy")}
+                    aria-label={t(copied ? "helper.copied" : "helper.copy")}
+                    className="rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+                  >
+                    {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+                  </button>
+                </span>
+              )}
+              <span className="font-mono text-muted-foreground">
+                {t("pool.cpuProbeNeed", { cores: cpuProbe.cores, mem: fmtMB(cpuProbe.memMb) })}
+              </span>
+              <span className="min-w-0 truncate text-muted-foreground">{partitionCpuProbeDetail(cpuProbe, probeState, t)}</span>
+            </div>
+          )}
         </div>
         <div className="flex items-center sm:justify-end">
           {maint ? (
             <Tag tone="neutral">{t("pool.maint")}</Tag>
+          ) : groupLimitReached ? (
+            <Tag tone="warn">{t("part.willQueue")}</Tag>
+          ) : probeState ? (
+            <Tag tone={partitionCpuProbeTone(probeState)}>{partitionCpuProbeLabel(probeState, t)}</Tag>
           ) : canRun ? (
             <Tag tone="ok">{t("part.canAllocate")}</Tag>
           ) : (
@@ -331,4 +482,93 @@ function PartitionRow({ p, isGpu, pc, t }: { p: Partition; isGpu: boolean; pc: P
       </div>
     </div>
   );
+}
+
+function PartitionPolicyLimits({
+  rows,
+}: {
+  rows: Array<{ key: string; label: string; reached: boolean; near: boolean }>;
+}) {
+  return (
+    <div className="mt-1 flex flex-wrap gap-1">
+      {rows.map((row) => (
+        <span
+          key={row.key}
+          className={cn(
+            "rounded-md border px-1.5 py-0.5 text-[10px]",
+            row.reached
+              ? "border-bad/30 bg-bad-soft text-bad-fg"
+              : row.near
+                ? "border-warn/30 bg-warn-soft text-warn-fg"
+                : "border-border bg-muted/40 text-muted-foreground",
+          )}
+        >
+          {row.label}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function partitionPolicyLimitRows(policy: PartitionPolicy, groupRunning: number, t: TFn) {
+  const rows: Array<{ key: string; label: string; reached: boolean; near: boolean }> = [];
+  if (policy.grpJobs) {
+    rows.push({
+      key: "grp",
+      label: t("pool.limitGroup", { n: groupRunning, max: policy.grpJobs }),
+      ...limitLevel(groupRunning, policy.grpJobs),
+    });
+  }
+  if (policy.maxJobsPerUser && policy.maxSubmitPerUser) {
+    rows.push({
+      key: "user",
+      label: t("pool.limitUserBoth", { running: policy.maxJobsPerUser, submitted: policy.maxSubmitPerUser }),
+      reached: false,
+      near: false,
+    });
+  } else if (policy.maxJobsPerUser) {
+    rows.push({
+      key: "userRun",
+      label: t("pool.limitUserRunning", { max: policy.maxJobsPerUser }),
+      reached: false,
+      near: false,
+    });
+  } else if (policy.maxSubmitPerUser) {
+    rows.push({
+      key: "userSubmit",
+      label: t("pool.limitUserSubmitted", { max: policy.maxSubmitPerUser }),
+      reached: false,
+      near: false,
+    });
+  }
+  return rows;
+}
+
+function limitLevel(current: number, max: number) {
+  return {
+    reached: current >= max,
+    near: max > 1 && current >= Math.ceil(max * 0.8),
+  };
+}
+
+function partitionCpuProbeLabel(state: CpuProbeState, t: TFn) {
+  if (state === "now") return t("pool.cpuProbeNow");
+  if (state === "queued") return t("pool.cpuProbeQueued");
+  if (state === "unknown") return t("pool.cpuProbeNoData");
+  return t("pool.cpuProbeFailed");
+}
+
+function partitionCpuProbeTone(state: CpuProbeState) {
+  if (state === "now") return "ok" as const;
+  if (state === "queued") return "warn" as const;
+  if (state === "unknown") return "neutral" as const;
+  return "bad" as const;
+}
+
+function partitionCpuProbeDetail(row: CpuProbeRow, state: CpuProbeState | null, t: TFn) {
+  if (!row.probe) return t("pool.cpuProbeNoData");
+  if (state === "now") return row.probe.nodes ? t("pool.cpuProbeNodes", { nodes: row.probe.nodes }) : "";
+  if (state === "queued" && row.probe.start_time) return t("pool.cpuProbeStart", { time: clockOf(row.probe.start_time) });
+  const raw = cleanCpuProbeRaw(row.probe.raw);
+  return raw.length > 120 ? `${raw.slice(0, 117)}...` : raw;
 }

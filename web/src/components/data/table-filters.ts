@@ -1,11 +1,24 @@
-import type { Row } from "@tanstack/react-table";
+import type { Row, Table } from "@tanstack/react-table";
 
 export function exactArrayFilter<T>(row: Row<T>, columnId: string, filterValue: unknown) {
-  const selected = Array.isArray(filterValue)
-    ? filterValue.map(String)
-    : filterValue
-      ? [String(filterValue)]
-      : [];
+  const selected = normalizeFilter(filterValue);
   if (selected.length === 0) return true;
-  return selected.includes(String(row.getValue(columnId) ?? ""));
+  const raw = row.getValue(columnId);
+  const values = Array.isArray(raw) ? raw.map(String) : [String(raw ?? "")];
+  return selected.some((value) => values.includes(value));
+}
+
+export function setSingleFacet<T>(table: Table<T>, columnId: string, value: string) {
+  const column = table.getColumn(columnId);
+  if (!column) return;
+  const selected = normalizeFilter(column.getFilterValue());
+  column.setFilterValue(selected.length === 1 && selected[0] === value ? undefined : [value]);
+}
+
+export function normalizeFilter(value: unknown) {
+  if (Array.isArray(value)) return value.map(String).filter(Boolean);
+  if (value && typeof value === "object" && Array.isArray((value as { values?: unknown }).values)) {
+    return (value as { values: unknown[] }).values.map(String).filter(Boolean);
+  }
+  return value ? [String(value)] : [];
 }

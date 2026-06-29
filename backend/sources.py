@@ -20,6 +20,7 @@ SQUEUE_FIELDS = ["%i", "%u", "%a", "%P", "%T", "%r", "%D", "%C", "%b", "%V",
                  "%e", "%S", "%L", "%j", "%q", "%N", "%M", "%l", "%m"]
 SQUEUE_FMT = SEP.join(SQUEUE_FIELDS)
 CONTAINER_FMT = "JobID:64,Container:512"
+CPU_TEST_PARTITIONS = ["TINY", "DEF", "SINGLE", "SMALL", "LARGE", "XLARGE", "X2LARGE", "LONG", "LONG-L"]
 
 
 def _kv(line, key):
@@ -146,6 +147,50 @@ def parse_queue(text, containers=None):
     return {"jobs": jobs}
 
 
+def parse_cpu_submit_probes(text):
+    """`sbatch --test-only` rows for CPU partitions.
+
+    This does not submit jobs. It asks Slurm for the predicted placement/start
+    time of the partition's default request, which is more accurate than
+    inferring queueability from idle node counts alone.
+    """
+    probes = []
+    start_re = re.compile(
+        r"to start at (\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}).*?"
+        r"using (\d+) processors on nodes (.*?) in partition (\S+)"
+    )
+    for line in text.splitlines():
+        p = line.split(SEP, 2)
+        if len(p) < 3:
+            continue
+        partition, rc_s, raw = p
+        raw = raw.strip()
+        m = start_re.search(raw)
+        if m:
+            start, procs, nodes, part = m.groups()
+            probes.append({
+                "partition": part or partition,
+                "ok": True,
+                "start_time": start,
+                "start_epoch": _epoch(start),
+                "processors": _int(procs),
+                "nodes": nodes,
+                "raw": raw,
+            })
+        else:
+            probes.append({
+                "partition": partition,
+                "ok": False,
+                "start_time": "",
+                "start_epoch": 0,
+                "processors": 0,
+                "nodes": "",
+                "raw": raw,
+                "rc": _int(rc_s),
+            })
+    return probes
+
+
 class Source:
     def __init__(self, mode="mock", ssh_host="", ssh_opts="",
                  mock_dir="mock", timeout=25):
@@ -179,14 +224,25 @@ class Source:
             return self._mock("nodes.json"), self._mock("squeue.json")
         singularity_cmd = ("singularity --version 2>/dev/null || true"
                            if self.singularity is None else "true")
+        sep_q = shlex.quote(SEP)
+        cpu_parts = " ".join(shlex.quote(p) for p in CPU_TEST_PARTITIONS)
+        cpu_probe_cmd = (
+            f"SEP={sep_q}; for p in {cpu_parts}; do "
+            "out=$(timeout 4s sbatch --test-only -p \"$p\" --wrap=hostname 2>&1); rc=$?; "
+            "printf '%s%s%s%s%s\\n' \"$p\" \"$SEP\" \"$rc\" \"$SEP\" \"$out\"; "
+            "done"
+        )
         out = self._exec(f"scontrol -o show nodes; echo {MARK}; "
                          f"squeue -h -a -o '{SQUEUE_FMT}'; echo {MARK}; "
                          f"(squeue -h -a -O '{CONTAINER_FMT}' 2>/dev/null || true); echo {MARK}; "
-                         f"{singularity_cmd}")
-        nodes_txt, queue_txt, containers_txt, sing_txt = (out.split(MARK) + ["", "", ""])[:4]
+                         f"{singularity_cmd}; echo {MARK}; "
+                         f"{cpu_probe_cmd}")
+        nodes_txt, queue_txt, containers_txt, sing_txt, cpu_probe_txt = (out.split(MARK) + ["", "", "", ""])[:5]
         if self.singularity is None and "version" in sing_txt:
-            self.singularity = sing_txt.split("version")[-1].strip().split("-")[0]
-        return parse_nodes(nodes_txt), parse_queue(queue_txt, parse_containers(containers_txt))
+            self.singularity = sing_txt.split("version", 1)[-1].strip()
+        queue = parse_queue(queue_txt, parse_containers(containers_txt))
+        queue["cpu_submit_probes"] = parse_cpu_submit_probes(cpu_probe_txt)
+        return parse_nodes(nodes_txt), queue
 
     @staticmethod
     def slurm_version(nodes_json):

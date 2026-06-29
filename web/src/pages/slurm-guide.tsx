@@ -18,28 +18,28 @@ interface Command {
 const COMMANDS: Command[] = [
   { key: "myqueue", command: 'squeue -u "$USER" -o "%.18i %.9P %.8T %.10M %.9l %.6D %R"', tone: "info" },
   { key: "policy", command: "spart", tone: "info" },
-  { key: "sinfo", command: 'sinfo -o "%P %a %l %D %t %N"', tone: "info" },
-  { key: "cpu", command: "salloc -p TINY", tone: "ok" },
-  { key: "gpu", command: "salloc -p GPU-1", tone: "ok" },
-  { key: "srun", command: "srun -p SMALL bash run.sh", tone: "neutral" },
+  { key: "sinfo", command: 'sinfo -o "%P %a %D %t %N"', tone: "info" },
+  { key: "cpu", command: "salloc -p DEF", tone: "ok" },
+  { key: "gpu", command: "salloc -p GPU-1", tone: "warn" },
+  { key: "srun", command: "srun -p DEF bash run.sh", tone: "neutral" },
   { key: "sbatch", command: "sbatch job.sh", tone: "neutral" },
   {
     key: "batchtpl",
     command:
-      "#!/bin/bash\n#SBATCH -J myjob\n#SBATCH -p SMALL\n#SBATCH -N 1\n#SBATCH -n 1\n#SBATCH -c 16\n#SBATCH -t 02:00:00\n#SBATCH -o %x_%j.log\n#SBATCH -e %x_%j.log\n\nsource /etc/profile.d/modules.sh\ncd ${SLURM_SUBMIT_DIR}\nbash run.sh",
+      "#!/bin/bash\n#SBATCH -J myjob\n#SBATCH -p DEF\n#SBATCH -n 1\n#SBATCH -c 16\n#SBATCH -t 02:00:00\n#SBATCH -o %x_%j.log\n#SBATCH -e %x_%j.log\n\nbash run.sh",
     tone: "neutral",
   },
   {
     key: "gputpl",
     command:
-      "#!/bin/bash\n#SBATCH -J gpujob\n#SBATCH -p GPU-1\n#SBATCH -N 1\n#SBATCH -n 1\n#SBATCH -c 8\n#SBATCH -t 02:00:00\n#SBATCH -o %x_%j.log\n#SBATCH -e %x_%j.log\n\nsource /etc/profile.d/modules.sh\nmodule load singularity/3.9.5\ncd ${SLURM_SUBMIT_DIR}\nsingularity exec --nv /app/container_images/tensorflow_2.20.0.sif python train.py",
+      "#!/bin/bash\n#SBATCH -J gpujob\n#SBATCH -p GPU-1\n#SBATCH -n 1\n#SBATCH -c 8\n#SBATCH -t 02:00:00\n#SBATCH -o %x_%j.log\n#SBATCH -e %x_%j.log\n\nsingularity exec --nv image.sif python train.py",
     tone: "neutral",
   },
   { key: "sacct", command: "sacct -j <job_id> --format=JobID,JobName,State,Elapsed,MaxRSS,ExitCode", tone: "info" },
   { key: "scancel", command: "scancel <job_id>", tone: "warn" },
   {
     key: "singularity",
-    command: "module load singularity/3.9.5\nsingularity exec --nv image.sif python train.py",
+    command: "singularity exec --nv image.sif python train.py",
     tone: "neutral",
   },
 ];

@@ -143,6 +143,17 @@ export interface QueueData {
   container_jobs: number;
 }
 
+export interface CpuSubmitProbe {
+  partition: string;
+  ok: boolean;
+  start_time: string;
+  start_epoch: number;
+  processors: number;
+  nodes: string;
+  raw: string;
+  rc?: number;
+}
+
 export interface DownNode {
   name: string;
   state: string[];
@@ -165,6 +176,7 @@ export interface Snapshot {
   partitions: Partition[];
   gpus: GpuType[];
   queue: QueueData;
+  cpu_submit_probes?: CpuSubmitProbe[];
   nodes_down: DownNode[];
   top_users: TopUser[];
   /** raw data shipped in the same payload — tables/occupancy derive from this */
@@ -183,7 +195,8 @@ export interface ContainerInfo {
   version: string;
   has_docker: boolean;
   login_module: string | null;
-  compute_module: string;
+  compute_module: string | null;
+  command?: string;
   examples: string[];
 }
 
@@ -325,6 +338,28 @@ export interface LoginDisk {
   inode_use_pct?: number;
 }
 
+export interface LoginIoDevice {
+  name: string;
+  util_pct: number | null;
+  await_ms: number | null;
+  aqu_sz: number | null;
+  read_kbps: number;
+  write_kbps: number;
+  discard_kbps: number;
+  io_kbps: number;
+}
+
+export interface LoginIo {
+  source: string;
+  available: boolean;
+  sample_s: number;
+  devices: LoginIoDevice[];
+  iowait_pct: number | null;
+  max_util_pct: number | null;
+  max_await_ms: number | null;
+  max_aqu_sz: number | null;
+}
+
 export interface LoginUser {
   user: string;
   cpu_pct: number;
@@ -353,6 +388,7 @@ export interface LoginNode {
     swap_ratio: number;
   };
   disks?: LoginDisk[];
+  io?: LoginIo;
   processes?: {
     top_cpu: LoginProcess[];
     top_mem: LoginProcess[];

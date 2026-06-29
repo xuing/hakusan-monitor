@@ -398,7 +398,7 @@ def normalize(nodes_json, squeue_json, *, cluster="hakusan", slurm_version="",
             gpu = {"type": gtype, "label": cat["label"], "mem_gb": cat["mem_gb"],
                    "total": gt, "used": gu, "down": gd, "free": free_g,
                    "maint": gd >= gt, "util": round(gu / gt, 3),
-                   "next_free": next_free.get(gtype) if (free_g <= 0 and gd < gt) else None}
+                   "next_free": next_free.get(gtype) if gd < gt else None}
         free_cores = max(ctot - calloc - pa["other_cores"], 0)   # idle, runnable cores
         util = gpu["util"] if (is_gpu and gpu) else (calloc / ctot if ctot else 0.0)
         avail = (gpu["free"] if gpu else 0) if is_gpu else free_cores
@@ -433,8 +433,7 @@ def normalize(nodes_json, squeue_json, *, cluster="hakusan", slurm_version="",
                          "free": max(tt - uu - dd, 0),     # usable & idle right now
                          "util": round(uu / tt, 3) if tt else 0.0,
                          "maint": dd >= tt,                # whole type is offline
-                         # when a card next frees (only meaningful while full)
-                         "next_free": next_free.get(t) if (tt - uu - dd) <= 0 and dd < tt else None})
+                         "next_free": next_free.get(t) if dd < tt else None})
 
     # ---- top users / pending preview ----------------------------------------
     top_users = sorted(

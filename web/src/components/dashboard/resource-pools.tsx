@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useState, type ReactNode } from "react";
 import { Check, ChevronRight, Copy } from "lucide-react";
 import { Bar } from "@/components/common/bar";
 import { Tag } from "@/components/common/tag";
@@ -8,9 +8,10 @@ import { useResourceFilter } from "@/hooks/use-resource-filter";
 import { poolLabel, reasonLabel, useT, type TFn, type TranslationKey } from "@/i18n";
 import { copyText } from "@/lib/clipboard";
 import { expandHostlist, occupantsForPool, poolCapacity } from "@/lib/derive";
-import { clockOf, fmtCountdown, fmtDur, fmtLeft, fmtMB, nf, parseDur } from "@/lib/format";
-import { matchPool, partitionCap, partitionPolicy, type PartitionPolicy } from "@/lib/slurm";
+import { clockOf, fmtCountdown, fmtDur, fmtMB, nf, parseDur } from "@/lib/format";
+import { isMaterialsStudioPartition, matchPool, partitionCap, partitionPolicy, type PartitionPolicy } from "@/lib/slurm";
 import { cn } from "@/lib/utils";
+import { cleanCpuProbeRaw, cpuProbeRows, cpuProbeState, type CpuProbeRow, type CpuProbeState } from "@/lib/cpu-probes";
 import type { Occupant, Partition, Pool, PoolGpu, RawJob, RawNode, Snapshot } from "@/types/snapshot";
 
 // Minimal starter per pool. Hakusan's submit plugin applies the partition
@@ -165,15 +166,7 @@ function PoolCard({ pool, snap, t }: { pool: Pool; snap: Snapshot; t: TFn }) {
               {maint ? null : gpuAvailabilityText(isGpu, gpuFit, gpuSched, rawGpuFree, availableNodesLabel, t)}
             </div>
           </div>
-          <div className="flex flex-col items-end gap-1 text-right text-[11px]">
-            {isGpu && pool.gpu?.next_free && (
-              <span className="text-info-fg">
-                ~ {clockOf(pool.gpu.next_free.at)}{" "}
-                <span className="text-muted-foreground">({fmtLeft(pool.gpu.next_free.left)})</span>
-              </span>
-            )}
-            {pool.queue.releasing.nodes > 0 && <Tag tone="info">↑{pool.queue.releasing.nodes}</Tag>}
-          </div>
+          <ReleaseHint pool={pool} generatedAt={snap.generated_at} />
         </div>
 
         {isGpu && pool.gpu ? (
@@ -191,8 +184,6 @@ function PoolCard({ pool, snap, t }: { pool: Pool; snap: Snapshot; t: TFn }) {
             {t("queue.pending")}
           </span>
         </div>
-
-        {gpuFit && gpuFit.rawFree > 0 && gpuFit.schedulable <= 0 && <GpuFitExplanation fit={gpuFit} pool={pool} t={t} />}
 
         {pool.queue.running > 0 && (
           <>
@@ -228,6 +219,31 @@ function PoolCard({ pool, snap, t }: { pool: Pool; snap: Snapshot; t: TFn }) {
   );
 }
 
+function ReleaseHint({ pool, generatedAt }: { pool: Pool; generatedAt: number }) {
+  const next = pool.kind === "gpu" ? pool.gpu?.next_free : null;
+  const releasingNodes = pool.queue.releasing.nodes;
+  const [now, setNow] = useState(() => Date.now() / 1000);
+  useEffect(() => {
+    if (!next) return;
+    setNow(Date.now() / 1000);
+    const id = setInterval(() => setNow(Date.now() / 1000), 30_000);
+    return () => clearInterval(id);
+  }, [next, generatedAt]);
+
+  if (!next && releasingNodes <= 0) return null;
+  const remaining = next ? Math.max(0, parseDur(next.left) - (now - generatedAt)) : 0;
+  return (
+    <div className="flex flex-col items-end gap-1 text-right text-[11px]">
+      {next && (
+        <span className="text-info-fg">
+          ~ {clockOf(next.at)} <span className="text-muted-foreground">({fmtDur(remaining)})</span>
+        </span>
+      )}
+      {releasingNodes > 0 && <Tag tone="info">↑{releasingNodes}</Tag>}
+    </div>
+  );
+}
+
 /** Collapsible, editable starter request for this pool. Collapsed by default;
  *  starts from the selected policy and lets Slurm apply partition defaults. */
 function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
@@ -240,6 +256,7 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
   const [advanced, setAdvanced] = useState(false);
   const [nodes, setNodes] = useState("");
   const [cores, setCores] = useState("");
+  const [mem, setMem] = useState("");
   const [time, setTime] = useState("");
   const [copied, setCopied] = useState(false);
   if (!base) return null;
@@ -251,26 +268,48 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
   const selectedPart = snap?.partitions.find((p) => p.name === partition);
   const groupRunning = snap ? partitionRunningJobs(snap.jobs, partition) : 0;
   const gpuFit = snap && isGpu ? gpuFitSnapshot(snap, pool, cap, partition) : null;
-  const queueFact = snap ? poolQueueFact(snap.jobs, snap.part_pool, pool.id, isGpu, pool, gpuFit?.schedulable ?? 0) : null;
+  const memRaw = mem.trim();
+  const normalizedMem = normalizeMem(memRaw);
+  const parsedMemMb = normalizedMem ? parseMemoryInputMb(normalizedMem) : 0;
+  const maxMemMb = cap.maxMemGb ? cap.maxMemGb * 1024 : 0;
+  const memTooHigh = parsedMemMb > 0 && maxMemMb > 0 && parsedMemMb > maxMemMb;
+  const memValue = normalizedMem && !memTooHigh ? normalizedMem : "";
+  const memError = memRaw && !normalizedMem
+    ? t("pool.memInvalid")
+    : memTooHigh
+      ? t("pool.memTooHigh", { max: `${cap.maxMemGb}G` })
+      : "";
+  const memOverrideMb = memValue ? parsedMemMb : 0;
+  const effectiveGpuFit = gpuFit && memOverrideMb > 0 ? gpuFitWithMemOverride(gpuFit, memOverrideMb) : gpuFit;
+  const queueFact = snap ? poolQueueFact(snap.jobs, snap.part_pool, pool.id, isGpu, pool, effectiveGpuFit?.schedulable ?? 0) : null;
   const limits = policyLimitRows(policy, groupRunning, t);
   const groupLimitReached = Boolean(policy.grpJobs && groupRunning >= policy.grpJobs);
   const nodeCount = clampPositiveInt(nodes, cap.maxNodes);
   const coreCount = clampPositiveInt(cores, cap.maxCores);
-  const queueHint = requestQueueHint({
-    part: selectedPart,
-    policy,
-    groupRunning,
-    nodeCount,
-    coreCount,
-    isGpu,
-    poolFree: snap ? poolCapacity(snap, pool.id) : null,
-    queueFact,
-    gpuFit,
-    t,
-  });
+  const cpuRows = snap && !isGpu && pool.id === "cpu" ? cpuProbeRows(pool, snap) : [];
+  const hasAdvancedOverrides = Boolean(nodeCount || coreCount || memValue || time.trim());
+  const selectedCpuRow = !hasAdvancedOverrides ? cpuRows.find((row) => row.partition === partition) ?? null : null;
+  const gpuTip = isGpu && gpuFit && gpuFit.schedulable <= 0 ? gpuFitTipCommand(gpuFit, pool) : null;
+  const defaultGpuBlocked = Boolean(isGpu && gpuFit && gpuFit.rawFree > 0 && gpuFit.schedulable <= 0);
+  const showGpuFitDetails = Boolean(defaultGpuBlocked && !memValue);
+  const queueHint = selectedCpuRow
+    ? null
+    : requestQueueHint({
+        part: selectedPart,
+        policy,
+        groupRunning,
+        nodeCount,
+        coreCount,
+        isGpu,
+        poolFree: snap ? poolCapacity(snap, pool.id) : null,
+        queueFact,
+        gpuFit: effectiveGpuFit,
+        t,
+      });
   const flags = [`-p ${partition}`, ...(base.requiredFlags ?? [])];
   if (nodeCount) flags.push(`-N ${nodeCount}`);
   if (coreCount) flags.push(`-c ${coreCount}`);
+  if (memValue) flags.push(`--mem=${memValue}`);
   if (time.trim()) flags.push(`-t ${time.trim()}`);
   const script = scriptFile.trim() || "job.sh";
   const cmd = mode === "interactive" ? `salloc ${flags.join(" ")}` : `sbatch ${flags.join(" ")} ${script}`;
@@ -281,6 +320,7 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
   const nodeOptions = numberOptions(cap.maxNodes, [1, 2, 3, 4, 8, 16, 32]);
   const coreOptions = numberOptions(cap.maxCores, [1, 2, 4, 8, 16, 26, 32, 52, 64, 96, 128, 208, 256, 512, 768, 1024, 2048, 4096, 8192]);
   const timeOptions = timeOptionsFor(cap.wall, t);
+  const partitionGroups = partitionOptionGroups(pool.partitions, t);
   const fieldCls = "h-7 w-full rounded-md border border-border bg-background px-2 text-[11px] outline-none focus:border-primary";
 
   const copy = async () => {
@@ -292,22 +332,44 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
 
   return (
     <div className="mt-3 border-t border-border pt-2.5">
-      <button
-        type="button"
-        onClick={() => setOpen(!open)}
-        className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
-      >
-        <ChevronRight className={cn("h-3.5 w-3.5 transition-transform", open && "rotate-90")} />
-        {t("pool.quickRequest")}
-      </button>
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+        <button
+          type="button"
+          onClick={() => setOpen(!open)}
+          className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+        >
+          <ChevronRight className={cn("h-3.5 w-3.5 transition-transform", open && "rotate-90")} />
+          {t("pool.quickRequest")}
+        </button>
+        {cpuRows.length > 0 && snap && <CpuProbeSummary rows={cpuRows} generatedAt={snap.generated_at} t={t} />}
+        {!open && cpuRows.length === 0 && queueHint && (
+          <QuickRequestSummary hint={queueHint} tip={gpuTip} t={t} />
+        )}
+      </div>
       {open && (
         <div className="mt-2 space-y-2">
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
             {pool.partitions.length > 1 && (
               <Field label={t("col.partition")}>
                 <select value={partition} onChange={(e) => setPartChoice(e.target.value)} className={fieldCls}>
-                  {pool.partitions.map((p) => (
-                    <option key={p} value={p}>{p}</option>
+                  {partitionGroups.map((group) => (
+                    group.label ? (
+                      <optgroup key={group.key} label={group.label}>
+                        {group.items.map((p) => (
+                          <option key={p} value={p}>
+                            {cpuOptionLabel(p, cpuRows, snap?.generated_at ?? 0, t)}
+                          </option>
+                        ))}
+                      </optgroup>
+                    ) : (
+                      <Fragment key={group.key}>
+                        {group.items.map((p) => (
+                          <option key={p} value={p}>
+                            {cpuOptionLabel(p, cpuRows, snap?.generated_at ?? 0, t)}
+                          </option>
+                        ))}
+                      </Fragment>
+                    )
                   ))}
                 </select>
               </Field>
@@ -341,14 +403,29 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
               {policyLimit && <span className="font-mono text-[10px] text-muted-foreground">{policyLimit}</span>}
             </div>
             {policyDesc && <div className="mt-1 text-[10px] leading-relaxed text-muted-foreground">{policyDesc}</div>}
+            {selectedCpuRow && snap && <CpuProbeInline row={selectedCpuRow} generatedAt={snap.generated_at} t={t} />}
+            {hasAdvancedOverrides && cpuRows.length > 0 && (
+              <div className="mt-1 text-[10px] leading-relaxed text-muted-foreground">{t("pool.cpuProbeDefaultOnly")}</div>
+            )}
             {multiNodeCpuPolicy && <div className="mt-1 text-[10px] leading-relaxed text-warn-fg">{t("pool.multiNodeHint")}</div>}
-            {queueHint && (
+            {queueHint && (!showGpuFitDetails || groupLimitReached) && (
               <div className="mt-1 flex flex-wrap items-center gap-1 text-[10px]">
                 <Tag tone={queueHint.tone}>{queueHint.label}</Tag>
                 {queueHint.detail && <span className="text-muted-foreground">{queueHint.detail}</span>}
               </div>
             )}
-            <div className="mt-1 text-[10px] leading-relaxed text-muted-foreground">{t("pool.queueLimitHint")}</div>
+            {showGpuFitDetails && gpuFit && <GpuFitExplanation fit={gpuFit} t={t} />}
+            {gpuTip && (
+              <GpuFitQuickTip
+                tip={gpuTip}
+                applied={memValue === gpuTip.mem}
+                onApply={() => {
+                  setMem(gpuTip.mem);
+                  setAdvanced(true);
+                }}
+                t={t}
+              />
+            )}
             {limits.length > 0 && (
               <div className="mt-2 flex flex-wrap gap-1">
                 {limits.map((row) => (
@@ -397,6 +474,15 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
                     ))}
                   </select>
                 </Field>
+                <Field label={`${t("kpi.memory")} (--mem)`}>
+                  <input
+                    value={mem}
+                    onChange={(e) => setMem(e.target.value)}
+                    placeholder={gpuTip?.mem || t("pool.default")}
+                    className={cn(fieldCls, memError && "border-bad")}
+                  />
+                  {memError && <span className="mt-0.5 block text-[10px] leading-tight text-bad-fg">{memError}</span>}
+                </Field>
                 <Field label={t("pool.time")}>
                   <select value={time} onChange={(e) => setTime(e.target.value)} className={fieldCls}>
                     {timeOptions.map((opt) => (
@@ -430,6 +516,25 @@ function clampPositiveInt(value: string, max?: number) {
   if (!Number.isFinite(parsed) || parsed <= 0) return 0;
   const n = Math.floor(parsed);
   return max ? Math.min(n, max) : n;
+}
+
+function normalizeMem(value: string) {
+  const raw = value.trim().toUpperCase();
+  if (!raw) return "";
+  const m = raw.match(/^(\d+)([KMGTP])$/);
+  if (!m) return "";
+  const n = Number(m[1]);
+  if (!Number.isFinite(n) || n <= 0) return "";
+  return `${Math.floor(n)}${m[2]}`;
+}
+
+function parseMemoryInputMb(value: string) {
+  const m = normalizeMem(value).match(/^(\d+)([KMGTP])$/);
+  if (!m) return 0;
+  const n = Number(m[1]);
+  const unit = m[2];
+  const mult: Record<string, number> = { K: 1 / 1024, M: 1, G: 1024, T: 1024 * 1024, P: 1024 * 1024 * 1024 };
+  return Math.round(n * mult[unit]);
 }
 
 function capSuffix(label: string, max?: number) {
@@ -603,6 +708,163 @@ function policyLimitRows(policy: PartitionPolicy, groupRunning: number, t: TFn) 
   return rows;
 }
 
+function QuickRequestSummary({
+  hint,
+  tip,
+  t,
+}: {
+  hint: NonNullable<ReturnType<typeof requestQueueHint>>;
+  tip: GpuFitTipData | null;
+  t: TFn;
+}) {
+  return (
+    <span className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[10px]">
+      <Tag tone={hint.tone}>{hint.label}</Tag>
+      {tip ? (
+        <span className="text-muted-foreground">{t("pool.quickGpuMemHint", { mem: tip.mem })}</span>
+      ) : hint.detail ? (
+        <span className="max-w-[22rem] truncate text-muted-foreground">{hint.detail}</span>
+      ) : null}
+    </span>
+  );
+}
+
+function GpuFitQuickTip({
+  tip,
+  applied,
+  onApply,
+  t,
+}: {
+  tip: GpuFitTipData;
+  applied: boolean;
+  onApply: () => void;
+  t: TFn;
+}) {
+  return (
+    <div className="mt-2 rounded-md border border-warn/40 bg-warn-soft/45 px-2 py-1.5 text-[10px] leading-relaxed">
+      <div className="flex flex-wrap items-center gap-1.5">
+        <Tag tone="warn">{t("pool.fitTip")}</Tag>
+        <span className="text-foreground">{t("pool.fitTipText", { mem: tip.mem, node: tip.node })}</span>
+        <button
+          type="button"
+          onClick={onApply}
+          className={cn(
+            "rounded border px-1.5 py-0.5 font-medium transition-colors",
+            applied
+              ? "border-ok/40 bg-ok-soft text-ok-fg"
+              : "border-warn/45 bg-background/80 text-warn-fg hover:bg-warn-soft",
+          )}
+        >
+          {t(applied ? "pool.fitTipApplied" : "pool.fitTipApply", { mem: tip.mem })}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function partitionOptionGroups(partitions: string[], t: TFn) {
+  const general = partitions.filter((partition) => !isMaterialsStudioPartition(partition));
+  const materials = partitions.filter(isMaterialsStudioPartition);
+  const groups: Array<{ key: string; label: string; items: string[] }> = [];
+  if (general.length > 0) {
+    groups.push({
+      key: "general",
+      label: materials.length > 0 ? t("part.generalCpuPolicies") : "",
+      items: general,
+    });
+  }
+  if (materials.length > 0) {
+    groups.push({ key: "materials-studio", label: t("part.materialsStudioGroup"), items: materials });
+  }
+  return groups;
+}
+
+function CpuProbeSummary({ rows, generatedAt, t }: { rows: CpuProbeRow[]; generatedAt: number; t: TFn }) {
+  const byState = rows.reduce(
+    (acc, row) => {
+      acc[cpuProbeState(row.probe, generatedAt)].push(row.partition);
+      return acc;
+    },
+    { now: [] as string[], queued: [] as string[], failed: [] as string[], unknown: [] as string[] },
+  );
+  return (
+    <span className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[10px]">
+      <span className="text-muted-foreground">{t("pool.cpuProbeTitle")}:</span>
+      {byState.now.length > 0 ? (
+        <span className="text-ok-fg">
+          {t("pool.cpuProbeNow")} {byState.now.join(", ")}
+        </span>
+      ) : (
+        <span className="text-warn-fg">{t("pool.cpuProbeNoImmediate")}</span>
+      )}
+      {byState.queued.length > 0 && (
+        <span className="text-warn-fg">
+          {t("pool.cpuProbeQueued")} {byState.queued.join(", ")}
+        </span>
+      )}
+      {byState.failed.length > 0 && (
+        <span className="text-bad-fg">
+          {t("pool.cpuProbeFailed")} {byState.failed.join(", ")}
+        </span>
+      )}
+      {byState.unknown.length > 0 && (
+        <span className="text-muted-foreground">
+          {t("pool.cpuProbeNoData")} {byState.unknown.join(", ")}
+        </span>
+      )}
+    </span>
+  );
+}
+
+function cpuOptionLabel(partition: string, rows: CpuProbeRow[], generatedAt: number, t: TFn) {
+  const row = rows.find((item) => item.partition === partition);
+  const base = isMaterialsStudioPartition(partition)
+    ? `${partition} · ${trMaybe(t, `policy.${partition}`, partition)}`
+    : partition;
+  if (!row) return base;
+  return `${base} · ${cpuProbeLabel(cpuProbeState(row.probe, generatedAt), t)}`;
+}
+
+function CpuProbeInline({ row, generatedAt, t }: { row: CpuProbeRow; generatedAt: number; t: TFn }) {
+  const state = cpuProbeState(row.probe, generatedAt);
+  const detail = cpuProbeDetail(row, state, t);
+  return (
+    <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px]">
+      <Tag tone={cpuProbeTone(state)}>{cpuProbeLabel(state, t)}</Tag>
+      <span className="font-mono text-muted-foreground">{t("pool.cpuProbeNeed", { cores: row.cores, mem: fmtMB(row.memMb) })}</span>
+      {detail && <span className="min-w-0 truncate text-muted-foreground">{detail}</span>}
+      <span className="font-mono text-info-fg">{row.command}</span>
+    </div>
+  );
+}
+
+function cpuProbeLabel(state: CpuProbeState, t: TFn) {
+  if (state === "now") return t("pool.cpuProbeNow");
+  if (state === "queued") return t("pool.cpuProbeQueued");
+  if (state === "unknown") return t("pool.cpuProbeNoData");
+  return t("pool.cpuProbeFailed");
+}
+
+function cpuProbeTone(state: CpuProbeState) {
+  if (state === "now") return "ok" as const;
+  if (state === "queued") return "warn" as const;
+  if (state === "unknown") return "neutral" as const;
+  return "bad" as const;
+}
+
+function cpuProbeDetail(row: CpuProbeRow, state: CpuProbeState, t: TFn) {
+  const probe = row.probe;
+  if (!probe) return t("pool.cpuProbeNoData");
+  if (state === "now") return probe.nodes ? t("pool.cpuProbeNodes", { nodes: probe.nodes }) : "";
+  if (state === "queued" && probe.start_time) return t("pool.cpuProbeStart", { time: clockOf(probe.start_time) });
+  return truncateProbeRaw(cleanCpuProbeRaw(probe.raw));
+}
+
+function truncateProbeRaw(text: string) {
+  if (!text) return "";
+  return text.length > 120 ? `${text.slice(0, 117)}...` : text;
+}
+
 function trMaybe(t: TFn, key: string, fallback: string) {
   const translated = t(key as TranslationKey);
   return translated === key ? fallback : translated;
@@ -641,8 +903,18 @@ function gpuStrandedText(fit: GpuFitInfo | null, rawFree: number, t: TFn) {
   const cpu = rows.some((row) => row.missingCores > 0);
   if (cpu && mem) return t("pool.gpuStrandedCpuMem", { n: rawFree });
   if (cpu) return t("pool.gpuStrandedCpu", { n: rawFree });
-  if (mem) return t("pool.gpuStrandedMem", { n: rawFree });
+  if (mem) {
+    const tip = gpuStrandedMemTip(fit);
+    return tip ? t("pool.gpuStrandedMemTip", { n: rawFree, mem: tip }) : t("pool.gpuStrandedMem", { n: rawFree });
+  }
   return t("pool.gpuStranded", { n: rawFree });
+}
+
+function gpuStrandedMemTip(fit: GpuFitInfo | null) {
+  const best = fit?.stranded.find((row) => row.freeGpu >= 1 && row.freeCores >= fit.need.cores && row.freeMemMb > 1024);
+  if (!best) return "";
+  const memGb = conservativeMemGb(best.freeMemMb);
+  return memGb > 0 ? `${memGb}G` : "";
 }
 
 interface GpuFitNeed {
@@ -673,7 +945,6 @@ interface GpuFitInfo {
 }
 
 interface GpuFitTipData {
-  cmd: string;
   mem: string;
   node: string;
 }
@@ -726,6 +997,35 @@ function gpuFitFromNodes(nodes: RawNode[], jobs: RawJob[], pool: Pool, cap: Retu
   stranded.sort((a, b) => shortageScore(a) - shortageScore(b) || a.node.name.localeCompare(b.node.name));
   fitNodes.sort((a, b) => b.freeGpu - a.freeGpu || b.freeCores - a.freeCores || b.freeMemMb - a.freeMemMb);
   return { need, rawFree, schedulable: slots, stranded, fitNodes };
+}
+
+function gpuFitWithMemOverride(fit: GpuFitInfo, memMb: number): GpuFitInfo {
+  if (memMb <= 0) return fit;
+  const rows = [...fit.fitNodes, ...fit.stranded].map((row) => {
+    const nodeSlots = Math.min(
+      row.freeGpu,
+      Math.floor(row.freeCores / fit.need.cores),
+      Math.floor(row.freeMemMb / memMb),
+    );
+    return {
+      ...row,
+      missingMemMb: Math.max(0, memMb - row.freeMemMb),
+      missingCores: Math.max(0, fit.need.cores - row.freeCores),
+      missingGpu: Math.max(0, fit.need.gpus - row.freeGpu),
+      nodeSlots,
+    };
+  });
+  const fitNodes = rows.filter((row) => row.nodeSlots > 0).map(({ nodeSlots: _nodeSlots, ...row }) => row);
+  const stranded = rows.filter((row) => row.nodeSlots <= 0).map(({ nodeSlots: _nodeSlots, ...row }) => row);
+  stranded.sort((a, b) => shortageScore(a) - shortageScore(b) || a.node.name.localeCompare(b.node.name));
+  fitNodes.sort((a, b) => b.freeGpu - a.freeGpu || b.freeCores - a.freeCores || b.freeMemMb - a.freeMemMb);
+  return {
+    ...fit,
+    need: { ...fit.need, memMb },
+    schedulable: rows.reduce((sum, row) => sum + Math.max(0, row.nodeSlots), 0),
+    fitNodes,
+    stranded,
+  };
 }
 
 function gpuFitNeed(nodes: RawNode[], pool: Pool, cap: ReturnType<typeof partitionCap>, partition: string): GpuFitNeed {
@@ -790,7 +1090,6 @@ function gpuFitTipCommand(fit: GpuFitInfo, pool: Pool): GpuFitTipData | null {
   return {
     mem,
     node: best.node.name,
-    cmd: `salloc -p ${fit.need.partition} --gres=gpu:${pool.gpu.type}:1 --mem=${mem}`,
   };
 }
 
@@ -801,11 +1100,10 @@ function conservativeMemGb(freeMemMb: number) {
   return Math.max(1, Math.floor(freeGiB - 1));
 }
 
-function GpuFitExplanation({ fit, pool, t }: { fit: GpuFitInfo; pool: Pool; t: TFn }) {
+function GpuFitExplanation({ fit, t }: { fit: GpuFitInfo; t: TFn }) {
   const rows = fit.stranded.slice(0, 4);
   if (rows.length === 0) return null;
   const more = Math.max(0, fit.stranded.length - rows.length);
-  const tip = gpuFitTipCommand(fit, pool);
   return (
     <div className="mt-2 rounded-md border border-warn/35 bg-warn-soft/45 px-2.5 py-2 text-[10px] leading-relaxed">
       <div className="flex flex-wrap items-center gap-1.5">
@@ -821,36 +1119,6 @@ function GpuFitExplanation({ fit, pool, t }: { fit: GpuFitInfo; pool: Pool; t: T
         ))}
       </div>
       {more > 0 && <div className="mt-1 text-muted-foreground">{t("pool.fitMoreNodes", { n: more })}</div>}
-      {tip && <GpuFitTip tip={tip} t={t} />}
-    </div>
-  );
-}
-
-function GpuFitTip({ tip, t }: { tip: GpuFitTipData; t: TFn }) {
-  const [copied, setCopied] = useState(false);
-  const copy = async () => {
-    if (await copyText(tip.cmd)) {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1200);
-    }
-  };
-  return (
-    <div className="mt-2 rounded-md border border-warn/45 bg-background/75 px-2 py-1.5">
-      <div className="flex flex-wrap items-center gap-1.5">
-        <Tag tone="warn">{t("pool.fitTip")}</Tag>
-        <span className="text-muted-foreground">{t("pool.fitTipText", { mem: tip.mem, node: tip.node })}</span>
-      </div>
-      <div className="mt-1 flex items-center gap-2 rounded-md border border-border bg-muted/40 px-2 py-1">
-        <code className="flex-1 overflow-x-auto whitespace-nowrap font-mono text-[10px]">{tip.cmd}</code>
-        <button
-          type="button"
-          onClick={copy}
-          className="inline-flex shrink-0 items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground"
-        >
-          {copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
-          {t(copied ? "helper.copied" : "helper.copy")}
-        </button>
-      </div>
     </div>
   );
 }
@@ -858,6 +1126,7 @@ function GpuFitTip({ tip, t }: { tip: GpuFitTipData; t: TFn }) {
 function GpuFitNodeRow({ row, t }: { row: GpuFitNode; t: TFn }) {
   const occupants = row.occupants.slice(0, 3);
   const more = Math.max(0, row.occupants.length - occupants.length);
+  const allocated = allocatedResourceText(row, t);
   return (
     <div className="rounded-md border border-border/70 bg-background/70 px-2 py-1.5">
       <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
@@ -867,11 +1136,7 @@ function GpuFitNodeRow({ row, t }: { row: GpuFitNode; t: TFn }) {
         </span>
         <span className="font-mono text-bad-fg">{t("pool.fitNodeMissing", { missing: missingText(row, t) })}</span>
       </div>
-      <div className="mt-0.5 font-mono text-muted-foreground">
-        {t("pool.fitNodeAllocated", {
-          used: resourceParts(row.usedGpu, row.node.alloc_cpus, row.node.alloc_memory, t),
-        })}
-      </div>
+      {allocated && <div className="mt-0.5 font-mono text-muted-foreground">{t("pool.fitNodeAllocated", { used: allocated })}</div>}
       {occupants.length > 0 && (
         <div className="mt-0.5 text-muted-foreground">
           {t("pool.fitOccupants")}:{" "}
@@ -886,6 +1151,11 @@ function GpuFitNodeRow({ row, t }: { row: GpuFitNode; t: TFn }) {
       )}
     </div>
   );
+}
+
+function allocatedResourceText(row: GpuFitNode, t: TFn) {
+  if (row.usedGpu <= 0 && row.node.alloc_cpus <= 0 && row.node.alloc_memory <= 0) return "";
+  return resourceParts(row.usedGpu, row.node.alloc_cpus, row.node.alloc_memory, t);
 }
 
 function gpuFitShortText(fit: GpuFitInfo, t: TFn) {

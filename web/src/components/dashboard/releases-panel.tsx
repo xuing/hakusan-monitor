@@ -1,16 +1,23 @@
+import { useEffect, useState } from "react";
 import { Empty } from "@/components/common/empty";
 import { SectionCard } from "@/components/common/section-card";
 import { Tag } from "@/components/common/tag";
 import { useLive } from "@/hooks/use-live";
 import { useResourceFilter } from "@/hooks/use-resource-filter";
-import { useT } from "@/i18n";
-import { fmtAt, fmtLeft } from "@/lib/format";
+import { useT, type TFn } from "@/i18n";
+import { fmtCountdown, parseDur } from "@/lib/format";
 import { matchRelease } from "@/lib/slurm";
+import type { Release } from "@/types/snapshot";
 
 export function ReleasesPanel() {
   const { snap } = useLive();
   const { filter } = useResourceFilter();
   const t = useT();
+  const [now, setNow] = useState(() => Date.now() / 1000);
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now() / 1000), 1000);
+    return () => clearInterval(id);
+  }, []);
   if (!snap) return null;
 
   const releases = snap.queue.releases.filter((r) => matchRelease(r, filter));
@@ -22,23 +29,38 @@ export function ReleasesPanel() {
       ) : (
         <>
           <h3 className="mb-2 text-xs text-muted-foreground">{t("releases.soonest")}</h3>
-          <div className="divide-y divide-border">
+          <div className="max-h-72 overflow-y-auto pr-1">
             {releases.map((r) => (
-              <div key={String(r.job_id)} className="grid grid-cols-[auto_1fr_auto] items-center gap-3 py-2">
-                <div className="font-mono">
-                  <div className="text-[13px]">{fmtAt(r.end_time)}</div>
-                  <div className="text-[11px] text-ok-fg">{t("releases.in", { t: fmtLeft(r.time_left) })}</div>
-                </div>
-                <div className="flex min-w-0 items-center gap-2">
-                  {r.gpus ? <Tag tone="info">{r.gpu}</Tag> : <Tag tone="neutral">{r.cpus}c</Tag>}
-                  <span className="truncate text-[11px] text-muted-foreground">{r.partition}</span>
-                </div>
-                <span className="font-mono text-[11px] text-info-fg">{r.user}</span>
-              </div>
+              <ReleaseRow key={String(r.job_id)} release={r} now={now} generatedAt={snap.generated_at} t={t} />
             ))}
           </div>
         </>
       )}
     </SectionCard>
+  );
+}
+
+function ReleaseRow({
+  release,
+  now,
+  generatedAt,
+  t,
+}: {
+  release: Release;
+  now: number;
+  generatedAt: number;
+  t: TFn;
+}) {
+  const remaining = Math.max(0, parseDur(release.time_left) - (now - generatedAt));
+  const resource = release.gpus ? release.gpu : `${release.cpus}c`;
+  return (
+    <div className="mb-1 grid grid-cols-[auto_1fr_auto] items-center gap-2 rounded-md bg-muted/30 px-2.5 py-1.5 text-[11px] last:mb-0">
+      <Tag tone={release.gpus ? "info" : "neutral"}>{resource}</Tag>
+      <div className="min-w-0">
+        <div className="truncate font-mono text-info-fg">{release.user}</div>
+        <div className="truncate text-[10px] text-muted-foreground">{release.partition}</div>
+      </div>
+      <div className="tnum whitespace-nowrap font-mono text-ok-fg">{t("releases.in", { t: fmtCountdown(remaining) })}</div>
+    </div>
   );
 }

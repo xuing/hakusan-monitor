@@ -144,6 +144,26 @@ def _df(text):
     return rows
 
 
+def _is_health_disk(row):
+    """Return whether a df row should affect login-node disk health.
+
+    Login nodes often have many per-user home automounts and read-only loop
+    images. Those are useful as raw df output, but they do not describe local
+    login-node pressure and can report odd inode counters.
+    """
+    fs = row.get("filesystem", "")
+    mount = row.get("mount", "")
+    if not fs or not mount:
+        return False
+    if fs == "efivarfs" or fs.startswith("/dev/loop"):
+        return False
+    if mount == "/mnt/iso" or mount.startswith("/home/"):
+        return False
+    if mount.startswith(("/proc", "/sys", "/dev", "/run")):
+        return False
+    return True
+
+
 def _merge_inodes(disks, text):
     by_mount = {d["mount"]: d for d in disks}
     for line in text.splitlines()[1:]:
@@ -152,13 +172,19 @@ def _merge_inodes(disks, text):
             continue
         row = by_mount.get(p[5])
         if row:
+            total = _int(p[1])
+            used = _int(p[2])
+            free = _int(p[3])
+            pct = _int(p[4].rstrip("%"))
+            if total <= 0 or used < 0 or free < 0 or pct < 0 or pct > 100:
+                total = used = free = pct = 0
             row.update({
-                "inodes_total": _int(p[1]),
-                "inodes_used": _int(p[2]),
-                "inodes_free": _int(p[3]),
-                "inode_use_pct": _int(p[4].rstrip("%")),
+                "inodes_total": total,
+                "inodes_used": used,
+                "inodes_free": free,
+                "inode_use_pct": pct,
             })
-    return disks
+    return [d for d in disks if _is_health_disk(d)]
 
 
 def _proc(line, show_args):
@@ -217,6 +243,114 @@ def _users_from_procs(procs):
     return users
 
 
+def _metric(vals, *keys, scale=1.0):
+    for key in keys:
+        if key in vals:
+            return _float(vals.get(key)) * scale
+    return None
+
+
+def _max_metric(values):
+    known = [v for v in values if v is not None]
+    return max(known) if known else None
+
+
+def _sort_metric(value):
+    return -1.0 if value is None else value
+
+
+def _iostat(text):
+    current = None
+    reports = []
+
+    def new_report():
+        return {"iowait_pct": None, "devices": []}
+
+    def finish_report():
+        nonlocal current
+        if current is not None:
+            reports.append(current)
+        current = new_report()
+
+    header = None
+    cpu_header = None
+    for line in text.splitlines():
+        p = line.split()
+        if not p:
+            continue
+        if p[0] == "avg-cpu:":
+            finish_report()
+            cpu_header = p[1:]
+            header = None
+            continue
+        if current is None:
+            current = new_report()
+        if cpu_header and p[0] != "Device":
+            vals = {key: p[i] for i, key in enumerate(cpu_header) if i < len(p)}
+            current["iowait_pct"] = _metric(vals, "%iowait")
+            cpu_header = None
+            continue
+        if p[0] == "Device":
+            header = p
+            continue
+        if not header or len(p) < len(header):
+            continue
+        name = p[0]
+        if name.startswith(("loop", "ram", "sr", "zram")):
+            continue
+        vals = {key: p[i] for i, key in enumerate(header) if i < len(p)}
+        reads = _metric(vals, "rkB/s")
+        if reads is None:
+            reads = _metric(vals, "rMB/s", scale=1024.0)
+        writes = _metric(vals, "wkB/s")
+        if writes is None:
+            writes = _metric(vals, "wMB/s", scale=1024.0)
+        discards = _metric(vals, "dkB/s")
+        if discards is None:
+            discards = _metric(vals, "dMB/s", scale=1024.0)
+        reads = reads or 0.0
+        writes = writes or 0.0
+        discards = discards or 0.0
+        awaits = [
+            _metric(vals, "r_await"),
+            _metric(vals, "w_await"),
+            _metric(vals, "d_await"),
+            _metric(vals, "f_await"),
+            _metric(vals, "await"),
+        ]
+        current["devices"].append({
+            "name": name,
+            "util_pct": _metric(vals, "%util"),
+            "await_ms": _max_metric(awaits),
+            "aqu_sz": _metric(vals, "aqu-sz", "avgqu-sz"),
+            "read_kbps": reads,
+            "write_kbps": writes,
+            "discard_kbps": discards,
+            "io_kbps": reads + writes + discards,
+        })
+    if current is not None:
+        reports.append(current)
+
+    report = reports[-1] if reports else new_report()
+    devices = report["devices"]
+    devices.sort(key=lambda d: (
+        -_sort_metric(d["util_pct"]),
+        -_sort_metric(d["await_ms"]),
+        -d["io_kbps"],
+        d["name"],
+    ))
+    return {
+        "source": "iostat",
+        "available": bool(text.strip()),
+        "sample_s": 1,
+        "devices": devices[:8],
+        "iowait_pct": report["iowait_pct"],
+        "max_util_pct": _max_metric(d["util_pct"] for d in devices),
+        "max_await_ms": _max_metric(d["await_ms"] for d in devices),
+        "max_aqu_sz": _max_metric(d["aqu_sz"] for d in devices),
+    }
+
+
 def _pressure(node):
     score = 0.0
     reasons = []
@@ -242,7 +376,9 @@ def _pressure(node):
             add(0.75, f"CPU busy {busy:.0%}")
         elif busy >= 0.70:
             add(0.5, f"CPU busy {busy:.0%}")
-    iowait = node["cpu"].get("iowait")
+    io = node.get("io") or {}
+    io_iowait_pct = io.get("iowait_pct")
+    iowait = (_float(io_iowait_pct) / 100.0) if io_iowait_pct is not None else node["cpu"].get("iowait")
     if iowait is not None:
         if iowait >= 0.20:
             add(1.0, f"iowait {iowait:.0%}")
@@ -250,6 +386,28 @@ def _pressure(node):
             add(0.75, f"iowait {iowait:.0%}")
         elif iowait >= 0.05:
             add(0.5, f"iowait {iowait:.0%}")
+
+    io_util = _float(io.get("max_util_pct"))
+    io_await = _float(io.get("max_await_ms"))
+    io_aqu = _float(io.get("max_aqu_sz"))
+    if io_util >= 90:
+        add(0.5, f"iostat util {io_util:.0f}%")
+    elif io_util >= 70:
+        add(0.25, f"iostat util {io_util:.0f}%")
+    elif io_util >= 40:
+        add(0.15, f"iostat util {io_util:.0f}%")
+    if io_await >= 100:
+        add(1.0, f"iostat await {io_await:.0f}ms")
+    elif io_await >= 50:
+        add(0.75, f"iostat await {io_await:.0f}ms")
+    elif io_await >= 20:
+        add(0.5, f"iostat await {io_await:.0f}ms")
+    if io_aqu >= 5:
+        add(1.0, f"iostat queue {io_aqu:.1f}")
+    elif io_aqu >= 2:
+        add(0.75, f"iostat queue {io_aqu:.1f}")
+    elif io_aqu >= 1:
+        add(0.5, f"iostat queue {io_aqu:.1f}")
 
     mem = node["memory"]
     avail_ratio = _ratio(mem["available"], mem["total"])
@@ -265,21 +423,6 @@ def _pressure(node):
         add(0.75, f"swap used {mem['swap_ratio']:.0%}")
     elif mem["swap_ratio"] >= 0.05:
         add(0.5, f"swap used {mem['swap_ratio']:.0%}")
-
-    max_disk = max((d.get("use_pct", 0) for d in node["disks"]), default=0)
-    max_inode = max((d.get("inode_use_pct", 0) for d in node["disks"]), default=0)
-    if max_disk >= 95:
-        add(1.0, f"disk max {max_disk}%")
-    elif max_disk >= 90:
-        add(0.75, f"disk max {max_disk}%")
-    elif max_disk >= 80:
-        add(0.5, f"disk max {max_disk}%")
-    if max_inode >= 95:
-        add(1.0, f"inode max {max_inode}%")
-    elif max_inode >= 90:
-        add(0.75, f"inode max {max_inode}%")
-    elif max_inode >= 80:
-        add(0.5, f"inode max {max_inode}%")
 
     d_state = node["processes"]["d_state"]
     if d_state >= 10:
@@ -385,6 +528,7 @@ class LoginNodeCollector:
         ps_fields = "pid=,user=,stat=,pcpu=,pmem=,rss=,etimes=,comm=,args=" if self.show_args else \
             "pid=,user=,stat=,pcpu=,pmem=,rss=,etimes=,comm="
         return f"""
+export LC_ALL=C
 echo "{MARK} hostname"; hostname
 echo "{MARK} loadavg"; cat /proc/loadavg
 echo "{MARK} nproc"; nproc
@@ -392,6 +536,7 @@ echo "{MARK} stat"; grep '^cpu ' /proc/stat
 echo "{MARK} meminfo"; cat /proc/meminfo
 echo "{MARK} df"; df -P -B1 -x tmpfs -x devtmpfs 2>/dev/null
 echo "{MARK} df_inode"; df -P -i -x tmpfs -x devtmpfs 2>/dev/null
+echo "{MARK} iostat"; if command -v iostat >/dev/null 2>&1; then iostat -x -y 1 1 2>/dev/null || true; fi
 echo "{MARK} ps"; ps -eo {ps_fields}
 """
 
@@ -410,6 +555,7 @@ echo "{MARK} ps"; ps -eo {ps_fields}
                 u = p.get("user", "")
                 p["user"] = (u[:2] + "***") if len(u) > 2 else "***"
         disks = _merge_inodes(_df(sec.get("df", "")), sec.get("df_inode", ""))
+        io = _iostat(sec.get("iostat", ""))
         node = {
             "id": name,
             "target": target,
@@ -421,6 +567,7 @@ echo "{MARK} ps"; ps -eo {ps_fields}
             "cpu": _cpu_delta(prev_cpu, cur_cpu),
             "memory": _meminfo(sec.get("meminfo", "")),
             "disks": disks,
+            "io": io,
             "processes": {
                 "top_cpu": top_cpu,
                 "top_mem": top_mem,

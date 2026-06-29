@@ -16,6 +16,7 @@ const NodesPage = lazy(() => import("@/pages/nodes"));
 const JobsPage = lazy(() => import("@/pages/jobs"));
 const SlurmGuidePage = lazy(() => import("@/pages/slurm-guide"));
 const ContainersPage = lazy(() => import("@/pages/containers"));
+const ProjectGuidePage = lazy(() => import("@/pages/project-guide"));
 
 const PageFallback = () => <Skeleton className="h-96 rounded-xl" />;
 
@@ -89,6 +90,14 @@ export default function App() {
                   element={
                     <Suspense fallback={<PageFallback />}>
                       <ContainersPage />
+                    </Suspense>
+                  }
+                />
+                <Route
+                  path="/project"
+                  element={
+                    <Suspense fallback={<PageFallback />}>
+                      <ProjectGuidePage />
                     </Suspense>
                   }
                 />

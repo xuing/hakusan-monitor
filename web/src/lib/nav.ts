@@ -4,6 +4,7 @@ import {
   BookOpen,
   Box,
   Boxes,
+  FileText,
   LayoutDashboard,
   ListTree,
   Server,
@@ -28,7 +29,8 @@ export const NAV: NavItem[] = [
   { path: "/jobs", labelKey: "nav.jobs", descKey: "page.jobs.desc", icon: ListTree, section: "raw" },
   { path: "/slurm", labelKey: "nav.slurm", descKey: "page.slurm.desc", icon: BookOpen, section: "guide" },
   { path: "/containers", labelKey: "nav.containers", descKey: "page.containers.desc", icon: Box, section: "guide" },
+  { path: "/project", labelKey: "nav.project", descKey: "page.project.desc", icon: FileText, section: "guide" },
 ];
 
-/** Pages where the global resource-type filter applies. */
-export const FILTERED_PATHS = new Set(["/", "/partitions", "/nodes"]);
+/** Pages where the global resource-type filter applies. Raw tables have their own local filters. */
+export const FILTERED_PATHS = new Set(["/", "/partitions"]);

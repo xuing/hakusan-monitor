@@ -1,5 +1,5 @@
 import { AreaChart } from "@tremor/react";
-import { AlertTriangle, Cpu, HardDrive, MemoryStick, Server } from "lucide-react";
+import { AlertTriangle, Cpu, HardDrive, Loader2, MemoryStick, Server } from "lucide-react";
 import type { ReactNode } from "react";
 import { Empty } from "@/components/common/empty";
 import { Bar } from "@/components/common/bar";
@@ -49,7 +49,8 @@ export default function LoginNodesPage() {
   const okNodes = nodes.filter((n) => n.ok);
   const nodeIds = okNodes.map((n) => n.id);
 
-  if (current.loading && !data) return <LoadingSkeleton />;
+  if (current.loading && !data) return <LoadingState />;
+  if (current.error && !data) return <LoginErrorState message={current.error.message} />;
 
   return (
     <div className="space-y-4">
@@ -100,7 +101,7 @@ export default function LoginNodesPage() {
             <UsersTable users={data?.top_users ?? []} />
           </SectionCard>
 
-          <div className="grid gap-4 xl:grid-cols-2">
+          <div className="grid min-w-0 gap-4 xl:grid-cols-2">
             {nodes.map((node) => (
               <OffenderPanel key={node.id} node={node} />
             ))}
@@ -116,17 +117,27 @@ function NodePanel({ node }: { node: LoginNode }) {
   const pressure = node.pressure ?? { level: "low" as PressureLevel, score: 0, reasons: [] };
   const mem = node.memory;
   const disks = [...(node.disks ?? [])].sort((a, b) => b.use_pct - a.use_pct);
-  const maxDisk = disks[0]?.use_pct ?? 0;
-  const maxInode = Math.max(...disks.map((d) => d.inode_use_pct ?? 0), 0);
   const busy = node.cpu?.busy;
-  const iowait = node.cpu?.iowait;
+  const cpuIowait = node.cpu?.iowait;
+  const ioIowait = node.io?.iowait_pct == null ? cpuIowait : node.io.iowait_pct / 100;
+  const dState = node.processes?.d_state ?? 0;
+  const ioUtil = node.io?.max_util_pct == null ? null : node.io.max_util_pct / 100;
+  const ioAwait = node.io?.max_await_ms ?? null;
+  const advisoryUtil = ioUtil == null ? 0 : Math.min(ioUtil, 0.5);
+  const diskPressure = Math.max(ioIowait ?? 0, advisoryUtil, Math.min(dState / 10, 1));
+  const ioDetail = node.io?.devices?.length
+    ? `${t("login.ioUtil")} ${ioUtil == null ? "—" : pct(ioUtil)} · ${t("login.ioAwait")} ${fmtMs(ioAwait)}`
+    : t("login.ioNoData");
 
   if (!node.ok) {
     return (
       <SectionCard title={node.id}>
-        <div className="flex items-center gap-2 text-sm text-destructive">
-          <AlertTriangle className="h-4 w-4" />
-          {node.error || t("login.unavailable")}
+        <div className="flex items-start gap-2">
+          <AlertTriangle className="mt-0.5 h-4 w-4 text-destructive" />
+          <div>
+            <div className="text-sm font-medium text-destructive">{node.error || t("login.unavailable")}</div>
+            <div className="mt-1 text-xs text-muted-foreground">{t("login.nodeRetry")}</div>
+          </div>
         </div>
       </SectionCard>
     );
@@ -159,7 +170,7 @@ function NodePanel({ node }: { node: LoginNode }) {
             icon={<Cpu className="h-4 w-4" />}
             label={t("login.cpuBusy")}
             value={busy == null ? "—" : pct(busy)}
-            detail={`${t("login.iowait")} ${iowait == null ? "—" : pct(iowait)}`}
+            detail={`${t("login.iowait")} ${cpuIowait == null ? "—" : pct(cpuIowait)}`}
             bar={busy ?? 0}
           />
           <Metric
@@ -171,34 +182,38 @@ function NodePanel({ node }: { node: LoginNode }) {
           />
           <Metric
             icon={<HardDrive className="h-4 w-4" />}
-            label={t("login.diskMax")}
-            value={`${maxDisk}%`}
-            detail={`${t("login.inodeMax")} ${maxInode}% · ${t("login.dstate")} ${node.processes?.d_state ?? 0}`}
-            bar={maxDisk / 100}
+            label={t("login.diskPressure")}
+            value={ioIowait == null ? "—" : pct(ioIowait)}
+            detail={ioDetail}
+            bar={diskPressure}
           />
         </div>
 
-        <div className="rounded-lg border border-border">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>{t("login.mount")}</TableHead>
-                <TableHead>{t("login.used")}</TableHead>
-                <TableHead>{t("login.available")}</TableHead>
-                <TableHead>{t("login.filesystem")}</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {disks.slice(0, 4).map((d) => (
-                <TableRow key={`${d.filesystem}-${d.mount}`}>
-                  <TableCell className="font-medium">{d.mount}</TableCell>
-                  <TableCell>{d.use_pct}%</TableCell>
-                  <TableCell>{fmtBytes(d.available)}</TableCell>
-                  <TableCell className="max-w-[12rem] truncate text-muted-foreground">{d.filesystem}</TableCell>
+        <div className="space-y-1">
+          <div className="text-xs font-medium text-muted-foreground">{t("login.diskSpaceRef")}</div>
+          <div className="rounded-lg border border-border">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>{t("login.mount")}</TableHead>
+                  <TableHead>{t("login.used")}</TableHead>
+                  <TableHead>{t("login.available")}</TableHead>
+                  <TableHead>{t("login.filesystem")}</TableHead>
                 </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+              </TableHeader>
+              <TableBody>
+                {disks.slice(0, 4).map((d) => (
+                  <TableRow key={`${d.filesystem}-${d.mount}`}>
+                    <TableCell className="font-medium">{d.mount}</TableCell>
+                    <TableCell>{d.use_pct}%</TableCell>
+                    <TableCell>{fmtBytes(d.available)}</TableCell>
+                    <TableCell className="max-w-[12rem] truncate text-muted-foreground">{d.filesystem}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+          <div className="text-[11px] text-muted-foreground">{t("login.diskScope")}</div>
         </div>
 
         <div className="space-y-1">
@@ -252,7 +267,7 @@ function OffenderPanel({ node }: { node: LoginNode }) {
   const t = useT();
   if (!node.ok) return null;
   return (
-    <SectionCard title={`${node.id} · ${t("login.processes")}`}>
+    <SectionCard title={`${node.id} · ${t("login.processes")}`} className="min-w-0" bodyClassName="min-w-0 overflow-hidden">
       <div className="grid gap-4">
         <ProcessTable title={t("login.topCpu")} rows={node.processes?.top_cpu ?? []} />
         <ProcessTable title={t("login.topMemory")} rows={node.processes?.top_mem ?? []} />
@@ -264,12 +279,12 @@ function OffenderPanel({ node }: { node: LoginNode }) {
 function ProcessTable({ title, rows }: { title: string; rows: LoginProcess[] }) {
   const t = useT();
   return (
-    <div>
+    <div className="min-w-0">
       <div className="mb-2 text-xs font-medium uppercase text-muted-foreground">{title}</div>
       {rows.length === 0 ? (
         <Empty className="py-4">{t("login.nodata")}</Empty>
       ) : (
-        <Table>
+        <Table className="min-w-[44rem] text-xs">
           <TableHeader>
             <TableRow>
               <TableHead>{t("login.pid")}</TableHead>
@@ -399,6 +414,49 @@ function fmtBytes(bytes: number) {
   if (bytes >= 1024 ** 3) return `${(bytes / 1024 ** 3).toFixed(1)} GiB`;
   if (bytes >= 1024 ** 2) return `${(bytes / 1024 ** 2).toFixed(0)} MiB`;
   return `${Math.round(bytes / 1024)} KiB`;
+}
+
+function fmtMs(value: number | null | undefined) {
+  if (value == null || !Number.isFinite(value)) return "—";
+  if (value >= 100) return `${Math.round(value)}ms`;
+  return `${value.toFixed(1)}ms`;
+}
+
+function LoadingState() {
+  const t = useT();
+  return (
+    <div className="space-y-4">
+      <SectionCard title={t("login.title")}>
+        <div className="flex flex-wrap items-center gap-3">
+          <Loader2 className="h-4 w-4 animate-spin text-primary" />
+          <div>
+            <div className="text-sm font-medium">{t("login.loadingTitle")}</div>
+            <div className="mt-1 text-xs text-muted-foreground">{t("login.loadingDetail")}</div>
+          </div>
+        </div>
+      </SectionCard>
+      <LoadingSkeleton />
+    </div>
+  );
+}
+
+function LoginErrorState({ message }: { message: string }) {
+  const t = useT();
+  return (
+    <div className="space-y-4">
+      <SectionCard title={t("login.title")}>
+        <div className="flex items-start gap-3">
+          <AlertTriangle className="mt-0.5 h-4 w-4 text-destructive" />
+          <div>
+            <div className="text-sm font-medium text-destructive">{t("login.errorTitle")}</div>
+            <div className="mt-1 text-xs text-muted-foreground">{t("login.errorDetail")}</div>
+            {message && <div className="mt-2 rounded-md bg-muted px-2 py-1 font-mono text-[11px] text-muted-foreground">{message}</div>}
+          </div>
+        </div>
+      </SectionCard>
+      <LoadingSkeleton />
+    </div>
+  );
 }
 
 function LoadingSkeleton() {

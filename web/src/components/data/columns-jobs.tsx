@@ -3,9 +3,10 @@ import { reasonLabel, type TFn } from "@/i18n";
 import { fmtAt, fmtEpoch, fmtLeft } from "@/lib/format";
 import type { RawJob } from "@/types/snapshot";
 import { JobStateBadge } from "./cells";
-import { exactArrayFilter } from "./table-filters";
+import { exactArrayFilter, setSingleFacet } from "./table-filters";
 
 const mono = (v: string, cls = "") => <span className={`font-mono text-xs ${cls}`}>{v || "—"}</span>;
+const clickText = "rounded px-1 py-0.5 text-left transition-colors hover:bg-accent hover:text-foreground";
 
 export function jobColumns<T extends RawJob>(t: TFn): ColumnDef<T>[] {
   return [
@@ -18,16 +19,43 @@ export function jobColumns<T extends RawJob>(t: TFn): ColumnDef<T>[] {
     {
       accessorKey: "user_name",
       header: t("col.user"),
-      cell: ({ row }) => <span className="font-mono text-xs text-info-fg">{row.original.user_name}</span>,
+      cell: ({ row, table }) => (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            setSingleFacet(table, "user_name", row.original.user_name);
+          }}
+          className={`${clickText} font-mono text-xs text-info-fg`}
+        >
+          {row.original.user_name}
+        </button>
+      ),
       filterFn: exactArrayFilter,
     },
     { accessorKey: "account", header: t("col.account"), cell: ({ row }) => mono(row.original.account, "text-muted-foreground") },
-    { accessorKey: "partition", header: t("col.partition"), cell: ({ row }) => mono(row.original.partition), filterFn: exactArrayFilter },
+    {
+      accessorKey: "partition",
+      header: t("col.partition"),
+      cell: ({ row, table }) => (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            setSingleFacet(table, "partition", row.original.partition);
+          }}
+          className={`${clickText} font-mono text-xs`}
+        >
+          {row.original.partition}
+        </button>
+      ),
+      filterFn: exactArrayFilter,
+    },
     {
       id: "state",
       accessorFn: (j) => j.job_state,
       header: t("col.jobState"),
-      cell: ({ row }) => <JobStateBadge state={row.original.job_state} />,
+      cell: ({ row, table }) => <JobStateBadge state={row.original.job_state} onClick={() => setSingleFacet(table, "state", row.original.job_state)} />,
       filterFn: exactArrayFilter,
     },
     {

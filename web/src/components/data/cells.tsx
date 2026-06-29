@@ -16,21 +16,44 @@ const NODE_STATE_TONE: Record<string, Tone> = {
   COMPLETING: "warn",
 };
 
-export function StateBadges({ states }: { states: string[] }) {
+export function StateBadges({ states, onSelect }: { states: string[]; onSelect?: (state: string) => void }) {
   return (
     <div className="flex flex-wrap gap-1">
       {states.map((s) => (
-        <Tag key={s} tone={NODE_STATE_TONE[s] ?? "neutral"}>
+        <TagButton key={s} tone={NODE_STATE_TONE[s] ?? "neutral"} onClick={onSelect ? () => onSelect(s) : undefined}>
           {s}
-        </Tag>
+        </TagButton>
       ))}
     </div>
   );
 }
 
-export function JobStateBadge({ state }: { state: string }) {
+export function JobStateBadge({ state, onClick }: { state: string; onClick?: () => void }) {
   const tone: Tone = state === "RUNNING" ? "ok" : state === "PENDING" ? "warn" : "info";
-  return <Tag tone={tone}>{state}</Tag>;
+  return (
+    <TagButton tone={tone} onClick={onClick}>
+      {state}
+    </TagButton>
+  );
+}
+
+function TagButton({ tone, children, onClick }: { tone: Tone; children: string; onClick?: () => void }) {
+  if (!onClick) return <Tag tone={tone}>{children}</Tag>;
+  return (
+    <button
+      type="button"
+      onClick={(e) => {
+        e.stopPropagation();
+        onClick();
+      }}
+      className="inline-flex rounded focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+      title={children}
+    >
+      <Tag tone={tone} className="transition-opacity hover:opacity-80">
+        {children}
+      </Tag>
+    </button>
+  );
 }
 
 /** "alloc/total" with a compact load bar. */

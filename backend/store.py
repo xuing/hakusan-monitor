@@ -147,6 +147,7 @@ class Store:
                         (node.get("pressure") or {}).get("level", "low"),
                         json.dumps({
                             "pressure": node.get("pressure"),
+                            "io": node.get("io"),
                             "top_cpu": (node.get("processes") or {}).get("top_cpu", []),
                             "top_mem": (node.get("processes") or {}).get("top_mem", []),
                             "users": node.get("users", []),
