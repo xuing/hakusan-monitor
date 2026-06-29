@@ -190,7 +190,7 @@ export const ja: Record<TranslationKey, string> = {
   "pool.gpuPerNode": "GPU / ノード",
   "pool.gpuSchedulable": "今すぐ使えるGPU {n}",
   "pool.gpuStranded": "{n} GPU空き、ノードの残り資源が既定要求を満たしません",
-  "pool.gpuStrandedMem": "{n} GPU空き、対象ノードの残りメモリが不足",
+  "pool.gpuStrandedMem": "{n} GPU空き。既定メモリ要求がノード残りメモリを超えるため待機",
   "pool.gpuStrandedCpu": "{n} GPU空き、対象ノードの残りCPUコアが不足",
   "pool.gpuStrandedCpuMem": "{n} GPU空き、対象ノードの残りCPUコアとメモリが不足",
   "pool.fitBlocked": "今は開始不可",

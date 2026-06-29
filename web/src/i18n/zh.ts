@@ -190,7 +190,7 @@ export const zh: Record<TranslationKey, string> = {
   "pool.gpuPerNode": "GPU / 节点",
   "pool.gpuSchedulable": "{n} 张 GPU 现在可申请",
   "pool.gpuStranded": "{n} 张 GPU 空着，但节点剩余资源不满足默认申请",
-  "pool.gpuStrandedMem": "{n} 张 GPU 空着，但所在节点剩余内存不够",
+  "pool.gpuStrandedMem": "{n} 张 GPU 空着；默认内存申请超过节点剩余内存，所以会排队",
   "pool.gpuStrandedCpu": "{n} 张 GPU 空着，但所在节点剩余 CPU 核数不够",
   "pool.gpuStrandedCpuMem": "{n} 张 GPU 空着，但所在节点剩余 CPU 核数和内存都不够",
   "pool.fitBlocked": "不能直接启动",

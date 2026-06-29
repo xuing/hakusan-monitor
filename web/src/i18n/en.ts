@@ -190,7 +190,7 @@ export const en = {
   "pool.gpuPerNode": "GPU / node",
   "pool.gpuSchedulable": "{n} GPU can start now",
   "pool.gpuStranded": "{n} GPU free, but node resources do not satisfy the default request",
-  "pool.gpuStrandedMem": "{n} GPU free, but the nodes do not have enough remaining memory",
+  "pool.gpuStrandedMem": "{n} GPU free; the default memory request exceeds node remaining memory, so it queues",
   "pool.gpuStrandedCpu": "{n} GPU free, but the nodes do not have enough remaining CPU cores",
   "pool.gpuStrandedCpuMem": "{n} GPU free, but the nodes do not have enough remaining CPU cores and memory",
   "pool.fitBlocked": "cannot start now",
