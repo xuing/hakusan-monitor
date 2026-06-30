@@ -141,13 +141,16 @@ function ByHour({
   maxPending: number;
   t: TFn;
 }) {
+  const sampledLevels = data.filter((h) => h.samples > 0).map((h) => metricLevel(metricValue(h, metric), metric, maxPending));
+  const minLevel = Math.min(...sampledLevels);
+  const maxLevel = Math.max(...sampledLevels);
   return (
     <div>
       <div className="grid h-24 items-end gap-1" style={{ gridTemplateColumns: "repeat(24,1fr)" }}>
         {data.map((h) => {
           const value = metricValue(h, metric);
           const level = metricLevel(value, metric, maxPending);
-          const height = h.samples ? Math.max(4, level * 100) : 0;
+          const height = h.samples ? barHeight(level, minLevel, maxLevel) : 0;
           return (
             <div
               key={h.hour}
@@ -167,6 +170,12 @@ function ByHour({
       </div>
     </div>
   );
+}
+
+function barHeight(level: number, minLevel: number, maxLevel: number) {
+  const spread = maxLevel - minLevel;
+  if (!Number.isFinite(spread) || spread < 0.03) return Math.max(4, level * 100);
+  return 18 + ((level - minLevel) / spread) * 82;
 }
 
 function Heatmap({

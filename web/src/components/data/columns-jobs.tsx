@@ -1,6 +1,6 @@
 import type { ColumnDef } from "@tanstack/react-table";
 import { reasonLabel, type TFn } from "@/i18n";
-import { fmtAt, fmtEpoch, fmtLeft } from "@/lib/format";
+import { fmtAt, fmtEpoch, fmtLeft, fmtMB } from "@/lib/format";
 import type { RawJob } from "@/types/snapshot";
 import { JobStateBadge } from "./cells";
 import { exactArrayFilter, setSingleFacet } from "./table-filters";
@@ -67,6 +67,12 @@ export function jobColumns<T extends RawJob>(t: TFn): ColumnDef<T>[] {
     { accessorKey: "node_count", header: t("col.nodes"), cell: ({ row }) => <span className="tnum font-mono text-xs">{row.original.node_count}</span> },
     { accessorKey: "cpus", header: t("col.cpus"), cell: ({ row }) => <span className="tnum font-mono text-xs">{row.original.cpus}</span> },
     { accessorKey: "gpus", header: t("col.gpus"), cell: ({ row }) => <span className="tnum font-mono text-xs">{row.original.gpus || "—"}</span> },
+    {
+      id: "memory",
+      accessorFn: (j) => j.min_memory_mb ?? 0,
+      header: t("col.memory"),
+      cell: ({ row }) => <span className="tnum font-mono text-xs">{row.original.min_memory_mb ? fmtMB(row.original.min_memory_mb) : "—"}</span>,
+    },
     { accessorKey: "qos", header: t("col.qos"), cell: ({ row }) => mono(row.original.qos, "text-muted-foreground") },
     { accessorKey: "nodelist", header: t("col.nodelist"), cell: ({ row }) => mono(row.original.nodelist, "text-muted-foreground") },
     { accessorKey: "time_used", header: t("col.timeUsed"), cell: ({ row }) => mono(row.original.time_used) },

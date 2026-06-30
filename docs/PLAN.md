@@ -25,14 +25,15 @@ Surveyed the current (2026) ecosystem:
 
 We are an **unprivileged user** and need something a normal user can
 run, that is **multilingual**, simple, and read-only. None of the above fit →
-**custom lightweight collector + static dashboard** reading `sinfo/squeue/scontrol
---json`. (We adopt rivosinc's lesson: keep a CLI/format-string fallback in case
-`--json` is unavailable on a given node.)
+**custom lightweight collector + static dashboard** reading compact
+`scontrol`/`squeue` format-string output. We avoid large Slurm JSON payloads on
+the login node.
 
 ## 3. Live cluster facts (probed 2026-06-27, ground truth for the model)
 
 - Cluster `hakusan`, **Slurm 25.05.5**, HA controllers `lcpcc-adm1/adm2`.
-- `sinfo/squeue/scontrol --json` all work; `sacct` available.
+- `scontrol`, `squeue`, `sacct`, `sacctmgr`, and `sbatch --test-only` are
+  available to ordinary users.
 - **219 unique nodes** (partitions overlap — must dedupe by node name):
   - **124× CPU** `lcpcc-001..124` — 256 cores / ~1.5 TB each. Views: `DEF*`,
     `TINY/SINGLE/SMALL/LARGE/XLARGE/X2LARGE`, `LONG/LONG-L`, Materials-Studio
@@ -53,25 +54,24 @@ run, that is **multilingual**, simple, and read-only. None of the above fit →
 ## 4. Architecture
 
 ```
- ┌─────────────┐   ssh / local / mock   ┌──────────────────────────┐   HTTP    ┌────────────┐
- │  hakusan2   │ ◀───  collector   ───▶ │  backend (stdlib Python) │ ◀──────── │  browser   │
- │ slurm CLIs  │   scontrol/squeue      │  • normalize + dedupe    │  /api/*   │  SPA (i18n)│
- │  --json     │      --json            │  • cache (TTL)           │  static   │  auto-poll │
- └─────────────┘                        │  • rolling trend store   │           └────────────┘
+ ┌─────────────┐   ssh / local / mock   ┌──────────────────────────┐   HTTP/SSE ┌────────────┐
+ │  hakusan2   │ ◀───  collector   ───▶ │  backend (stdlib Python) │ ◀────────▶ │  browser   │
+ │ slurm CLIs  │   compact formats      │  • normalize + dedupe    │  /api/*    │  React SPA │
+ │ login stats │   /proc,df,iostat,ps   │  • latest snapshot       │  static    │  i18n      │
+ └─────────────┘                        │  • SQLite history        │            └────────────┘
                                         └──────────────────────────┘
 ```
 
 - **Collector data sources (pluggable via env `HM_SOURCE`):**
-  - `ssh` — `ssh "$HM_SSH_HOST" '<cmd> --json'` (default; works from any
-    JAIST-network box with the key).
+  - `ssh` — `ssh "$HM_SSH_HOST" '<compact Slurm commands>'` (default; works
+    from any JAIST-network box with the key).
   - `local` — run the CLIs directly (when deployed *on* a cluster login node).
   - `mock` — serve captured fixtures in `mock/` (offline dev / demo).
-- **Backend:** single-file **Python 3 stdlib** `http.server` — *zero pip deps* so
-  anyone can run it (`python3 backend/server.py`). Caches the normalized snapshot
-  with a TTL (default 20 s) so the dashboard never hammers the login node, and
-  keeps a small on-disk rolling time-series for trend sparklines.
-- **Frontend:** **zero-build** SPA (vanilla JS + CSS, inline SVG charts). No npm,
-  no CDN (cluster network may be restricted) — fully self-contained & cacheable.
+- **Backend:** **Python 3 stdlib** `http.server` — *zero pip deps* so anyone can
+  run it (`python3 backend/server.py`). A sampler thread maintains the latest
+  normalized snapshot, records SQLite history, and pushes SSE updates.
+- **Frontend:** React + TypeScript SPA under `web/`, built to static files served
+  by the backend. Runtime delivery has no CDN dependency.
 
 ## 5. Feature modules
 
@@ -117,7 +117,7 @@ run, that is **multilingual**, simple, and read-only. None of the above fit →
 ## 7. Milestones
 
 1. ✅ Research + live probe + fixtures.
-2. ▶ Plan + design (`PLAN.md`, `DESIGN.md`).
+2. ✅ Plan + design (`PLAN.md`, `DESIGN.md`).
 3. Backend collector + normalized `/api/snapshot` (ssh/local/mock, cache, trend).
 4. Multilingual frontend (gauges, partitions, GPU board, queue, containers, helper).
 5. Live end-to-end test vs `sinfo/squeue`, README + run/deploy docs.
@@ -157,4 +157,4 @@ unchanged except for two additions to expose *all* raw data — `GET /api/nodes`
 and `GET /api/jobs` (full per-node / per-job fields). New structure: five routed
 pages (Overview, Partitions, Analytics, Nodes, Jobs) as independent subsystems,
 a single SSE connection shared via context, a type-checked ja/en/zh dictionary,
-and TanStack data tables for the raw views. See `DESIGN.md` §8 and `web/README.md`.
+and TanStack data tables for the raw views. See `DESIGN.md` §7 and `../web/README.md`.
