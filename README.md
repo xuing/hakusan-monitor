@@ -200,4 +200,4 @@ npm run lint     # oxlint
   process if the host clock isn't JST.
 - Read-only community tool; not an official JAIST service.
 
-See `docs/PLAN.md` and `docs/DESIGN.md` for the full plan and design.
+See [`docs/`](docs/README.md) for deployment, plan, and design notes.
