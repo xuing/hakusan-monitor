@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Check, Copy } from "lucide-react";
 import { Empty } from "@/components/common/empty";
+import { HoverHint } from "@/components/common/hover-hint";
 import { SectionCard } from "@/components/common/section-card";
 import { Tag } from "@/components/common/tag";
 import { useLive } from "@/hooks/use-live";
@@ -416,6 +417,20 @@ function PartitionRow({
   const hero = requestableNow(p, cap, isGpu, pc);
   const probeState = cpuProbe ? cpuProbeState(cpuProbe.probe, generatedAt) : null;
   const canRun = !maint && !groupLimitReached && (probeState ? probeState === "now" : hero.n > 0);
+  // The hero count is a naive snapshot of idle hardware in the pool — it has no idea about
+  // QOS group limits or scheduling priority. sbatch --test-only does. When the probe gives a
+  // definitive negative answer for this exact partition, defer to it instead of showing a node/
+  // core count that would contradict the "will queue" badge right next to it.
+  const heroHasEstimate = Boolean(probeState === "queued" && cpuProbe?.probe?.start_time);
+  const heroOverride =
+    !maint && (probeState === "queued" || probeState === "failed")
+      ? heroHasEstimate
+        ? t("pool.cpuProbeStart", { time: clockOf(cpuProbe!.probe!.start_time) })
+        : partitionCpuProbeLabel(probeState, t)
+      : null;
+  // "Available" reads wrong next to a queued/failed verdict — swap to a fitting label,
+  // or drop the label entirely when the override text already speaks for itself.
+  const heroLabel = !heroOverride ? t("part.requestNow") : heroHasEstimate ? t("col.startEst") : null;
   const showTestedCommand = Boolean(cpuProbe?.probe && !maint && (probeState === "now" || probeState === "queued"));
   const copyCommand = async () => {
     if (!cpuProbe || !showTestedCommand) return;
@@ -434,11 +449,11 @@ function PartitionRow({
         </div>
         <div className="min-w-0">
           <div className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5">
-            <span className="text-[11px] text-muted-foreground">{t("part.requestNow")}</span>
+            {heroLabel && <span className="text-[11px] text-muted-foreground">{heroLabel}</span>}
             <span className={cn("font-mono text-base font-semibold", canRun ? "text-ok-fg" : "text-muted-foreground")}>
-              {maint ? "—" : heroText(t, hero)}
-              {hero.capped && !maint && (
-                <span title={t("part.capHint")} className="ml-0.5 cursor-help align-super text-[10px] text-warn-fg">*</span>
+              {maint ? "—" : (heroOverride ?? heroText(t, hero))}
+              {!heroOverride && hero.capped && !maint && (
+                <HoverHint text={t("part.capHint")} className="ml-0.5 align-super text-[10px]" />
               )}
             </span>
             <span className="font-mono text-[11px] text-muted-foreground">

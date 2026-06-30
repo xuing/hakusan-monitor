@@ -29,6 +29,7 @@ export interface Totals {
 export interface Occupant {
   job_id: number | string;
   user: string;
+  partition: string;
   gpus: number;
   cpus: number;
   mem_mb: number;
@@ -140,6 +141,7 @@ export interface QueueData {
   pending_reasons: Record<string, number>;
   by_partition: { partition: string; running: number; pending: number }[];
   top_pending: PendingJob[];
+  longest_pending_by_partition?: PendingJob[];
   releases: Release[];
   container_jobs: number;
 }

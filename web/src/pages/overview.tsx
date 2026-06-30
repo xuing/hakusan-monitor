@@ -20,11 +20,15 @@ export default function OverviewPage() {
       <ResourcePools />
       {filter !== "all" && <PoolDetail />}
       <div className="grid gap-4 lg:grid-cols-12">
-        <div className="lg:col-span-12">
+        <div
+          className={filter === "all"
+            ? "lg:col-span-5 lg:min-h-0 lg:overflow-hidden lg:[contain:size] xl:col-span-4"
+            : "lg:col-span-12"}
+        >
           <ReleasesPanel />
         </div>
         {filter === "all" && (
-          <div className="lg:col-span-12">
+          <div className="lg:col-span-7 xl:col-span-8">
             <QueueInsights />
           </div>
         )}

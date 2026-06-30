@@ -3,8 +3,8 @@ import { Empty } from "@/components/common/empty";
 import { SectionCard } from "@/components/common/section-card";
 import { useLive } from "@/hooks/use-live";
 import { reasonLabel, useT } from "@/i18n";
-import { fmtAt } from "@/lib/format";
-import { toneClass, type Tone } from "@/lib/slurm";
+import { fmtAt, fmtEpoch } from "@/lib/format";
+import { partitionDisplayRank, toneClass, type Tone } from "@/lib/slurm";
 import { cn } from "@/lib/utils";
 
 export function QueueInsights() {
@@ -15,9 +15,16 @@ export function QueueInsights() {
 
   const reasonEntries = Object.entries(q.pending_reasons).sort((a, b) => b[1] - a[1]);
   const reasonTotal = reasonEntries.reduce((sum, [, n]) => sum + n, 0);
+  const longestSource = q.longest_pending_by_partition?.length ? q.longest_pending_by_partition : q.top_pending;
+  const longestPending = [...longestSource].sort(
+    (a, b) =>
+      partitionDisplayRank(a.partition) - partitionDisplayRank(b.partition)
+      || String(a.partition || "").localeCompare(String(b.partition || ""))
+      || (a.submit_time || 0) - (b.submit_time || 0),
+  );
 
   return (
-    <SectionCard title={t("section.queue")}>
+    <SectionCard title={t("section.queue")} className="h-full">
       <div className="mb-4 flex flex-wrap gap-2">
         <Chip tone="ok" n={q.running} label={t("queue.running")} />
         <Chip tone="warn" n={q.pending} label={t("queue.pending")} />
@@ -34,8 +41,8 @@ export function QueueInsights() {
             {reasonEntries.map(([reason, n]) => (
               <div
                 key={reason}
-                className={cn("h-full first:rounded-l-full last:rounded-r-full", toneClass[reasonTone(reason)].dot)}
-                style={{ width: `${(n / reasonTotal) * 100}%`, minWidth: "3px" }}
+                className="h-full first:rounded-l-full last:rounded-r-full"
+                style={{ width: `${(n / reasonTotal) * 100}%`, minWidth: "3px", backgroundColor: reasonColor(reason) }}
                 title={`${reasonLabel(t, reason)} · ${n}`}
               />
             ))}
@@ -43,7 +50,7 @@ export function QueueInsights() {
           <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1">
             {reasonEntries.map(([reason, n]) => (
               <span key={reason} className="inline-flex items-center gap-1.5 text-[11px] text-muted-foreground">
-                <span className={cn("h-2 w-2 shrink-0 rounded-full", toneClass[reasonTone(reason)].dot)} />
+                <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: reasonColor(reason) }} />
                 {reasonLabel(t, reason)}
                 <span className="tnum text-foreground">{n}</span>
               </span>
@@ -52,31 +59,33 @@ export function QueueInsights() {
         </div>
       )}
 
-      {q.top_pending.length === 0 ? (
+      {longestPending.length === 0 ? (
         <Empty>{t("queue.none")}</Empty>
       ) : (
         <>
           <h3 className="mb-2 text-xs text-muted-foreground">{t("queue.longest")}</h3>
-          <div className="overflow-x-auto">
+          <div className="max-h-72 overflow-auto">
             <table className="w-full text-xs">
               <thead>
-                <tr className="text-left text-muted-foreground">
+                <tr className="sticky top-0 bg-card text-left text-muted-foreground">
+                  <Th>{t("col.partition")}</Th>
                   <Th>{t("col.job")}</Th>
                   <Th>{t("col.user")}</Th>
-                  <Th>{t("col.partition")}</Th>
                   <Th>{t("col.gpu")}/CPU</Th>
                   <Th>{t("col.reason")}</Th>
+                  <Th>{t("col.submit")}</Th>
                   <Th>{t("col.startEst")}</Th>
                 </tr>
               </thead>
               <tbody className="font-mono">
-                {q.top_pending.slice(0, 6).map((j) => (
-                  <tr key={String(j.job_id)} className="border-t border-border">
+                {longestPending.map((j) => (
+                  <tr key={`${j.partition}-${String(j.job_id)}`} className="border-t border-border">
+                    <Td>{j.partition || "—"}</Td>
                     <Td>{j.job_id}</Td>
                     <Td className="text-info-fg">{j.user}</Td>
-                    <Td>{j.partition}</Td>
                     <Td>{j.gpu || `${j.cpus}c`}</Td>
                     <Td className="text-muted-foreground">{reasonLabel(t, j.reason)}</Td>
+                    <Td className="text-muted-foreground">{fmtEpoch(j.submit_time)}</Td>
                     <Td className="text-muted-foreground">{j.start_est ? fmtAt(j.start_est) : "—"}</Td>
                   </tr>
                 ))}
@@ -89,17 +98,35 @@ export function QueueInsights() {
   );
 }
 
-// Group Slurm pending reasons into three readable buckets:
-//   info (blue)    — waiting for free hardware
-//   warn (amber)   — blocked by a QOS / policy limit
-//   neutral (grey) — ordering / dependency / being scheduled (Priority, Dependency, None…)
-// Slurm can emit verbose reasons (e.g. "Nodes required for job are DOWN, …"), so
-// match on the first word, mirroring reasonLabel's normalization.
-function reasonTone(reason: string): Tone {
+function reasonColor(reason: string) {
   const word = (reason || "").split(/[\s_]/)[0];
-  if (["Resources", "Nodes", "ReqNodeNotAvail", "NodeDown", "Reservation"].includes(word)) return "info";
-  if (word.startsWith("QOS") || /Limit|Max/.test(reason)) return "warn";
-  return "neutral";
+  if (reason === "Priority") return "var(--slate-10)";
+  if (reason === "Dependency") return "var(--green-10)";
+  if (reason === "QOSMaxJobsPerUserLimit") return "hsl(262 56% 58%)";
+  if (reason === "QOSMaxCpuPerJobLimit") return "hsl(24 78% 47%)";
+  if (reason === "JobArrayTaskLimit") return "hsl(189 72% 42%)";
+  if (word === "Resources") return "var(--blue-10)";
+  if (["Nodes", "ReqNodeNotAvail", "NodeDown"].includes(word) || /DOWN|DRAIN|Unavailable/i.test(reason)) return "var(--red-10)";
+  if (word === "BeginTime") return "hsl(199 72% 45%)";
+  if (word === "Reservation") return "hsl(330 58% 52%)";
+  if (word === "None") return "var(--gray-10)";
+  if (word.startsWith("QOS") || /Limit|Max/.test(reason)) return "var(--amber-10)";
+  return FALLBACK_REASON_COLORS[hashReason(reason) % FALLBACK_REASON_COLORS.length];
+}
+
+const FALLBACK_REASON_COLORS = [
+  "hsl(206 82% 48%)",
+  "hsl(168 64% 36%)",
+  "hsl(262 56% 58%)",
+  "hsl(24 78% 47%)",
+  "hsl(330 58% 52%)",
+  "hsl(215 16% 47%)",
+];
+
+function hashReason(reason: string) {
+  let h = 0;
+  for (let i = 0; i < reason.length; i += 1) h = (h * 31 + reason.charCodeAt(i)) >>> 0;
+  return h;
 }
 
 function Chip({ tone, n, label }: { tone?: Tone; n: number; label: string }) {

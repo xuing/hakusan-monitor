@@ -251,6 +251,7 @@ def normalize(nodes_json, squeue_json, *, cluster="hakusan", slurm_version="",
     running = pending = container_jobs = 0
     user_run = defaultdict(lambda: {"running": 0, "cpus": 0, "gpus": 0})
     pending_jobs = []
+    longest_pending_by_part = {}
     releases = []                # running jobs that will free resources, by end time
     next_free = {}               # gpu type -> soonest {at, left} a card frees
     releasing = defaultdict(lambda: {"jobs": 0, "nodes": 0})  # per-partition, within 2h
@@ -314,17 +315,25 @@ def normalize(nodes_json, squeue_json, *, cluster="hakusan", slurm_version="",
             for pool in {part_pool.get(p) for p in parts if p in part_pool}:
                 pool_pend[pool] += 1
             gp = j.get("gpus", 0)
-            gtype = part_gpu_type.get(parts[0]) if (gp and parts) else None
-            pending_jobs.append({
-                "job_id": num(j.get("job_id")),
-                "user": mask_user(j.get("user_name", ""), mask_users),
-                "partition": parts[0] if parts else "",
-                "gpu": gpu_label(gtype, gp) if gp else "",
-                "cpus": num(j.get("cpus")),
-                "reason": reason,
-                "submit_time": num(j.get("submit_time")),
-                "start_est": j.get("start_est") or "",
-            })
+            pending_parts = parts or [""]
+            pending_records = []
+            for p in pending_parts:
+                gtype = part_gpu_type.get(p) if gp else None
+                record = {
+                    "job_id": num(j.get("job_id")),
+                    "user": mask_user(j.get("user_name", ""), mask_users),
+                    "partition": p,
+                    "gpu": gpu_label(gtype, gp) if gp else "",
+                    "cpus": num(j.get("cpus")),
+                    "reason": reason,
+                    "submit_time": num(j.get("submit_time")),
+                    "start_est": j.get("start_est") or "",
+                }
+                pending_records.append(record)
+                current = longest_pending_by_part.get(p)
+                if current is None or pending_sort_key(record) < pending_sort_key(current):
+                    longest_pending_by_part[p] = record
+            pending_jobs.append(pending_records[0])
         if j.get("container"):
             container_jobs += 1
 
@@ -438,9 +447,10 @@ def normalize(nodes_json, squeue_json, *, cluster="hakusan", slurm_version="",
     # ---- top users / pending preview ----------------------------------------
     top_users = sorted(
         ({"user": mask_user(u, mask_users), **v} for u, v in user_run.items()),
-        key=lambda x: (-x["running"], -x["cpus"]))[:8]
-    pending_jobs.sort(key=lambda x: (x["submit_time"] or 0))
+        key=lambda x: (-x["running"], -x["gpus"], -x["cpus"]))[:8]
+    pending_jobs.sort(key=pending_sort_key)
     top_pending = pending_jobs[:12]
+    longest_pending = sorted(longest_pending_by_part.values(), key=lambda x: x["partition"])
     # soonest-ending running jobs (ISO end-time strings sort chronologically)
     releases.sort(key=lambda x: x["end_time"])
     top_releases = releases[:14]
@@ -481,6 +491,7 @@ def normalize(nodes_json, squeue_json, *, cluster="hakusan", slurm_version="",
                               "pending": pend_by_part.get(p, 0)}
                              for p in sorted(set(run_by_part) | set(pend_by_part))],
             "top_pending": top_pending,
+            "longest_pending_by_partition": longest_pending,
             "releases": top_releases,
             "container_jobs": container_jobs,
         },
@@ -488,3 +499,8 @@ def normalize(nodes_json, squeue_json, *, cluster="hakusan", slurm_version="",
         "top_users": top_users,
         "part_pool": part_pool,    # partition -> pool id (lets the client group raw jobs)
     }
+
+
+def pending_sort_key(job):
+    submit = job.get("submit_time") or 2**63
+    return submit, str(job.get("job_id", ""))

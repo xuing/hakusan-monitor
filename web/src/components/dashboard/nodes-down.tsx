@@ -1,8 +1,12 @@
+import { Bar } from "@/components/common/bar";
 import { Empty } from "@/components/common/empty";
 import { SectionCard } from "@/components/common/section-card";
 import { useLive } from "@/hooks/use-live";
 import { useResourceFilter } from "@/hooks/use-resource-filter";
 import { useT } from "@/i18n";
+import type { Tone } from "@/lib/slurm";
+import { cn } from "@/lib/utils";
+import type { DownNode } from "@/types/snapshot";
 
 export function NodesDown() {
   const { snap } = useLive();
@@ -17,19 +21,51 @@ export function NodesDown() {
       {nd.length === 0 ? (
         <Empty>✓ {t("nodesdown.none")}</Empty>
       ) : (
-        <div className="divide-y divide-border">
-          {nd.slice(0, 8).map((n) => (
-            <div key={n.name} className="grid grid-cols-[8rem_1fr] gap-3 py-2 text-xs">
-              <div>
-                <div className="font-mono">{n.name}</div>
-                <div className="text-[10px] uppercase text-bad-fg">{n.state.join("+")}</div>
-              </div>
-              <div className="text-muted-foreground">{n.reason || "—"}</div>
-            </div>
-          ))}
-          {nd.length > 8 && <div className="pt-2 text-xs text-muted-foreground">+{nd.length - 8}</div>}
+        <div className="max-h-72 overflow-y-auto pr-1">
+          <div className="divide-y divide-border">
+            {nd.map((n) => {
+              const level = nodeAttention(n);
+              return (
+                <div key={n.name} className="grid gap-x-3 gap-y-1 py-2 text-xs sm:grid-cols-[7.5rem_minmax(0,1fr)] sm:items-center">
+                  <div className="min-w-0 truncate font-mono">{n.name}</div>
+                  <div className="min-w-0">
+                    <div className="flex min-w-0 items-center gap-2">
+                      <div className="flex max-w-[13rem] shrink-0 items-center gap-1 overflow-x-auto">
+                        {n.state.map((state) => (
+                          <span
+                            key={state}
+                            className={cn(
+                              "whitespace-nowrap rounded-sm border border-current/20 px-1 py-px text-[9px] uppercase leading-3",
+                              level.text,
+                            )}
+                          >
+                            {state.replace(/_/g, " ")}
+                          </span>
+                        ))}
+                      </div>
+                      <div className="min-w-0 truncate text-muted-foreground" title={n.reason || undefined}>
+                        {n.reason || "—"}
+                      </div>
+                    </div>
+                    <Bar value={level.value} tone={level.tone} className="mt-1 h-1" />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         </div>
       )}
     </SectionCard>
   );
+}
+
+function nodeAttention(node: DownNode): { value: number; tone: Tone; text: string } {
+  const states = new Set(node.state.map((s) => s.toUpperCase()));
+  if (states.has("DOWN") || states.has("NOT_RESPONDING")) {
+    return { value: 1, tone: "bad", text: "text-bad-fg" };
+  }
+  if (states.has("DRAIN") || states.has("DRAINING")) {
+    return { value: 0.7, tone: "warn", text: "text-warn-fg" };
+  }
+  return { value: 0.45, tone: "neutral", text: "text-muted-foreground" };
 }

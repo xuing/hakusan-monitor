@@ -9,6 +9,7 @@ function toOccupant(j: RawJob): Occupant {
   return {
     job_id: j.job_id,
     user: j.user_name,
+    partition: j.partition,
     gpus: j.gpus,
     cpus: j.cpus,
     mem_mb: j.min_memory_mb ?? 0,
@@ -72,7 +73,9 @@ export function usersForPool(snap: Snapshot, poolId: string): PoolUser[] {
     u.gpus += j.gpus;
     map.set(j.user_name, u);
   }
-  return [...map.values()].sort((a, b) => b.cpus - a.cpus || b.gpus - a.gpus).slice(0, 10);
+  return [...map.values()].sort((a, b) =>
+    b.running - a.running || b.gpus - a.gpus || b.cpus - a.cpus,
+  ).slice(0, 10);
 }
 
 /** Running jobs occupying a pool, from raw jobs + the partition→pool map. */

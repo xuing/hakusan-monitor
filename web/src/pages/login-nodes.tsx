@@ -3,6 +3,7 @@ import { AlertTriangle, Cpu, HardDrive, Loader2, MemoryStick, Server } from "luc
 import type { ReactNode } from "react";
 import { Empty } from "@/components/common/empty";
 import { Bar } from "@/components/common/bar";
+import { HoverHint } from "@/components/common/hover-hint";
 import { SectionCard } from "@/components/common/section-card";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -123,8 +124,15 @@ function NodePanel({ node }: { node: LoginNode }) {
   const ioUtil = node.io?.max_util_pct == null ? null : node.io.max_util_pct / 100;
   const ioAwait = node.io?.max_await_ms ?? null;
   const ioQueue = node.io?.max_aqu_sz ?? null;
-  const ioDetail = node.io?.devices?.length
+  // Visible line keeps only the two numbers that explain the headline I/O-wait %
+  // (how busy the device is, how slow each request is); D-state and queue depth
+  // are still there, just on hover, so nothing is actually lost — only deferred.
+  const ioShort = node.io?.devices?.length
+    ? `${ioIowaitFromIostat ? "iostat" : "/proc/stat"} · ${t("login.ioUtil")} ${ioUtil == null ? "—" : pct(ioUtil)} · ${t("login.ioAwait")} ${fmtMs(ioAwait)}`
+    : t("login.ioNoData");
+  const ioFull = node.io?.devices?.length
     ? [
+        t(ioIowaitFromIostat ? "login.ioSourceIostat" : "login.ioSourceProcStat"),
         `${t("login.ioUtil")} ${ioUtil == null ? "—" : pct(ioUtil)}`,
         `${t("login.ioAwait")} ${fmtMs(ioAwait)}`,
         `${t("login.dstate")} ${dState}`,
@@ -185,37 +193,41 @@ function NodePanel({ node }: { node: LoginNode }) {
             icon={<HardDrive className="h-4 w-4" />}
             label={t("login.diskPressure")}
             value={ioIowait == null ? "—" : pct(ioIowait)}
-            detail={`${ioIowaitFromIostat ? "iostat %iowait" : "/proc/stat iowait"} · ${ioDetail}`}
+            detail={ioShort}
+            detailTitle={ioFull}
             bar={ioIowait ?? 0}
             barTone={ratioTone(ioIowait, 0.1, 0.2)}
           />
         </div>
 
         <div className="space-y-1">
-          <div className="text-xs font-medium text-muted-foreground">{t("login.diskSpaceRef")}</div>
-          <div className="rounded-lg border border-border">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>{t("login.mount")}</TableHead>
-                  <TableHead>{t("login.used")}</TableHead>
-                  <TableHead>{t("login.available")}</TableHead>
-                  <TableHead>{t("login.filesystem")}</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {disks.slice(0, 4).map((d) => (
-                  <TableRow key={`${d.filesystem}-${d.mount}`}>
-                    <TableCell className="font-medium">{d.mount}</TableCell>
-                    <TableCell>{d.use_pct}%</TableCell>
-                    <TableCell>{fmtBytes(d.available)}</TableCell>
-                    <TableCell className="max-w-[12rem] truncate text-muted-foreground">{d.filesystem}</TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+          <div className="flex items-baseline justify-between">
+            <div className="text-xs font-medium text-muted-foreground">
+              {t("login.diskSpaceRef")}
+              <HoverHint text={t("login.diskScope")} />
+            </div>
+            <div className="text-[11px] text-muted-foreground">{disks.length}</div>
           </div>
-          <div className="text-[11px] text-muted-foreground">{t("login.diskScope")}</div>
+          <Table containerClassName="max-h-56 rounded-lg border border-border subtle-scroll">
+            <TableHeader className="sticky top-0 z-10 bg-card">
+              <TableRow>
+                <TableHead>{t("login.mount")}</TableHead>
+                <TableHead>{t("login.used")}</TableHead>
+                <TableHead>{t("login.available")}</TableHead>
+                <TableHead>{t("login.filesystem")}</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {disks.map((d) => (
+                <TableRow key={`${d.filesystem}-${d.mount}`}>
+                  <TableCell className="font-medium">{d.mount}</TableCell>
+                  <TableCell>{d.use_pct}%</TableCell>
+                  <TableCell>{fmtBytes(d.available)}</TableCell>
+                  <TableCell className="max-w-[12rem] truncate text-muted-foreground">{d.filesystem}</TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
         </div>
 
       </div>
@@ -228,6 +240,7 @@ function Metric({
   label,
   value,
   detail,
+  detailTitle,
   bar,
   barTone,
 }: {
@@ -235,6 +248,7 @@ function Metric({
   label: string;
   value: string;
   detail: string;
+  detailTitle?: string;
   bar: number;
   barTone?: Tone;
 }) {
@@ -248,7 +262,7 @@ function Metric({
         <div className="text-lg font-semibold tabular-nums">{value}</div>
       </div>
       <Bar value={bar} tone={barTone} className="mt-3" />
-      <div className="mt-2 text-xs text-muted-foreground">{detail}</div>
+      <div className="mt-2 truncate text-xs text-muted-foreground" title={detailTitle}>{detail}</div>
     </div>
   );
 }

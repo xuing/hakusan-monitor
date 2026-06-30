@@ -1,11 +1,13 @@
 import { useMemo } from "react";
+import { Clock } from "lucide-react";
 import { NODE_HIDDEN, nodeColumns } from "@/components/data/columns-nodes";
 import { DataTable, type DataFacet } from "@/components/data/data-table";
 import { TableSkeleton } from "@/components/common/table-skeleton";
 import { useLive } from "@/hooks/use-live";
 import { poolLabel, useT, type TFn } from "@/i18n";
 import { jobsOnNode } from "@/lib/derive";
-import { fmtLeft, fmtMB } from "@/lib/format";
+import { fmtCountdown, fmtMB, parseDur } from "@/lib/format";
+import { cn } from "@/lib/utils";
 import type { Occupant, RawNode, Snapshot } from "@/types/snapshot";
 
 const nodeWeight = (n: RawNode) => {
@@ -47,23 +49,41 @@ function NodeJobs({ snap, node, t }: { snap: Snapshot; node: RawNode; t: TFn }) 
     return <div className="px-4 py-3 text-xs text-muted-foreground">{t("releases.none")}</div>;
   }
   return (
-    <div className="space-y-1.5 px-4 py-3">
-      <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+    <div className="px-4 py-3">
+      <div className="mb-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
         {t("pool.occupants")} ({jobs.length})
       </div>
-      {jobs.map((j) => (
-        <div
-          key={String(j.job_id)}
-          className="grid grid-cols-[minmax(6rem,1fr)_auto] items-center gap-3 rounded-md bg-background/50 px-2.5 py-1.5 font-mono text-[11px]"
-        >
-          <span className="truncate text-info-fg">{j.user}</span>
-          <div className="flex min-w-0 items-center gap-3 text-muted-foreground">
-            <span>#{j.job_id}</span>
-            <span className="text-foreground">{nodeJobResources(j, t)}</span>
-            <span className="text-ok-fg">{t("releases.in", { t: fmtLeft(j.time_left) })}</span>
-          </div>
-        </div>
-      ))}
+      <div className="grid grid-cols-[repeat(auto-fit,minmax(13rem,1fr))] gap-1.5">
+        {jobs.map((j) => (
+          <NodeJobCard key={String(j.job_id)} job={j} t={t} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function NodeJobCard({ job, t }: { job: Occupant; t: TFn }) {
+  const isGpu = job.gpus > 0;
+  const accent = isGpu ? "bg-info" : "bg-ok";
+  const fg = isGpu ? "text-info-fg" : "text-ok-fg";
+  const soft = isGpu ? "bg-info-soft text-info-fg" : "bg-ok-soft text-ok-fg";
+  return (
+    <div className="rounded-md bg-muted/40 px-2.5 py-1.5 transition-colors hover:bg-muted/60">
+      <div className="flex items-center justify-between gap-2">
+        <span className="flex min-w-0 items-center gap-1.5">
+          <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", accent)} />
+          <span className="truncate font-mono text-[12px] font-medium text-info-fg">{job.user}</span>
+        </span>
+        <span className={cn("tnum inline-flex shrink-0 items-center gap-1 rounded-full px-1.5 py-0.5 font-mono text-[10px] font-medium", soft)}>
+          <Clock className="h-2.5 w-2.5" />
+          {fmtCountdown(parseDur(job.time_left))}
+        </span>
+      </div>
+      <div className="mt-0.5 flex items-center gap-1.5 pl-3 text-[10px] text-muted-foreground">
+        <span className={cn("font-medium", fg)}>{nodeJobResources(job, t)}</span>
+        <span className="text-muted-foreground/40">·</span>
+        <span className="truncate">#{job.job_id}</span>
+      </div>
     </div>
   );
 }

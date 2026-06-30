@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { Empty } from "@/components/common/empty";
+import { HoverHint } from "@/components/common/hover-hint";
 import { SectionCard } from "@/components/common/section-card";
 import { useApi } from "@/hooks/use-api";
 import { useT, type TFn } from "@/i18n";
@@ -41,15 +42,20 @@ export function UsagePanel() {
   const hasSparseData = Boolean(data && data.total_hours < 24);
 
   return (
-    <SectionCard title={t("section.usage")} extra={data ? coverageText(data, t) : t("usage.lead", { n: DAYS })}>
+    <SectionCard
+      title={
+        <span>
+          {t("section.usage")}
+          <HoverHint text={t("usage.scope")} className="ml-0.5" />
+        </span>
+      }
+      extra={data ? coverageText(data, t) : t("usage.lead", { n: DAYS })}
+    >
       {!data || data.total_hours === 0 ? (
         <Empty>{t("usage.nodata")}</Empty>
       ) : (
         <div className="space-y-4">
-          <div className="rounded-md border border-border bg-muted/35 px-3 py-2 text-xs leading-relaxed text-muted-foreground">
-            {t("usage.scope")}
-            {hasSparseData && <span className="ml-2 text-warn-fg">{t("usage.lowConfidence")}</span>}
-          </div>
+          {hasSparseData && <div className="text-[11px] text-warn-fg">{t("usage.lowConfidence")}</div>}
 
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex rounded-md border border-border bg-background p-0.5">

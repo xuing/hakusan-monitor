@@ -1320,13 +1320,22 @@ function Occupants({ pool, t }: { pool: Pool; t: TFn }) {
   const isGpu = pool.kind === "gpu";
   const all = occupantsForPool(snap, pool.id); // pre-sorted by resource usage
   const needle = q.trim().toLowerCase();
-  let list = needle
+  const filtered = needle
     ? all.filter((o) => o.user.toLowerCase().includes(needle) || o.nodelist.toLowerCase().includes(needle))
     : all;
-  const effectiveSort = isGpu ? "ending" : sort;
-  if (effectiveSort === "ending") {
+  let list = filtered;
+  if (sort === "ending") {
     list = [...list].sort((a, b) => (a.end_time || "~").localeCompare(b.end_time || "~"));
   }
+  const groupByUser = sort === "usage";
+  const userGroups = groupByUser ? occupantUserGroups(filtered) : [];
+  const totalUserGroups = groupByUser ? occupantUserGroups(all).length : 0;
+  const shown = groupByUser ? userGroups.length : list.length;
+  const total = groupByUser ? totalUserGroups : all.length;
+  // One shared ruler for every row in this pool — the longest wall-time cap among the
+  // partitions sharing this hardware. Otherwise a job that maxes out its own (shorter)
+  // partition policy looks "full" even though a sibling partition allows much longer.
+  const poolCapSeconds = Math.max(0, ...pool.partitions.map((p) => partitionWallSeconds(p, snap.policy)));
   return (
     <div className="mt-2">
       <div className="mb-2 flex flex-wrap items-center gap-2">
@@ -1337,36 +1346,36 @@ function Occupants({ pool, t }: { pool: Pool; t: TFn }) {
           aria-label={t("table.search")}
           className="h-7 w-40 rounded-md border border-border bg-background px-2 text-[11px] outline-none focus:border-primary"
         />
-        {isGpu ? (
-          <span className="rounded-md border border-border px-2 py-1 text-[11px] text-muted-foreground">
-            {t("pool.sortEnding")}
-          </span>
-        ) : (
-          <div className="flex items-center rounded-md border border-border p-0.5">
-            {(["ending", "usage"] as const).map((s) => (
-              <button
-                key={s}
-                type="button"
-                onClick={() => setSort(s)}
-                className={cn(
-                  "rounded px-2 py-0.5 text-[11px] transition-colors",
-                  sort === s ? "bg-accent text-foreground" : "text-muted-foreground hover:text-foreground",
-                )}
-              >
-                {t(s === "usage" ? "pool.sortUsage" : "pool.sortEnding")}
-              </button>
-            ))}
-          </div>
-        )}
+        <div className="flex items-center rounded-md border border-border p-0.5">
+          {(["ending", "usage"] as const).map((s) => (
+            <button
+              key={s}
+              type="button"
+              onClick={() => setSort(s)}
+              className={cn(
+                "rounded px-2 py-0.5 text-[11px] transition-colors",
+                sort === s ? "bg-accent text-foreground" : "text-muted-foreground hover:text-foreground",
+              )}
+            >
+              {t(s === "usage" ? "pool.sortUsage" : "pool.sortEnding")}
+            </button>
+          ))}
+        </div>
         <span className="tnum ml-auto text-[11px] text-muted-foreground">
-          {list.length}/{all.length}
+          {shown}/{total}
         </span>
       </div>
       <div className="max-h-72 space-y-1 overflow-y-auto pr-1">
-        {list.map((o) => (
-          <OccupantRow key={String(o.job_id)} o={o} now={now} generatedAt={snap.generated_at} t={t} />
-        ))}
-        {list.length === 0 && (
+        {groupByUser ? (
+          userGroups.map((group) => (
+            <OccupantUserRow key={group.user} group={group} isGpu={isGpu} t={t} />
+          ))
+        ) : (
+          list.map((o) => (
+            <OccupantRow key={String(o.job_id)} o={o} now={now} generatedAt={snap.generated_at} poolCap={poolCapSeconds} t={t} />
+          ))
+        )}
+        {shown === 0 && (
           <div className="py-3 text-center text-[11px] text-muted-foreground">{t("table.noresults")}</div>
         )}
       </div>
@@ -1379,24 +1388,69 @@ function Occupants({ pool, t }: { pool: Pool; t: TFn }) {
   );
 }
 
+interface OccupantUserGroup {
+  user: string;
+  jobs: number;
+  gpus: number;
+  cpus: number;
+  mem_mb: number;
+  nodes: number;
+}
+
+function occupantUserGroups(list: Occupant[]): OccupantUserGroup[] {
+  const map = new Map<string, OccupantUserGroup>();
+  for (const o of list) {
+    const g = map.get(o.user) ?? {
+      user: o.user,
+      jobs: 0,
+      gpus: 0,
+      cpus: 0,
+      mem_mb: 0,
+      nodes: 0,
+    };
+    g.jobs += 1;
+    g.gpus += o.gpus;
+    g.cpus += o.cpus;
+    g.mem_mb += o.mem_mb;
+    g.nodes += o.nodes;
+    map.set(o.user, g);
+  }
+  return [...map.values()].sort(
+    (a, b) =>
+      b.gpus - a.gpus
+      || b.cpus - a.cpus
+      || b.mem_mb - a.mem_mb
+      || b.jobs - a.jobs
+      || a.user.localeCompare(b.user),
+  );
+}
+
 function OccupantRow({
   o,
   now,
   generatedAt,
+  poolCap,
   t,
 }: {
   o: Occupant;
   now: number;
   generatedAt: number;
+  poolCap: number;
   t: TFn;
 }) {
   // live remaining = remaining-at-snapshot minus seconds elapsed since the snapshot
-  const total = parseDur(o.time_limit);
   const remaining = Math.max(0, parseDur(o.time_left) - (now - generatedAt));
-  const remFrac = total > 0 ? Math.min(1, remaining / total) : 0;
-  const elapsed = 1 - remFrac;
-  // bar drains as the job runs; greens → amber → red as it nears its end
-  const barColor = elapsed >= 0.85 ? "bg-bad" : elapsed >= 0.6 ? "bg-warn" : "bg-ok";
+  const requested = parseDur(o.time_limit);
+  const cap = poolCap || requested;
+  const remFrac = cap > 0 ? Math.min(1, remaining / cap) : 0;
+  const requestedFrac = cap > 0 ? Math.min(1, requested / cap) : 0;
+  // Short jobs in a long-cap partition (e.g. 12h in a 7d DEF slot) round to a sliver —
+  // floor the *visible* width so they stay a readable bar instead of vanishing; the
+  // color still reflects the true fraction, not the floored width.
+  const barWidth = remFrac > 0 ? Math.max(3, remFrac * 100) : 0;
+  // The bar means "how long this can still occupy resources, relative to what this
+  // partition normally allows": short is good, long is expensive.
+  const barColor = remFrac >= 0.5 ? "bg-bad" : remFrac >= 0.15 ? "bg-warn" : "bg-ok";
   return (
     <div className="rounded-md bg-muted/40 px-2.5 py-1.5 text-[11px]">
       <div className="flex items-center justify-between gap-2">
@@ -1407,19 +1461,64 @@ function OccupantRow({
         </div>
       </div>
       <div className="mt-1 flex items-center gap-2">
-        <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-muted">
+        {/* Track = this partition's policy wall-time cap. Three zones, left to right:
+            colored = time left, grey = already spent (of this job's own request),
+            bare track = headroom this job will never touch because it asked for less
+            than the partition allows. */}
+        <div className="relative h-1.5 flex-1 overflow-hidden rounded-full bg-muted">
           <div
-            className={cn("h-full rounded-full transition-all duration-1000 ease-linear", barColor)}
-            style={{ width: `${remFrac * 100}%` }}
+            className={cn("absolute inset-y-0 left-0 transition-all duration-1000 ease-linear", barColor)}
+            style={{ width: `${barWidth}%` }}
           />
+          {requestedFrac * 100 > barWidth && (
+            <div
+              className="absolute inset-y-0 bg-muted-foreground/30 transition-all duration-1000 ease-linear"
+              style={{ left: `${barWidth}%`, width: `${requestedFrac * 100 - barWidth}%` }}
+            />
+          )}
         </div>
         <span className="tnum shrink-0 font-mono text-[10px]">
           <span className="text-foreground">{fmtCountdown(remaining)}</span>
-          {total > 0 && <span className="text-muted-foreground"> / {fmtDur(total)}</span>}
+          {requested > 0 && <span className="text-muted-foreground"> / {fmtDur(requested)}</span>}
         </span>
       </div>
     </div>
   );
+}
+
+function OccupantUserRow({
+  group,
+  isGpu,
+  t,
+}: {
+  group: OccupantUserGroup;
+  isGpu: boolean;
+  t: TFn;
+}) {
+  const primary = isGpu ? `${group.gpus} ${t("unit.gpu")}` : `${group.cpus}c`;
+  return (
+    <div className="rounded-md bg-muted/40 px-2.5 py-1.5 text-[11px]">
+      <div className="flex items-center justify-between gap-2">
+        <span className="font-mono text-info-fg">{group.user}</span>
+        <span className="tnum rounded bg-info-soft px-1.5 py-0.5 font-mono text-[10px] font-semibold text-info-fg">
+          {primary}
+        </span>
+      </div>
+      <div className="mt-1 flex min-w-0 items-center justify-between gap-2 text-[10px] text-muted-foreground">
+        <span className="truncate">
+          {group.jobs} {t("topusers.jobs")}
+          {isGpu && <> · {group.cpus}c</>} · {fmtMB(group.mem_mb)}
+          {group.nodes > 0 && <> · {group.nodes} {t("spec.nodes")}</>}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function partitionWallSeconds(partition: string, policy?: Snapshot["policy"]) {
+  const part = String(partition || "").split(",")[0];
+  const wall = partitionCap(part, policy).wall;
+  return parseWallMinutes(wall) * 60;
 }
 
 function occupantResources(o: Occupant, t: TFn) {

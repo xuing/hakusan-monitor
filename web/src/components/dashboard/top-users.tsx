@@ -14,7 +14,7 @@ export function TopUsers() {
 
   // when a resource is selected, show who's using *that* pool
   const users = filter === "all" ? snap.top_users : usersForPool(snap, filter);
-  const max = Math.max(1, ...users.map((u) => u.cpus));
+  const max = Math.max(1, ...users.map((u) => u.running));
 
   return (
     <SectionCard title={t("section.topusers")}>
@@ -43,7 +43,7 @@ export function TopUsers() {
               <div className="mt-1 h-1 overflow-hidden rounded-full bg-muted">
                 <div
                   className="h-full rounded-full bg-info/70 transition-all duration-500"
-                  style={{ width: `${(u.cpus / max) * 100}%` }}
+                  style={{ width: `${(u.running / max) * 100}%` }}
                 />
               </div>
             </div>

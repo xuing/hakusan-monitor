@@ -2,6 +2,7 @@ import { lazy, Suspense } from "react";
 import { BrowserRouter, Route, Routes } from "react-router-dom";
 import { AppShell } from "@/components/layout/app-shell";
 import { Skeleton } from "@/components/ui/skeleton";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import { LiveProvider } from "@/hooks/use-live";
 import { ResourceFilterProvider } from "@/hooks/use-resource-filter";
 import { ThemeProvider } from "@/hooks/use-theme";
@@ -26,6 +27,7 @@ export default function App() {
     <I18nProvider>
       <LiveProvider>
         <ResourceFilterProvider>
+        <TooltipProvider delayDuration={0}>
           <BrowserRouter>
             <Routes>
               <Route element={<AppShell />}>
@@ -105,6 +107,7 @@ export default function App() {
               </Route>
             </Routes>
           </BrowserRouter>
+        </TooltipProvider>
         </ResourceFilterProvider>
       </LiveProvider>
     </I18nProvider>

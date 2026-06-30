@@ -98,6 +98,41 @@ export const PARTITION_CAPS: Record<string, PartitionCap> = {
   "VM-LM": { maxCores: 96, maxMemGb: 3840, maxNodes: 1, wall: "7d" },
 };
 
+export const PARTITION_DISPLAY_ORDER = [
+  "GPU-1",
+  "GPU-S",
+  "GPU-L",
+  "GPU-1A",
+  "GPU-LA",
+  "VM-GPU-L",
+  "DEF",
+  "TINY",
+  "SINGLE",
+  "LONG",
+  "SMALL",
+  "LARGE",
+  "XLARGE",
+  "X2LARGE",
+  "LONG-L",
+  "MS_Castep",
+  "MS_Dmol3",
+  "MS_Forcite",
+  "MS_Compass",
+  "MS_Dftbplus",
+  "MS_Amorphous",
+  "MatStudio",
+  "VM-CPU",
+  "VM-LM",
+  "i112",
+];
+
+const PARTITION_DISPLAY_RANK = new Map(PARTITION_DISPLAY_ORDER.map((name, i) => [name, i]));
+
+export function partitionDisplayRank(name: string | null | undefined) {
+  const rank = PARTITION_DISPLAY_RANK.get(String(name || "").split(",")[0]);
+  return rank ?? PARTITION_DISPLAY_ORDER.length;
+}
+
 export const MATERIALS_STUDIO_PARTITIONS = [
   "MS_Castep",
   "MS_Dmol3",
