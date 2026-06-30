@@ -57,9 +57,12 @@ export default function JobsPage() {
 }
 
 function jobResourcePool(j: RawJob, snap: Snapshot): string {
-  if (!j.gpus) return "cpu";
-  const part = String(j.partition).split(",")[0];
-  return snap.part_pool[part] ?? "gpu";
+  const parts = String(j.partition || "").split(",").filter(Boolean);
+  for (const part of parts) {
+    const pool = snap.part_pool[part];
+    if (pool) return pool;
+  }
+  return j.gpus ? "gpu" : "cpu";
 }
 
 function resourceLabel(key: string, snap: Snapshot | null | undefined, t: TFn) {

@@ -31,6 +31,7 @@ export interface Occupant {
   user: string;
   gpus: number;
   cpus: number;
+  mem_mb: number;
   nodes: number;
   nodelist: string;
   time_left: string;
@@ -154,6 +155,31 @@ export interface CpuSubmitProbe {
   rc?: number;
 }
 
+export interface DynamicPartitionCap {
+  minCores?: number;
+  maxCores?: number;
+  maxMemGb?: number;
+  minGpus?: number;
+  maxGpus?: number;
+  maxNodes?: number;
+  wall?: string;
+}
+
+export interface DynamicPartitionPolicy {
+  grpJobs?: number;
+  maxJobsPerUser?: number;
+  maxSubmitPerUser?: number;
+}
+
+export interface PolicySnapshot {
+  generated_at: number;
+  interval: number;
+  partition_caps: Record<string, DynamicPartitionCap>;
+  partition_policies: Record<string, DynamicPartitionPolicy>;
+  qos?: Record<string, unknown>;
+  partitions?: Record<string, unknown>;
+}
+
 export interface DownNode {
   name: string;
   state: string[];
@@ -177,6 +203,8 @@ export interface Snapshot {
   gpus: GpuType[];
   queue: QueueData;
   cpu_submit_probes?: CpuSubmitProbe[];
+  cpu_submit_probes_generated_at?: number;
+  policy?: PolicySnapshot;
   nodes_down: DownNode[];
   top_users: TopUser[];
   /** raw data shipped in the same payload — tables/occupancy derive from this */
@@ -212,6 +240,7 @@ export interface Meta {
     show_args: boolean;
   };
   container: ContainerInfo;
+  policy?: PolicySnapshot | null;
   docs: Record<string, string>;
   partitions: { name: string; kind: string }[];
   store: {
@@ -285,6 +314,7 @@ export interface UsageHour {
   gpu: number;
   pending: number;
   samples: number;
+  hours?: number;
 }
 
 export interface UsageWeekday {
@@ -293,6 +323,7 @@ export interface UsageWeekday {
   gpu: number;
   pending: number;
   samples: number;
+  hours?: number;
 }
 
 export interface UsageCell {
@@ -300,7 +331,9 @@ export interface UsageCell {
   hour: number;
   gpu: number;
   cpu: number;
+  pending: number;
   samples: number;
+  hours?: number;
 }
 
 export interface UsagePattern {
@@ -311,6 +344,10 @@ export interface UsagePattern {
   busiest_hour: UsageHour | null;
   quietest_hour: UsageHour | null;
   total_hours: number;
+  total_samples: number;
+  since: number;
+  until: number;
+  timezone: string;
 }
 
 export interface LoginProcess {

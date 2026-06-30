@@ -11,6 +11,7 @@ function toOccupant(j: RawJob): Occupant {
     user: j.user_name,
     gpus: j.gpus,
     cpus: j.cpus,
+    mem_mb: j.min_memory_mb ?? 0,
     nodes: j.node_count,
     nodelist: j.nodelist,
     time_left: j.time_left,

@@ -16,23 +16,30 @@ const PROJECT_LIGHT: TranslationKey[] = [
 ];
 const PROJECT_URL = "https://github.com/xuing/hakusan-monitor";
 const SLURM_POLL_COMMAND =
+  "# realtime snapshot: HM_SAMPLE_INTERVAL\n" +
   "scontrol -o show nodes\n" +
   "squeue -h -a -o '<compact fields>'\n" +
-  "squeue -h -a -O 'JobID:64,Container:512'\n" +
+  "# container column; best effort\n" +
+  "squeue -h -a -O 'JobID:64,Container:512'  # optional: container column\n" +
+  "# CPU prediction: HM_CPU_PROBE_INTERVAL; no job submitted\n" +
   "for p in TINY DEF SINGLE SMALL LARGE XLARGE X2LARGE LONG LONG-L; do\n" +
   "  sbatch --test-only -p \"$p\" --wrap=hostname\n" +
   "done\n" +
-  "singularity --version  # first sample only";
+  "# static policy: HM_POLICY_INTERVAL\n" +
+  "sacctmgr -n -P show qos format=Name,MaxTRES%200,MaxWall,GrpJobs,MaxJobsPU,MaxSubmitPU,MinTRES%200,Flags%100\n" +
+  "scontrol -o show partition\n" +
+  "# container runtime; first successful sample only\n" +
+  "singularity --version";
 const LOGIN_POLL_COMMAND =
   "export LC_ALL=C\n" +
   "hostname\n" +
   "cat /proc/loadavg\n" +
   "nproc\n" +
-  "grep '^cpu ' /proc/stat\n" +
+  "grep '^cpu ' /proc/stat  # before iostat\n" +
   "cat /proc/meminfo\n" +
   "df -P -B1 -x tmpfs -x devtmpfs\n" +
-  "df -P -i -x tmpfs -x devtmpfs\n" +
   "if command -v iostat >/dev/null 2>&1; then iostat -x -y 1 1; fi\n" +
+  "grep '^cpu ' /proc/stat  # after iostat\n" +
   "ps -eo pid=,user=,stat=,pcpu=,pmem=,rss=,etimes=,comm=";
 
 export default function ProjectGuidePage() {

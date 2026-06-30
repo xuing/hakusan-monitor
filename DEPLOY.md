@@ -77,5 +77,7 @@ service account. (Ask and I'll wire this up.)
   summaries for the Login nodes page.
 - Set `TZ=Asia/Tokyo` (both unit and compose already do) so *Usage patterns*
   hour-of-day is in cluster time.
-- Change the port with `HM_PORT`; anonymize usernames with `HM_MASK_USERS=1`
-  (on by default in both configs).
+- Change the port with `HM_PORT`; usernames are shown by default. Set
+  `HM_MASK_USERS=1` to anonymize them.
+- For public or off-campus access, put it behind a reverse proxy with TLS and
+  access control, and enable `HM_MASK_USERS=1` at minimum.

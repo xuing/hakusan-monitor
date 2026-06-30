@@ -80,7 +80,7 @@ function PoolCard({ pool, snap, t }: { pool: Pool; snap: Snapshot; t: TFn }) {
   const maint = isMaintPool(pool);
   const availableNodes = pool.available_nodes ?? pool.idle_nodes ?? 0;
   const samplePartition = SAMPLE[pool.id]?.partition ?? "";
-  const gpuFit = isGpu ? gpuFitSnapshot(snap, pool, partitionCap(samplePartition), samplePartition) : null;
+  const gpuFit = isGpu ? gpuFitSnapshot(snap, pool, partitionCap(samplePartition, snap.policy), samplePartition) : null;
   const gpuSched = gpuFit?.schedulable ?? 0;
   const rawGpuFree = isGpu ? pool.gpu?.free ?? 0 : 0;
   const displayFree = isGpu ? rawGpuFree : pool.cores.free;
@@ -263,8 +263,8 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
 
   const isGpu = pool.kind === "gpu";
   const partition = pool.partitions.includes(partChoice) ? partChoice : base.partition;
-  const cap = partitionCap(partition);
-  const policy = partitionPolicy(partition);
+  const cap = partitionCap(partition, snap?.policy);
+  const policy = partitionPolicy(partition, snap?.policy);
   const selectedPart = snap?.partitions.find((p) => p.name === partition);
   const groupRunning = snap ? partitionRunningJobs(snap.jobs, partition) : 0;
   const gpuFit = snap && isGpu ? gpuFitSnapshot(snap, pool, cap, partition) : null;
@@ -287,6 +287,7 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
   const nodeCount = clampPositiveInt(nodes, cap.maxNodes);
   const coreCount = clampPositiveInt(cores, cap.maxCores);
   const cpuRows = snap && !isGpu && pool.id === "cpu" ? cpuProbeRows(pool, snap) : [];
+  const cpuProbeGeneratedAt = snap?.cpu_submit_probes_generated_at || snap?.generated_at || 0;
   const hasAdvancedOverrides = Boolean(nodeCount || coreCount || memValue || time.trim());
   const selectedCpuRow = !hasAdvancedOverrides ? cpuRows.find((row) => row.partition === partition) ?? null : null;
   const gpuTip = isGpu && gpuFit && gpuFit.schedulable <= 0 ? gpuFitTipCommand(gpuFit, pool) : null;
@@ -341,7 +342,7 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
           <ChevronRight className={cn("h-3.5 w-3.5 transition-transform", open && "rotate-90")} />
           {t("pool.quickRequest")}
         </button>
-        {cpuRows.length > 0 && snap && <CpuProbeSummary rows={cpuRows} generatedAt={snap.generated_at} t={t} />}
+        {cpuRows.length > 0 && <CpuProbeSummary rows={cpuRows} generatedAt={cpuProbeGeneratedAt} t={t} />}
         {!open && cpuRows.length === 0 && queueHint && (
           <QuickRequestSummary hint={queueHint} tip={gpuTip} t={t} />
         )}
@@ -357,7 +358,7 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
                       <optgroup key={group.key} label={group.label}>
                         {group.items.map((p) => (
                           <option key={p} value={p}>
-                            {cpuOptionLabel(p, cpuRows, snap?.generated_at ?? 0, t)}
+                            {cpuOptionLabel(p, cpuRows, cpuProbeGeneratedAt, t)}
                           </option>
                         ))}
                       </optgroup>
@@ -365,7 +366,7 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
                       <Fragment key={group.key}>
                         {group.items.map((p) => (
                           <option key={p} value={p}>
-                            {cpuOptionLabel(p, cpuRows, snap?.generated_at ?? 0, t)}
+                            {cpuOptionLabel(p, cpuRows, cpuProbeGeneratedAt, t)}
                           </option>
                         ))}
                       </Fragment>
@@ -403,7 +404,7 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
               {policyLimit && <span className="font-mono text-[10px] text-muted-foreground">{policyLimit}</span>}
             </div>
             {policyDesc && <div className="mt-1 text-[10px] leading-relaxed text-muted-foreground">{policyDesc}</div>}
-            {selectedCpuRow && snap && <CpuProbeInline row={selectedCpuRow} generatedAt={snap.generated_at} t={t} />}
+            {selectedCpuRow && <CpuProbeInline row={selectedCpuRow} generatedAt={cpuProbeGeneratedAt} t={t} />}
             {hasAdvancedOverrides && cpuRows.length > 0 && (
               <div className="mt-1 text-[10px] leading-relaxed text-muted-foreground">{t("pool.cpuProbeDefaultOnly")}</div>
             )}
@@ -831,7 +832,7 @@ function CpuProbeInline({ row, generatedAt, t }: { row: CpuProbeRow; generatedAt
   return (
     <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px]">
       <Tag tone={cpuProbeTone(state)}>{cpuProbeLabel(state, t)}</Tag>
-      <span className="font-mono text-muted-foreground">{t("pool.cpuProbeNeed", { cores: row.cores, mem: fmtMB(row.memMb) })}</span>
+      <span className="font-mono text-muted-foreground">{t("pool.cpuProbeNeed", { cores: row.cores })}</span>
       {detail && <span className="min-w-0 truncate text-muted-foreground">{detail}</span>}
       <span className="font-mono text-info-fg">{row.command}</span>
     </div>
@@ -1238,7 +1239,7 @@ function isMaintPool(pool: Pool) {
 
 function hasAvailableNodes(pool: Pool, snap: Snapshot) {
   if (isMaintPool(pool)) return false;
-  if (pool.kind === "gpu") return schedulableGpuSlots(snap.nodes, pool, partitionCap(SAMPLE[pool.id]?.partition ?? "")) > 0;
+  if (pool.kind === "gpu") return schedulableGpuSlots(snap.nodes, pool, partitionCap(SAMPLE[pool.id]?.partition ?? "", snap.policy)) > 0;
   return (pool.available_nodes ?? pool.idle_nodes ?? 0) > 0;
 }
 
@@ -1268,21 +1269,32 @@ function PendingJobs({ pool, t }: { pool: Pool; t: TFn }) {
 }
 
 function PendingJobRow({ job, t }: { job: RawJob; t: TFn }) {
-  const res = job.gpus ? `${job.gpus} ${t("unit.gpu")}` : `${job.cpus}c`;
+  const rawReason = job.state_reason || "None";
+  const reason = reasonLabel(t, rawReason);
   return (
     <div className="rounded-md bg-muted/40 px-2.5 py-1.5 text-[11px]">
       <div className="flex items-center justify-between gap-2">
         <span className="font-mono text-info-fg">{job.user_name}</span>
         <div className="flex items-center gap-2 font-mono text-muted-foreground">
           <span>{job.partition}</span>
-          <span className="text-foreground">{res}</span>
+          <span className="text-foreground">{pendingJobResources(job, t)}</span>
         </div>
       </div>
       <div className="mt-1 truncate text-[10px] text-muted-foreground">
-        {reasonLabel(t, job.state_reason || "None")}
+        {reason}
+        {reason !== rawReason && <span className="font-mono"> ({rawReason})</span>}
       </div>
     </div>
   );
+}
+
+function pendingJobResources(job: RawJob, t: TFn) {
+  const parts = [];
+  if (job.gpus > 0) parts.push(`${job.gpus} ${t("unit.gpu")}`);
+  if (job.cpus > 0) parts.push(`${job.cpus}c`);
+  if ((job.min_memory_mb ?? 0) > 0) parts.push(fmtMB(job.min_memory_mb));
+  if (job.node_count > 0) parts.push(`${job.node_count} ${t("spec.nodes")}`);
+  return parts.join(" · ") || "—";
 }
 
 function isLimitBlocked(job: RawJob) {
@@ -1390,7 +1402,7 @@ function OccupantRow({
       <div className="flex items-center justify-between gap-2">
         <span className="font-mono text-info-fg">{o.user}</span>
         <div className="flex items-center gap-2 font-mono text-muted-foreground">
-          <span className="text-foreground">{o.gpus ? `${o.gpus} ${t("unit.gpu")}` : `${o.cpus}c`}</span>
+          <span className="text-foreground">{occupantResources(o, t)}</span>
           <span className="max-w-[8rem] truncate">{o.nodelist}</span>
         </div>
       </div>
@@ -1408,4 +1420,12 @@ function OccupantRow({
       </div>
     </div>
   );
+}
+
+function occupantResources(o: Occupant, t: TFn) {
+  const parts = [];
+  if (o.gpus > 0) parts.push(`${o.gpus} ${t("unit.gpu")}`);
+  if (o.cpus > 0) parts.push(`${o.cpus}c`);
+  if (o.mem_mb > 0) parts.push(fmtMB(o.mem_mb));
+  return parts.join(" · ") || "—";
 }

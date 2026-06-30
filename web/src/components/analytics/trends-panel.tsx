@@ -6,6 +6,7 @@ import { useT } from "@/i18n";
 import { api } from "@/lib/api";
 
 const HOURS = 24;
+const CLUSTER_TIME_ZONE = "Asia/Tokyo";
 
 export function TrendsPanel() {
   const t = useT();
@@ -13,17 +14,21 @@ export function TrendsPanel() {
   const points = data?.points ?? [];
 
   const fmtTime = (ts: number) =>
-    new Date(ts * 1000).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+    new Date(ts * 1000).toLocaleTimeString(undefined, {
+      timeZone: CLUSTER_TIME_ZONE,
+      hour: "2-digit",
+      minute: "2-digit",
+    });
 
   const utilData = points.map((p) => ({
     time: fmtTime(p.ts),
-    [t("trend.cpu")]: Math.round(p.cpu_util * 100),
-    [t("trend.gpu")]: Math.round(p.gpu_util * 100),
+    [t("trend.cpuAlloc")]: Math.round(p.cpu_util * 100),
+    [t("trend.gpuAlloc")]: Math.round(p.gpu_util * 100),
   }));
   const pendData = points.map((p) => ({ time: fmtTime(p.ts), [t("trend.pending")]: p.pending }));
 
   return (
-    <SectionCard title={t("section.trend")}>
+    <SectionCard title={t("section.trend")} extra={t("trend.scope")}>
       {points.length === 0 ? (
         <Empty>{t("trend.nodata")}</Empty>
       ) : (
@@ -31,7 +36,7 @@ export function TrendsPanel() {
           <AreaChart
             data={utilData}
             index="time"
-            categories={[t("trend.cpu"), t("trend.gpu")]}
+            categories={[t("trend.cpuAlloc"), t("trend.gpuAlloc")]}
             colors={["blue", "violet"]}
             valueFormatter={(v) => `${v}%`}
             startEndOnly

@@ -20,7 +20,7 @@ import {
   type PartitionPolicy,
 } from "@/lib/slurm";
 import { cn } from "@/lib/utils";
-import type { Partition, Pool } from "@/types/snapshot";
+import type { Partition, PolicySnapshot, Pool } from "@/types/snapshot";
 
 const PARTITION_POLICIES: Record<string, { title: TranslationKey; desc: TranslationKey }> = {
   DEF: { title: "policy.DEF", desc: "policy.DEF.desc" },
@@ -137,11 +137,11 @@ export function PartitionPressure() {
           {partitionGroups.map((group) => {
             const cpuRank = (p: Partition) => {
               if (p.kind === "gpu") return 0;
-              const runtimePolicy = slurmPartitionPolicy(p.name);
+              const runtimePolicy = slurmPartitionPolicy(p.name, snap.policy);
               if (runtimePolicy.grpJobs && p.jobs.running >= runtimePolicy.grpJobs) return 1;
               const row = cpuProbeForPartition(snap, p.name);
               if (!row) return 0;
-              const state = cpuProbeState(row.probe, snap.generated_at);
+              const state = cpuProbeState(row.probe, snap.cpu_submit_probes_generated_at || snap.generated_at);
               if (state === "now") return 0;
               if (state === "queued") return 2;
               if (state === "unknown") return 3;
@@ -171,7 +171,8 @@ export function PartitionPressure() {
                       isGpu={isGpu}
                       pc={pc}
                       cpuProbeFor={(p) => (!isGpu ? cpuProbeForPartition(snap, p.name) : null)}
-                      generatedAt={snap.generated_at}
+                      generatedAt={snap.cpu_submit_probes_generated_at || snap.generated_at}
+                      policy={snap.policy}
                       t={t}
                     />
                   )}
@@ -183,7 +184,8 @@ export function PartitionPressure() {
                       isGpu={isGpu}
                       pc={pc}
                       cpuProbeFor={(p) => (!isGpu ? cpuProbeForPartition(snap, p.name) : null)}
-                      generatedAt={snap.generated_at}
+                      generatedAt={snap.cpu_submit_probes_generated_at || snap.generated_at}
+                      policy={snap.policy}
                       t={t}
                     />
                   )}
@@ -211,6 +213,7 @@ function PartitionRows({
   pc,
   cpuProbeFor,
   generatedAt,
+  policy,
   t,
 }: {
   label: string;
@@ -220,6 +223,7 @@ function PartitionRows({
   pc: PoolCapacity;
   cpuProbeFor: (p: Partition) => CpuProbeRow | null;
   generatedAt: number;
+  policy?: PolicySnapshot;
   t: TFn;
 }) {
   return (
@@ -239,6 +243,7 @@ function PartitionRows({
             pc={pc}
             cpuProbe={cpuProbeFor(p)}
             generatedAt={generatedAt}
+            policy={policy}
             t={t}
           />
         ))}
@@ -389,6 +394,7 @@ function PartitionRow({
   pc,
   cpuProbe,
   generatedAt,
+  policy,
   t,
 }: {
   p: Partition;
@@ -396,16 +402,17 @@ function PartitionRow({
   pc: PoolCapacity;
   cpuProbe: CpuProbeRow | null;
   generatedAt: number;
+  policy?: PolicySnapshot;
   t: TFn;
 }) {
   const [copied, setCopied] = useState(false);
   const maint = isMaintPartition(p);
   const labelPolicy = partitionLabelPolicy(p.name);
-  const runtimePolicy = slurmPartitionPolicy(p.name);
+  const runtimePolicy = slurmPartitionPolicy(p.name, policy);
   const groupRunning = p.jobs.running;
   const limitRows = partitionPolicyLimitRows(runtimePolicy, groupRunning, t);
   const groupLimitReached = Boolean(runtimePolicy.grpJobs && groupRunning >= runtimePolicy.grpJobs);
-  const cap = partitionCap(p.name);
+  const cap = partitionCap(p.name, policy);
   const hero = requestableNow(p, cap, isGpu, pc);
   const probeState = cpuProbe ? cpuProbeState(cpuProbe.probe, generatedAt) : null;
   const canRun = !maint && !groupLimitReached && (probeState ? probeState === "now" : hero.n > 0);
@@ -460,7 +467,7 @@ function PartitionRow({
                 </span>
               )}
               <span className="font-mono text-muted-foreground">
-                {t("pool.cpuProbeNeed", { cores: cpuProbe.cores, mem: fmtMB(cpuProbe.memMb) })}
+                {t("pool.cpuProbeNeed", { cores: cpuProbe.cores })}
               </span>
               <span className="min-w-0 truncate text-muted-foreground">{partitionCpuProbeDetail(cpuProbe, probeState, t)}</span>
             </div>

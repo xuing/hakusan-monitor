@@ -8,7 +8,6 @@ export interface CpuProbeRow {
   partition: string;
   probe: CpuSubmitProbe | null;
   cores: number;
-  memMb: number;
   command: string;
 }
 
@@ -27,7 +26,6 @@ export function cpuProbeRow(partition: string, probe: CpuSubmitProbe | null): Cp
     partition,
     probe,
     cores,
-    memMb: cpuDefaultMemMb(partition, cores),
     command: `salloc -p ${partition}`,
   };
 }
@@ -54,9 +52,4 @@ export function cleanCpuProbeRaw(raw: string) {
 
 function cpuDefaultCores(partition: string) {
   return ["SMALL", "LARGE", "XLARGE", "X2LARGE", "LONG-L"].includes(partition) ? 256 : 16;
-}
-
-function cpuDefaultMemMb(partition: string, cores: number) {
-  if (["SMALL", "LARGE", "XLARGE", "X2LARGE", "LONG-L"].includes(partition) || cores >= 256) return 1500 * 1024;
-  return 96 * 1024;
 }

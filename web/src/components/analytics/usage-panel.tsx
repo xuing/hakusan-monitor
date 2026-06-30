@@ -1,3 +1,4 @@
+import { useMemo, useState } from "react";
 import { Empty } from "@/components/common/empty";
 import { SectionCard } from "@/components/common/section-card";
 import { useApi } from "@/hooks/use-api";
@@ -6,35 +7,91 @@ import type { TranslationKey } from "@/i18n/en";
 import { api } from "@/lib/api";
 import { pct } from "@/lib/format";
 import { heatColor } from "@/lib/slurm";
+import { cn } from "@/lib/utils";
 import type { UsageCell, UsageHour } from "@/types/snapshot";
 
 const DAYS = 30;
 const WEEK_ORDER = [1, 2, 3, 4, 5, 6, 0]; // Mon … Sun
+const CLUSTER_TIME_ZONE = "Asia/Tokyo";
+const LOW_SAMPLE_COUNT = 3;
+
+type UsageMetric = "gpu" | "cpu" | "pending";
+
+const METRICS: UsageMetric[] = ["gpu", "cpu", "pending"];
 
 export function UsagePanel() {
   const t = useT();
+  const [metric, setMetric] = useState<UsageMetric>("gpu");
   const { data } = useApi(() => api.usage(DAYS), DAYS, 5 * 60_000);
 
+  const stats = useMemo(() => {
+    const rows = data?.by_hour.filter((h) => h.samples > 0) ?? [];
+    const ranked = rows.length ? rows : [];
+    return {
+      high: ranked.reduce<UsageHour | null>((best, row) => (
+        !best || metricValue(row, metric) > metricValue(best, metric) ? row : best
+      ), null),
+      low: ranked.reduce<UsageHour | null>((best, row) => (
+        !best || metricValue(row, metric) < metricValue(best, metric) ? row : best
+      ), null),
+    };
+  }, [data?.by_hour, metric]);
+
+  const maxPending = Math.max(1, ...(data?.by_hour ?? []).map((h) => h.pending));
+  const hasSparseData = Boolean(data && data.total_hours < 24);
+
   return (
-    <SectionCard title={t("section.usage")} extra={t("usage.lead", { n: DAYS })}>
+    <SectionCard title={t("section.usage")} extra={data ? coverageText(data, t) : t("usage.lead", { n: DAYS })}>
       {!data || data.total_hours === 0 ? (
         <Empty>{t("usage.nodata")}</Empty>
       ) : (
-        <>
-          <div className="mb-5 flex flex-wrap gap-3">
-            <PeakStat label={t("usage.busiest")} hour={data.busiest_hour} tone="text-bad-fg" t={t} />
-            <PeakStat label={t("usage.quietest")} hour={data.quietest_hour} tone="text-ok-fg" t={t} />
+        <div className="space-y-4">
+          <div className="rounded-md border border-border bg-muted/35 px-3 py-2 text-xs leading-relaxed text-muted-foreground">
+            {t("usage.scope")}
+            {hasSparseData && <span className="ml-2 text-warn-fg">{t("usage.lowConfidence")}</span>}
           </div>
 
-          <h3 className="mb-2 text-xs text-muted-foreground">
-            {t("usage.byhour")} · {t("usage.gpu")}
-          </h3>
-          <ByHour data={data.by_hour} />
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex rounded-md border border-border bg-background p-0.5">
+              {METRICS.map((item) => (
+                <button
+                  key={item}
+                  type="button"
+                  onClick={() => setMetric(item)}
+                  className={cn(
+                    "rounded-[4px] px-2.5 py-1 text-xs transition-colors",
+                    metric === item
+                      ? "bg-primary text-primary-foreground"
+                      : "text-muted-foreground hover:text-foreground",
+                  )}
+                >
+                  {metricLabel(item, t)}
+                </button>
+              ))}
+            </div>
+            <span className="text-[11px] text-muted-foreground">{dateRangeText(data.since, data.until)}</span>
+          </div>
 
-          <h3 className="mb-2 mt-6 text-xs text-muted-foreground">{t("usage.heatmap")}</h3>
-          <Heatmap cells={data.heatmap} t={t} />
+          <div className="grid gap-2 sm:grid-cols-2">
+            <PeakStat label={t("usage.busiest")} hour={stats.high} metric={metric} tone="text-bad-fg" t={t} />
+            <PeakStat label={t("usage.quietest")} hour={stats.low} metric={metric} tone="text-ok-fg" t={t} />
+          </div>
 
-          <div className="mt-3 flex items-center gap-2 text-[11px] text-muted-foreground">
+          <div>
+            <h3 className="mb-2 text-xs text-muted-foreground">
+              {t("usage.byhour")} · {metricLabel(metric, t)}
+            </h3>
+            <ByHour data={data.by_hour} metric={metric} maxPending={maxPending} t={t} />
+          </div>
+
+          <div>
+            <h3 className="mb-2 text-xs text-muted-foreground">
+              {t("usage.heatmap", { metric: metricLabel(metric, t) })}
+            </h3>
+            <Heatmap cells={data.heatmap} metric={metric} maxPending={maxPending} t={t} />
+          </div>
+
+          <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
             {t("usage.quietest")}
             <div className="flex gap-0.5">
               {[0, 0.25, 0.5, 0.75, 1].map((v) => (
@@ -43,36 +100,63 @@ export function UsagePanel() {
             </div>
             {t("usage.busiest")}
           </div>
-        </>
+        </div>
       )}
     </SectionCard>
   );
 }
 
-function PeakStat({ label, hour, tone, t }: { label: string; hour: UsageHour | null; tone: string; t: TFn }) {
+function PeakStat({
+  label,
+  hour,
+  metric,
+  tone,
+  t,
+}: {
+  label: string;
+  hour: UsageHour | null;
+  metric: UsageMetric;
+  tone: string;
+  t: TFn;
+}) {
   return (
-    <div className="rounded-lg border border-border bg-muted/40 px-4 py-2.5">
+    <div className="rounded-md border border-border bg-muted/35 px-3 py-2">
       <div className="text-[11px] uppercase tracking-wide text-muted-foreground">{label}</div>
       <div className={`mt-0.5 font-mono text-base ${tone}`}>
-        {hour ? `${String(hour.hour).padStart(2, "0")}:00 · ${t("usage.gpu")} ${pct(hour.gpu)}` : "—"}
+        {hour ? `${String(hour.hour).padStart(2, "0")}:00 · ${formatMetric(metricValue(hour, metric), metric)}` : "—"}
       </div>
+      {hour && <div className="mt-0.5 text-[10px] text-muted-foreground">{t("usage.samples", { n: hour.samples })}</div>}
     </div>
   );
 }
 
-function ByHour({ data }: { data: UsageHour[] }) {
-  const max = Math.max(0.01, ...data.map((d) => d.gpu));
+function ByHour({
+  data,
+  metric,
+  maxPending,
+  t,
+}: {
+  data: UsageHour[];
+  metric: UsageMetric;
+  maxPending: number;
+  t: TFn;
+}) {
   return (
     <div>
       <div className="grid h-24 items-end gap-1" style={{ gridTemplateColumns: "repeat(24,1fr)" }}>
-        {data.map((h) => (
-          <div
-            key={h.hour}
-            title={`${h.hour}:00 · GPU ${pct(h.gpu)}`}
-            className="rounded-sm"
-            style={{ height: `${Math.max(4, (h.gpu / max) * 100)}%`, background: heatColor(h.gpu) }}
-          />
-        ))}
+        {data.map((h) => {
+          const value = metricValue(h, metric);
+          const level = metricLevel(value, metric, maxPending);
+          const height = h.samples ? Math.max(4, level * 100) : 0;
+          return (
+            <div
+              key={h.hour}
+              title={tooltip(`${h.hour}:00`, value, metric, h.samples, t)}
+              className={cn("rounded-sm", h.samples > 0 && h.samples < LOW_SAMPLE_COUNT && "opacity-45")}
+              style={{ height: `${height}%`, background: h.samples ? heatColor(level) : "hsl(var(--muted))" }}
+            />
+          );
+        })}
       </div>
       <div className="mt-1 grid gap-1 text-[9px] text-muted-foreground" style={{ gridTemplateColumns: "repeat(24,1fr)" }}>
         {data.map((h) => (
@@ -85,9 +169,19 @@ function ByHour({ data }: { data: UsageHour[] }) {
   );
 }
 
-function Heatmap({ cells, t }: { cells: UsageCell[]; t: TFn }) {
-  const grid = new Map<string, number>();
-  for (const c of cells) grid.set(`${c.weekday}-${c.hour}`, c.gpu);
+function Heatmap({
+  cells,
+  metric,
+  maxPending,
+  t,
+}: {
+  cells: UsageCell[];
+  metric: UsageMetric;
+  maxPending: number;
+  t: TFn;
+}) {
+  const grid = new Map<string, UsageCell>();
+  for (const c of cells) grid.set(`${c.weekday}-${c.hour}`, c);
   const cols = "2rem repeat(24, minmax(14px, 1fr))";
 
   return (
@@ -96,13 +190,15 @@ function Heatmap({ cells, t }: { cells: UsageCell[]; t: TFn }) {
         <div key={d} className="grid items-center gap-1" style={{ gridTemplateColumns: cols }}>
           <span className="text-[11px] text-muted-foreground">{t(`weekday.${d}` as TranslationKey)}</span>
           {Array.from({ length: 24 }, (_, h) => {
-            const v = grid.get(`${d}-${h}`);
+            const cell = grid.get(`${d}-${h}`);
+            const value = cell ? metricValue(cell, metric) : 0;
+            const level = metricLevel(value, metric, maxPending);
             return (
               <div
                 key={h}
-                title={v != null ? `${t(`weekday.${d}` as TranslationKey)} ${h}:00 · ${pct(v)}` : ""}
-                className="aspect-square rounded-sm"
-                style={{ background: v != null ? heatColor(v) : "hsl(var(--muted))" }}
+                title={cell ? tooltip(`${t(`weekday.${d}` as TranslationKey)} ${h}:00`, value, metric, cell.samples, t) : ""}
+                className={cn("aspect-square rounded-sm", cell && cell.samples < LOW_SAMPLE_COUNT && "opacity-45")}
+                style={{ background: cell ? heatColor(level) : "hsl(var(--muted))" }}
               />
             );
           })}
@@ -118,4 +214,49 @@ function Heatmap({ cells, t }: { cells: UsageCell[]; t: TFn }) {
       </div>
     </div>
   );
+}
+
+function metricValue(row: UsageHour | UsageCell, metric: UsageMetric) {
+  return metric === "pending" ? row.pending : metric === "cpu" ? row.cpu : row.gpu;
+}
+
+function metricLevel(value: number, metric: UsageMetric, maxPending: number) {
+  if (metric === "pending") return Math.max(0, Math.min(1, value / maxPending));
+  return Math.max(0, Math.min(1, value));
+}
+
+function metricLabel(metric: UsageMetric, t: TFn) {
+  if (metric === "cpu") return t("usage.cpuAlloc");
+  if (metric === "pending") return t("usage.pending");
+  return t("usage.gpuAlloc");
+}
+
+function formatMetric(value: number, metric: UsageMetric) {
+  return metric === "pending" ? value.toFixed(1) : pct(value);
+}
+
+function tooltip(prefix: string, value: number, metric: UsageMetric, samples: number, t: TFn) {
+  const low = samples > 0 && samples < LOW_SAMPLE_COUNT ? ` · ${t("usage.lowSample")}` : "";
+  return `${prefix} · ${formatMetric(value, metric)} · ${t("usage.samples", { n: samples })}${low}`;
+}
+
+function coverageText(data: { days: number; total_hours: number; total_samples: number }, t: TFn) {
+  return t("usage.coverage", {
+    n: data.days,
+    hours: data.total_hours,
+    samples: data.total_samples,
+  });
+}
+
+function dateRangeText(since: number, until: number) {
+  if (!since || !until) return "JST";
+  const fmt = (ts: number) =>
+    new Date(ts * 1000).toLocaleString(undefined, {
+      timeZone: CLUSTER_TIME_ZONE,
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  return `${fmt(since)} - ${fmt(until)} JST`;
 }

@@ -4,7 +4,6 @@ import type { ReactNode } from "react";
 import { Empty } from "@/components/common/empty";
 import { Bar } from "@/components/common/bar";
 import { SectionCard } from "@/components/common/section-card";
-import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Table,
@@ -16,27 +15,18 @@ import {
 } from "@/components/ui/table";
 import { useApi } from "@/hooks/use-api";
 import { useT } from "@/i18n";
-import type { TranslationKey } from "@/i18n";
 import { api } from "@/lib/api";
 import { fmtDur, pct } from "@/lib/format";
-import { cn } from "@/lib/utils";
+import type { Tone } from "@/lib/slurm";
 import type {
   LoginHistoryPoint,
   LoginNode,
   LoginProcess,
   LoginUser,
-  PressureLevel,
 } from "@/types/snapshot";
 
 const HOURS = 24;
 const POLL_MS = 60_000;
-
-const levelClass: Record<PressureLevel, string> = {
-  low: "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
-  moderate: "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300",
-  high: "border-orange-500/30 bg-orange-500/10 text-orange-700 dark:text-orange-300",
-  critical: "border-red-500/30 bg-red-500/10 text-red-700 dark:text-red-300",
-};
 
 const colors = ["blue", "emerald", "amber", "rose", "violet", "cyan"];
 
@@ -79,7 +69,7 @@ export default function LoginNodesPage() {
             ))}
           </div>
 
-          <div className="grid gap-4 xl:grid-cols-2">
+          <div className="grid gap-4 xl:grid-cols-3">
             <HistoryPanel
               title={t("login.historyLoad")}
               points={history.data?.points ?? []}
@@ -92,6 +82,14 @@ export default function LoginNodesPage() {
               points={history.data?.points ?? []}
               nodeIds={nodeIds}
               field="mem_used_ratio"
+              scale={100}
+              formatter={(v) => `${Math.round(v)}%`}
+            />
+            <HistoryPanel
+              title={t("login.historyIowait")}
+              points={history.data?.points ?? []}
+              nodeIds={nodeIds}
+              field="cpu_iowait"
               scale={100}
               formatter={(v) => `${Math.round(v)}%`}
             />
@@ -114,19 +112,24 @@ export default function LoginNodesPage() {
 
 function NodePanel({ node }: { node: LoginNode }) {
   const t = useT();
-  const pressure = node.pressure ?? { level: "low" as PressureLevel, score: 0, reasons: [] };
   const mem = node.memory;
   const disks = [...(node.disks ?? [])].sort((a, b) => b.use_pct - a.use_pct);
+  const loadPerCore = node.load?.per_core ?? 0;
   const busy = node.cpu?.busy;
   const cpuIowait = node.cpu?.iowait;
-  const ioIowait = node.io?.iowait_pct == null ? cpuIowait : node.io.iowait_pct / 100;
+  const ioIowaitFromIostat = node.io?.iowait_pct != null;
+  const ioIowait = ioIowaitFromIostat ? (node.io?.iowait_pct ?? 0) / 100 : cpuIowait;
   const dState = node.processes?.d_state ?? 0;
   const ioUtil = node.io?.max_util_pct == null ? null : node.io.max_util_pct / 100;
   const ioAwait = node.io?.max_await_ms ?? null;
-  const advisoryUtil = ioUtil == null ? 0 : Math.min(ioUtil, 0.5);
-  const diskPressure = Math.max(ioIowait ?? 0, advisoryUtil, Math.min(dState / 10, 1));
+  const ioQueue = node.io?.max_aqu_sz ?? null;
   const ioDetail = node.io?.devices?.length
-    ? `${t("login.ioUtil")} ${ioUtil == null ? "—" : pct(ioUtil)} · ${t("login.ioAwait")} ${fmtMs(ioAwait)}`
+    ? [
+        `${t("login.ioUtil")} ${ioUtil == null ? "—" : pct(ioUtil)}`,
+        `${t("login.ioAwait")} ${fmtMs(ioAwait)}`,
+        `${t("login.dstate")} ${dState}`,
+        `${t("login.ioQueue")} ${fmtQueue(ioQueue)}`,
+      ].join(" · ")
     : t("login.ioNoData");
 
   if (!node.ok) {
@@ -151,27 +154,24 @@ function NodePanel({ node }: { node: LoginNode }) {
           <span>{node.id}</span>
         </div>
       }
-      extra={
-        <Badge variant="outline" className={cn("capitalize", levelClass[pressure.level])}>
-          {t(`level.${pressure.level}` as TranslationKey)}
-        </Badge>
-      }
     >
       <div className="space-y-4">
         <div className="grid gap-3 sm:grid-cols-2">
           <Metric
             icon={<Cpu className="h-4 w-4" />}
             label={t("login.loadCore")}
-            value={(node.load?.per_core ?? 0).toFixed(2)}
+            value={loadPerCore.toFixed(2)}
             detail={`${t("login.load1")} ${(node.load?.["1m"] ?? 0).toFixed(2)} · ${node.cores ?? 0} ${t("kpi.cores")}`}
-            bar={Math.min((node.load?.per_core ?? 0) / 2, 1)}
+            bar={Math.min(loadPerCore / 2, 1)}
+            barTone={loadTone(loadPerCore)}
           />
           <Metric
             icon={<Cpu className="h-4 w-4" />}
             label={t("login.cpuBusy")}
             value={busy == null ? "—" : pct(busy)}
-            detail={`${t("login.iowait")} ${cpuIowait == null ? "—" : pct(cpuIowait)}`}
+            detail={`/proc/stat ${t("login.iowait")} ${cpuIowait == null ? "—" : pct(cpuIowait)}`}
             bar={busy ?? 0}
+            barTone={ratioTone(busy, 0.7, 0.9)}
           />
           <Metric
             icon={<MemoryStick className="h-4 w-4" />}
@@ -179,13 +179,15 @@ function NodePanel({ node }: { node: LoginNode }) {
             value={pct(mem?.used_ratio)}
             detail={`${fmtBytes(mem?.available ?? 0)} ${t("kpi.free")} · ${t("login.swap")} ${pct(mem?.swap_ratio)}`}
             bar={mem?.used_ratio ?? 0}
+            barTone={ratioTone(mem?.used_ratio, 0.8, 0.95)}
           />
           <Metric
             icon={<HardDrive className="h-4 w-4" />}
             label={t("login.diskPressure")}
             value={ioIowait == null ? "—" : pct(ioIowait)}
-            detail={ioDetail}
-            bar={diskPressure}
+            detail={`${ioIowaitFromIostat ? "iostat %iowait" : "/proc/stat iowait"} · ${ioDetail}`}
+            bar={ioIowait ?? 0}
+            barTone={ratioTone(ioIowait, 0.1, 0.2)}
           />
         </div>
 
@@ -216,20 +218,6 @@ function NodePanel({ node }: { node: LoginNode }) {
           <div className="text-[11px] text-muted-foreground">{t("login.diskScope")}</div>
         </div>
 
-        <div className="space-y-1">
-          <div className="text-xs font-medium text-muted-foreground">{t("login.reasons")}</div>
-          {pressure.reasons.length ? (
-            <div className="flex flex-wrap gap-2">
-              {pressure.reasons.map((reason) => (
-                <Badge key={reason} variant="secondary" className="font-normal">
-                  {reason}
-                </Badge>
-              ))}
-            </div>
-          ) : (
-            <div className="text-sm text-muted-foreground">{t("login.noPressure")}</div>
-          )}
-        </div>
       </div>
     </SectionCard>
   );
@@ -241,12 +229,14 @@ function Metric({
   value,
   detail,
   bar,
+  barTone,
 }: {
   icon: ReactNode;
   label: string;
   value: string;
   detail: string;
   bar: number;
+  barTone?: Tone;
 }) {
   return (
     <div className="rounded-lg border border-border bg-muted/20 p-3">
@@ -257,10 +247,25 @@ function Metric({
         </div>
         <div className="text-lg font-semibold tabular-nums">{value}</div>
       </div>
-      <Bar value={bar} className="mt-3" />
-      <div className="mt-2 truncate text-xs text-muted-foreground">{detail}</div>
+      <Bar value={bar} tone={barTone} className="mt-3" />
+      <div className="mt-2 text-xs text-muted-foreground">{detail}</div>
     </div>
   );
+}
+
+function ratioTone(value: number | null | undefined, warn: number, bad: number): Tone {
+  if (value == null) return "neutral";
+  const displayed = Math.round(value * 100) / 100;
+  if (displayed >= bad) return "bad";
+  if (displayed >= warn) return "warn";
+  return "ok";
+}
+
+function loadTone(value: number): Tone {
+  const displayed = Math.round(value * 100) / 100;
+  if (displayed >= 2) return "bad";
+  if (displayed >= 1) return "warn";
+  return "ok";
 }
 
 function OffenderPanel({ node }: { node: LoginNode }) {
@@ -359,7 +364,7 @@ function HistoryPanel({
   title: string;
   points: LoginHistoryPoint[];
   nodeIds: string[];
-  field: "load_per_core" | "mem_used_ratio";
+  field: "load_per_core" | "mem_used_ratio" | "cpu_iowait";
   scale?: number;
   formatter: (value: number) => string;
 }) {
@@ -389,7 +394,7 @@ function HistoryPanel({
 function historyRows(
   points: LoginHistoryPoint[],
   nodeIds: string[],
-  field: "load_per_core" | "mem_used_ratio",
+  field: "load_per_core" | "mem_used_ratio" | "cpu_iowait",
   scale: number,
 ) {
   const byTs = new Map<number, Record<string, string | number>>();
@@ -420,6 +425,11 @@ function fmtMs(value: number | null | undefined) {
   if (value == null || !Number.isFinite(value)) return "—";
   if (value >= 100) return `${Math.round(value)}ms`;
   return `${value.toFixed(1)}ms`;
+}
+
+function fmtQueue(value: number | null | undefined) {
+  if (value == null || !Number.isFinite(value)) return "—";
+  return value >= 10 ? value.toFixed(0) : value.toFixed(2);
 }
 
 function LoadingState() {

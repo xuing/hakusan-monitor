@@ -31,16 +31,26 @@ export function LiveIndicator() {
   }, []);
 
   const age = snap ? secondsSince(snap.generated_at) : null;
+  const stale = Boolean(snap?.stale || snap?.error);
+  const label = stale ? t("live.stale") : t(`live.${status}`);
+  const dot = stale ? "bg-warn" : DOT[status];
+  const updated = stale ? t("live.staleUpdated") : t("updated");
 
   return (
     <div className="flex items-center gap-2.5 text-xs text-muted-foreground">
-      <span className="inline-flex items-center gap-1.5 rounded-full border border-border px-2.5 py-1">
-        <span className={cn("h-2 w-2 rounded-full", DOT[status], status === "live" && "animate-pulse-dot")} />
-        {t(`live.${status}`)}
+      <span
+        className={cn(
+          "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1",
+          stale && "border-warn/35 bg-warn-soft text-warn-fg",
+        )}
+        title={stale ? snap?.error : undefined}
+      >
+        <span className={cn("h-2 w-2 rounded-full", dot, status === "live" && !stale && "animate-pulse-dot")} />
+        {label}
       </span>
       {age !== null && (
-        <span className="hidden sm:inline">
-          {t("updated")} {agoText(t, age)}
+        <span className={cn("hidden sm:inline", stale && "text-warn-fg")}>
+          {updated} {agoText(t, age)}
         </span>
       )}
     </div>

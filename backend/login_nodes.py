@@ -145,12 +145,7 @@ def _df(text):
 
 
 def _is_health_disk(row):
-    """Return whether a df row should affect login-node disk health.
-
-    Login nodes often have many per-user home automounts and read-only loop
-    images. Those are useful as raw df output, but they do not describe local
-    login-node pressure and can report odd inode counters.
-    """
+    """Return whether a df row should be shown for login-node disk space."""
     fs = row.get("filesystem", "")
     mount = row.get("mount", "")
     if not fs or not mount:
@@ -162,29 +157,6 @@ def _is_health_disk(row):
     if mount.startswith(("/proc", "/sys", "/dev", "/run")):
         return False
     return True
-
-
-def _merge_inodes(disks, text):
-    by_mount = {d["mount"]: d for d in disks}
-    for line in text.splitlines()[1:]:
-        p = line.split()
-        if len(p) < 6:
-            continue
-        row = by_mount.get(p[5])
-        if row:
-            total = _int(p[1])
-            used = _int(p[2])
-            free = _int(p[3])
-            pct = _int(p[4].rstrip("%"))
-            if total <= 0 or used < 0 or free < 0 or pct < 0 or pct > 100:
-                total = used = free = pct = 0
-            row.update({
-                "inodes_total": total,
-                "inodes_used": used,
-                "inodes_free": free,
-                "inode_use_pct": pct,
-            })
-    return [d for d in disks if _is_health_disk(d)]
 
 
 def _proc(line, show_args):
@@ -318,9 +290,12 @@ def _iostat(text):
             _metric(vals, "f_await"),
             _metric(vals, "await"),
         ]
+        util = _metric(vals, "%util")
+        if util is not None:
+            util = max(0.0, min(100.0, util))
         current["devices"].append({
             "name": name,
-            "util_pct": _metric(vals, "%util"),
+            "util_pct": util,
             "await_ms": _max_metric(awaits),
             "aqu_sz": _metric(vals, "aqu-sz", "avgqu-sz"),
             "read_kbps": reads,
@@ -351,96 +326,6 @@ def _iostat(text):
     }
 
 
-def _pressure(node):
-    score = 0.0
-    reasons = []
-
-    def add(level, text):
-        nonlocal score
-        score = max(score, level)
-        reasons.append(text)
-
-    load_pc = node["load"]["per_core"]
-    if load_pc >= 2.0:
-        add(1.0, f"load/core {load_pc:.2f}")
-    elif load_pc >= 1.0:
-        add(0.75, f"load/core {load_pc:.2f}")
-    elif load_pc >= 0.75:
-        add(0.5, f"load/core {load_pc:.2f}")
-
-    busy = node["cpu"].get("busy")
-    if busy is not None:
-        if busy >= 0.95:
-            add(1.0, f"CPU busy {busy:.0%}")
-        elif busy >= 0.85:
-            add(0.75, f"CPU busy {busy:.0%}")
-        elif busy >= 0.70:
-            add(0.5, f"CPU busy {busy:.0%}")
-    io = node.get("io") or {}
-    io_iowait_pct = io.get("iowait_pct")
-    iowait = (_float(io_iowait_pct) / 100.0) if io_iowait_pct is not None else node["cpu"].get("iowait")
-    if iowait is not None:
-        if iowait >= 0.20:
-            add(1.0, f"iowait {iowait:.0%}")
-        elif iowait >= 0.10:
-            add(0.75, f"iowait {iowait:.0%}")
-        elif iowait >= 0.05:
-            add(0.5, f"iowait {iowait:.0%}")
-
-    io_util = _float(io.get("max_util_pct"))
-    io_await = _float(io.get("max_await_ms"))
-    io_aqu = _float(io.get("max_aqu_sz"))
-    if io_util >= 90:
-        add(0.5, f"iostat util {io_util:.0f}%")
-    elif io_util >= 70:
-        add(0.25, f"iostat util {io_util:.0f}%")
-    elif io_util >= 40:
-        add(0.15, f"iostat util {io_util:.0f}%")
-    if io_await >= 100:
-        add(1.0, f"iostat await {io_await:.0f}ms")
-    elif io_await >= 50:
-        add(0.75, f"iostat await {io_await:.0f}ms")
-    elif io_await >= 20:
-        add(0.5, f"iostat await {io_await:.0f}ms")
-    if io_aqu >= 5:
-        add(1.0, f"iostat queue {io_aqu:.1f}")
-    elif io_aqu >= 2:
-        add(0.75, f"iostat queue {io_aqu:.1f}")
-    elif io_aqu >= 1:
-        add(0.5, f"iostat queue {io_aqu:.1f}")
-
-    mem = node["memory"]
-    avail_ratio = _ratio(mem["available"], mem["total"])
-    if mem["total"] and avail_ratio <= 0.05:
-        add(1.0, f"memory available {avail_ratio:.0%}")
-    elif mem["total"] and avail_ratio <= 0.10:
-        add(0.75, f"memory available {avail_ratio:.0%}")
-    elif mem["total"] and avail_ratio <= 0.20:
-        add(0.5, f"memory available {avail_ratio:.0%}")
-    if mem["swap_ratio"] >= 0.50:
-        add(1.0, f"swap used {mem['swap_ratio']:.0%}")
-    elif mem["swap_ratio"] >= 0.20:
-        add(0.75, f"swap used {mem['swap_ratio']:.0%}")
-    elif mem["swap_ratio"] >= 0.05:
-        add(0.5, f"swap used {mem['swap_ratio']:.0%}")
-
-    d_state = node["processes"]["d_state"]
-    if d_state >= 10:
-        add(0.75, f"{d_state} D-state processes")
-    elif d_state >= 3:
-        add(0.5, f"{d_state} D-state processes")
-
-    if score >= 0.9:
-        level = "critical"
-    elif score >= 0.75:
-        level = "high"
-    elif score >= 0.5:
-        level = "moderate"
-    else:
-        level = "low"
-    return {"score": round(score, 2), "level": level, "reasons": reasons[:6]}
-
-
 class LoginNodeCollector:
     def __init__(self, *, mode, nodes, ssh_opts, mock_dir, interval=300,
                  timeout=12, top_n=12, show_args=False, mask_users=False):
@@ -455,7 +340,6 @@ class LoginNodeCollector:
         self.mask_users = mask_users
         self.latest = None
         self.error = None
-        self._prev_cpu = {}
 
     def fetch(self, now=None):
         now = int(now or time.time())
@@ -532,21 +416,19 @@ export LC_ALL=C
 echo "{MARK} hostname"; hostname
 echo "{MARK} loadavg"; cat /proc/loadavg
 echo "{MARK} nproc"; nproc
-echo "{MARK} stat"; grep '^cpu ' /proc/stat
+echo "{MARK} stat_before"; grep '^cpu ' /proc/stat
 echo "{MARK} meminfo"; cat /proc/meminfo
 echo "{MARK} df"; df -P -B1 -x tmpfs -x devtmpfs 2>/dev/null
-echo "{MARK} df_inode"; df -P -i -x tmpfs -x devtmpfs 2>/dev/null
 echo "{MARK} iostat"; if command -v iostat >/dev/null 2>&1; then iostat -x -y 1 1 2>/dev/null || true; fi
+echo "{MARK} stat_after"; grep '^cpu ' /proc/stat
 echo "{MARK} ps"; ps -eo {ps_fields}
 """
 
     def _one(self, name, target, now, local):
         sec = _sections(self._exec(target, self._script(), local))
         cores = _int(sec.get("nproc"), 0)
-        cur_cpu = _cpu_fields(sec.get("stat", ""))
-        prev_cpu = self._prev_cpu.get(name)
-        if cur_cpu:
-            self._prev_cpu[name] = cur_cpu
+        cpu_before = _cpu_fields(sec.get("stat_before", ""))
+        cpu_after = _cpu_fields(sec.get("stat_after", "")) or cpu_before
         all_procs = _procs(sec.get("ps", ""), self.show_args)
         top_cpu = sorted(all_procs, key=lambda p: (-p["cpu_pct"], -p["rss"]))[:self.top_n]
         top_mem = sorted(all_procs, key=lambda p: (-p["rss"], -p["cpu_pct"]))[:self.top_n]
@@ -554,7 +436,7 @@ echo "{MARK} ps"; ps -eo {ps_fields}
             for p in all_procs:
                 u = p.get("user", "")
                 p["user"] = (u[:2] + "***") if len(u) > 2 else "***"
-        disks = _merge_inodes(_df(sec.get("df", "")), sec.get("df_inode", ""))
+        disks = [d for d in _df(sec.get("df", "")) if _is_health_disk(d)]
         io = _iostat(sec.get("iostat", ""))
         node = {
             "id": name,
@@ -564,7 +446,7 @@ echo "{MARK} ps"; ps -eo {ps_fields}
             "sampled_at": now,
             "cores": cores,
             "load": _load(sec.get("loadavg", ""), cores),
-            "cpu": _cpu_delta(prev_cpu, cur_cpu),
+            "cpu": _cpu_delta(cpu_before, cpu_after),
             "memory": _meminfo(sec.get("meminfo", "")),
             "disks": disks,
             "io": io,
@@ -575,7 +457,6 @@ echo "{MARK} ps"; ps -eo {ps_fields}
             },
             "users": _users_from_procs(all_procs)[:self.top_n],
         }
-        node["pressure"] = _pressure(node)
         return node
 
 

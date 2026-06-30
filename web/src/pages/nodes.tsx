@@ -5,8 +5,8 @@ import { TableSkeleton } from "@/components/common/table-skeleton";
 import { useLive } from "@/hooks/use-live";
 import { poolLabel, useT, type TFn } from "@/i18n";
 import { jobsOnNode } from "@/lib/derive";
-import { fmtLeft } from "@/lib/format";
-import type { RawNode, Snapshot } from "@/types/snapshot";
+import { fmtLeft, fmtMB } from "@/lib/format";
+import type { Occupant, RawNode, Snapshot } from "@/types/snapshot";
 
 const nodeWeight = (n: RawNode) => {
   const s = new Set(n.state.map((x) => x.toUpperCase()));
@@ -59,11 +59,19 @@ function NodeJobs({ snap, node, t }: { snap: Snapshot; node: RawNode; t: TFn }) 
           <span className="truncate text-info-fg">{j.user}</span>
           <div className="flex min-w-0 items-center gap-3 text-muted-foreground">
             <span>#{j.job_id}</span>
-            <span className="text-foreground">{j.gpus ? `${j.gpus} ${t("unit.gpu")}` : `${j.cpus}c`}</span>
+            <span className="text-foreground">{nodeJobResources(j, t)}</span>
             <span className="text-ok-fg">{t("releases.in", { t: fmtLeft(j.time_left) })}</span>
           </div>
         </div>
       ))}
     </div>
   );
+}
+
+function nodeJobResources(job: Occupant, t: TFn) {
+  const parts = [];
+  if (job.gpus > 0) parts.push(`${job.gpus} ${t("unit.gpu")}`);
+  if (job.cpus > 0) parts.push(`${job.cpus}c`);
+  if (job.mem_mb > 0) parts.push(fmtMB(job.mem_mb));
+  return parts.join(" · ") || "—";
 }

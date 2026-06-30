@@ -43,7 +43,7 @@ from one result: the in-memory *latest* snapshot (real-time), the SQLite store
 - `backend/sources.py` — acquire raw Slurm data (ssh / local / mock) as compact
   text, parse to a JSON-shaped dict.
 - `backend/login_nodes.py` — optional Hakusan 1 / Hakusan 2 health sampler:
-  `/proc`, `df`/`df -i`, `iostat` if available, compact `ps`, top processes,
+  `/proc`, `df`, `iostat` if available, compact `ps`, top processes,
   top users.
 - `backend/normalize.py` — pure transform: dedupe overlapping partitions by node,
   count GPUs (incl. ones offline for maintenance), per-partition pressure score.
@@ -92,9 +92,12 @@ This was a hard requirement: **do not burden the Hakusan login node.**
 - We use **compact format strings**, not `--json`: `squeue` output drops from
   **~16.8 MB → ~45 KB** (370×), `scontrol` nodes from 604 KB → 164 KB. Far less
   to serialize and to push through the login node's sshd.
-- **One round trip per sample** (nodes + queue + singularity version combined),
-  over a **reused SSH connection** (`ControlMaster`/`ControlPersist`) — no repeated
-  handshakes.
+- **One round trip per realtime sample** for nodes and queue, over a **reused SSH
+  connection** (`ControlMaster`/`ControlPersist`) — no repeated handshakes. CPU
+  start probes (`sbatch --test-only`) and Slurm policy reads (`sacctmgr` /
+  `scontrol show partition`) are cached on longer intervals. `singularity
+  --version` is cached after the first successful sample and retried after a
+  backend restart.
 - A **single TTL-paced sampler** (default **300 s**, configurable) serves all
   viewers; 100 browsers still cause just one query stream. Updates are pushed to
   clients over Server-Sent Events (SSE). Everything is non-mutating: CPU probes
@@ -104,10 +107,10 @@ This was a hard requirement: **do not burden the Hakusan login node.**
 The optional **Login nodes** page monitors Hakusan 1 / Hakusan 2 themselves. It
 uses one short read-only command per configured node per interval
 (`HM_LOGIN_INTERVAL`, default 300 s): `/proc/loadavg`, `/proc/stat`,
-`/proc/meminfo`, `df`, `df -i`, `iostat -x -y 1 1` when available, and compact
+`/proc/meminfo`, `df`, `iostat -x -y 1 1` when available, and compact
 `ps` summaries. It stores only summary metrics plus Top N process/user rows in
-SQLite. Disk space is displayed for reference; pressure signals come from load,
-CPU, memory, D-state processes, and `iostat`.
+SQLite. Disk space is displayed for reference; disk pressure uses `iostat` when
+available.
 
 ## Quick start (demo, no cluster)
 

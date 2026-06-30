@@ -8,7 +8,7 @@ Two tables, the classic raw + rollup TSDB pattern:
 Thread-safe: one connection per thread (works under ThreadingHTTPServer).
 """
 from __future__ import annotations
-import os, json, sqlite3, threading
+import os, json, sqlite3, threading, time
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS samples (
@@ -206,47 +206,64 @@ class Store:
         """Peak/trough analysis from the hourly rollup, in **local** time.
 
         Returns averages by hour-of-day (0-23), by weekday (0=Sun..6=Sat), and a
-        weekday×hour heatmap, plus the busiest/quietest hour-of-day by GPU load.
+        weekday×hour heatmap. Values are Slurm allocation ratios, not hardware
+        utilization. Hour buckets are weighted by their raw sample count.
         """
         c = self._conn()
-        since = c.execute("SELECT max(hour) AS h FROM samples_hourly").fetchone()["h"]
-        since = (since or 0) - days * 86400
+        latest = c.execute("SELECT max(hour) AS h FROM samples_hourly").fetchone()["h"]
+        until = latest or 0
+        since = until - days * 86400 if until else 0
         rows = c.execute(
             """SELECT
+                 hour,
                  CAST(strftime('%w', hour, 'unixepoch', 'localtime') AS INTEGER) AS wd,
                  CAST(strftime('%H', hour, 'unixepoch', 'localtime') AS INTEGER) AS hod,
                  cpu_avg, gpu_avg, pending_avg, n
                FROM samples_hourly WHERE hour >= ?""", (since,)).fetchall()
 
-        by_hour = {h: {"cpu": 0.0, "gpu": 0.0, "pending": 0.0, "n": 0} for h in range(24)}
-        by_wd = {d: {"cpu": 0.0, "gpu": 0.0, "pending": 0.0, "n": 0} for d in range(7)}
+        by_hour = {h: {"cpu": 0.0, "gpu": 0.0, "pending": 0.0, "samples": 0, "hours": 0} for h in range(24)}
+        by_wd = {d: {"cpu": 0.0, "gpu": 0.0, "pending": 0.0, "samples": 0, "hours": 0} for d in range(7)}
         heat = {}
+        first = min((r["hour"] for r in rows), default=0)
+        total_samples = 0
         for r in rows:
+            samples = int(r["n"] or 0)
+            if samples <= 0:
+                continue
+            total_samples += samples
             for bucket, key in ((by_hour, r["hod"]), (by_wd, r["wd"])):
                 b = bucket[key]
-                b["cpu"] += r["cpu_avg"]; b["gpu"] += r["gpu_avg"]
-                b["pending"] += r["pending_avg"]; b["n"] += 1
+                b["cpu"] += r["cpu_avg"] * samples; b["gpu"] += r["gpu_avg"] * samples
+                b["pending"] += r["pending_avg"] * samples; b["samples"] += samples
+                b["hours"] += 1
             hk = (r["wd"], r["hod"])
-            h = heat.setdefault(hk, {"cpu": 0.0, "gpu": 0.0, "n": 0})
-            h["cpu"] += r["cpu_avg"]; h["gpu"] += r["gpu_avg"]; h["n"] += 1
+            h = heat.setdefault(hk, {"cpu": 0.0, "gpu": 0.0, "pending": 0.0, "samples": 0, "hours": 0})
+            h["cpu"] += r["cpu_avg"] * samples; h["gpu"] += r["gpu_avg"] * samples
+            h["pending"] += r["pending_avg"] * samples; h["samples"] += samples
+            h["hours"] += 1
 
         def avg(b):
-            n = b["n"] or 1
-            return {"cpu": round(b["cpu"]/n, 3), "gpu": round(b["gpu"]/n, 3),
-                    "pending": round(b["pending"]/n, 1), "samples": b["n"]}
+            samples = b["samples"] or 1
+            return {"cpu": round(b["cpu"]/samples, 3), "gpu": round(b["gpu"]/samples, 3),
+                    "pending": round(b["pending"]/samples, 1),
+                    "samples": b["samples"], "hours": b["hours"]}
 
         hours = [{"hour": h, **avg(by_hour[h])} for h in range(24)]
         weekdays = [{"weekday": d, **avg(by_wd[d])} for d in range(7)]
         heatmap = [{"weekday": wd, "hour": hod,
-                    "gpu": round(v["gpu"]/(v["n"] or 1), 3),
-                    "cpu": round(v["cpu"]/(v["n"] or 1), 3), "samples": v["n"]}
+                    "gpu": round(v["gpu"]/(v["samples"] or 1), 3),
+                    "cpu": round(v["cpu"]/(v["samples"] or 1), 3),
+                    "pending": round(v["pending"]/(v["samples"] or 1), 1),
+                    "samples": v["samples"], "hours": v["hours"]}
                    for (wd, hod), v in sorted(heat.items())]
         ranked = [h for h in hours if h["samples"]]
         busiest = max(ranked, key=lambda x: x["gpu"], default=None)
         quietest = min(ranked, key=lambda x: x["gpu"], default=None)
         return {"days": days, "by_hour": hours, "by_weekday": weekdays,
                 "heatmap": heatmap, "busiest_hour": busiest, "quietest_hour": quietest,
-                "total_hours": len(ranked)}
+                "total_hours": len(rows), "total_samples": total_samples,
+                "since": first, "until": until + 3599 if until else 0,
+                "timezone": os.environ.get("TZ") or time.tzname[0] or "localtime"}
 
     def stats(self):
         c = self._conn()

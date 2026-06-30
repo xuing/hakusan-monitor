@@ -15,7 +15,7 @@ decoupled from requests (true real-time push + durable history for peak/trough).
 Run:  python3 backend/server.py     (see env vars below)
 """
 from __future__ import annotations
-import json, os, sys, time, queue, threading
+import json, math, os, sys, time, queue, threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
@@ -52,6 +52,30 @@ def env(name: str, default: str) -> str:
     return os.environ.get(name, default)
 
 
+def clamp(value, low, high):
+    return max(low, min(high, value))
+
+
+def query_float(q, key, default, low, high):
+    try:
+        value = float(q.get(key, [str(default)])[0])
+    except (TypeError, ValueError):
+        value = default
+    if not math.isfinite(value):
+        value = default
+    return clamp(value, low, high)
+
+
+def query_int(q, key, default, low, high):
+    try:
+        value = int(float(q.get(key, [str(default)])[0]))
+    except (OverflowError, TypeError, ValueError):
+        value = default
+    if not math.isfinite(value):
+        value = default
+    return clamp(value, low, high)
+
+
 CFG = {
     "source":     env("HM_SOURCE", "mock"),
     "ssh_host":   env("HM_SSH_HOST", ""),   # set per-user in .env (e.g. you@hakusan2)
@@ -63,6 +87,8 @@ CFG = {
     "port":       int(env("HM_PORT", "8787")),
     "source_timeout": float(env("HM_SOURCE_TIMEOUT", "75")),
     "interval":   float(env("HM_SAMPLE_INTERVAL", "300")),   # 5 min — gentle on the login node
+    "cpu_probe_interval": float(env("HM_CPU_PROBE_INTERVAL", "900")),
+    "policy_interval": float(env("HM_POLICY_INTERVAL", "86400")),
     "mask_users": env("HM_MASK_USERS", "0") in ("1", "true", "yes"),
     "mock_dir":   env("HM_MOCK_DIR", os.path.join(ROOT, "mock")),
     "db":         env("HM_DB", os.path.join(ROOT, "data", "hakusan.sqlite")),
@@ -94,7 +120,9 @@ class Engine:
     def __init__(self, cfg):
         self.cfg = cfg
         self.src = Source(cfg["source"], cfg["ssh_host"], cfg["ssh_opts"],
-                          cfg["mock_dir"], timeout=cfg["source_timeout"])
+                          cfg["mock_dir"], timeout=cfg["source_timeout"],
+                          cpu_probe_interval=cfg["cpu_probe_interval"],
+                          policy_interval=cfg["policy_interval"])
         self.login = LoginNodeCollector(
             mode=cfg["source"], nodes=cfg["login_nodes"], ssh_opts=cfg["ssh_opts"],
             mock_dir=cfg["mock_dir"], interval=cfg["login_interval"],
@@ -139,6 +167,9 @@ class Engine:
             snap.update(generated_at=int(now), age_s=0.0,
                         source=self.cfg["source"], stale=False)
             snap["cpu_submit_probes"] = squeue.get("cpu_submit_probes", [])
+            snap["cpu_submit_probes_generated_at"] = squeue.get("cpu_submit_probes_generated_at", 0)
+            if self.src.policy_snapshot:
+                snap["policy"] = self.src.policy_snapshot
             # ship the raw data in the same payload — one pull feeds tables,
             # occupancy and the derived dashboard alike (no repeated fetching).
             snap["nodes"] = self.raw_nodes
@@ -168,6 +199,8 @@ class Engine:
             self.error = str(e)
             if self.latest is not None:           # keep serving stale data
                 self.latest = {**self.latest, "stale": True, "error": str(e)}
+                self._broadcast(self.latest)
+            print(f"collect failed: {self.error}", flush=True)
             return None
 
     def run(self):
@@ -222,6 +255,7 @@ class Engine:
                                 "interval": self.cfg["login_interval"],
                                 "top_n": self.cfg["login_top_n"],
                                 "show_args": self.cfg["login_show_args"]},
+                "policy": self.src.policy_snapshot,
                 "container": ci, "docs": DOCS,
                 "partitions": [{"name": p["name"], "kind": p["kind"]}
                                for p in snap.get("partitions", [])],
@@ -308,23 +342,23 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(200, {"generated_at": int(time.time()),
                                     "count": len(eng.raw_jobs), "jobs": eng.raw_jobs})
         if path == "/api/history":
-            hours = float(q.get("hours", ["24"])[0])
+            hours = query_float(q, "hours", 24, 1, 168)
             until = int(time.time())
             since = until - int(hours * 3600)
-            mp = int(q.get("points", ["600"])[0])
+            mp = query_int(q, "points", 600, 10, 2000)
             return self._json(200, {"since": since, "until": until,
                                     "points": eng.store.history(since, until, mp)})
         if path == "/api/login-nodes":
             return self._json(200, eng.login_snapshot())
         if path == "/api/login-nodes/history":
-            hours = float(q.get("hours", ["24"])[0])
+            hours = query_float(q, "hours", 24, 1, 168)
             until = int(time.time())
             since = until - int(hours * 3600)
-            mp = int(q.get("points", ["600"])[0])
+            mp = query_int(q, "points", 600, 10, 2000)
             return self._json(200, {"since": since, "until": until,
                                     "points": eng.store.login_history(since, until, mp)})
         if path == "/api/usage":
-            days = int(q.get("days", ["30"])[0])
+            days = query_int(q, "days", 30, 1, 365)
             return self._json(200, eng.store.usage_pattern(days))
         if path == "/api/meta":
             return self._json(200, eng.meta())

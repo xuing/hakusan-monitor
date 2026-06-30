@@ -1,5 +1,5 @@
 // Slurm-domain helpers: load tones, chart color mapping, resource filtering.
-import type { Partition, Pool, PressureLevel, Release } from "@/types/snapshot";
+import type { Partition, PolicySnapshot, Pool, PressureLevel, Release } from "@/types/snapshot";
 
 export type Tone = "ok" | "warn" | "bad" | "info" | "neutral";
 
@@ -110,7 +110,10 @@ export const MATERIALS_STUDIO_PARTITIONS = [
 
 export const isMaterialsStudioPartition = (name: string) => MATERIALS_STUDIO_PARTITIONS.includes(name);
 
-export const partitionCap = (name: string): PartitionCap => PARTITION_CAPS[name] ?? {};
+export const partitionCap = (name: string, policy?: PolicySnapshot): PartitionCap => ({
+  ...(PARTITION_CAPS[name] ?? {}),
+  ...(policy?.partition_caps?.[name] ?? {}),
+});
 
 export const PARTITION_POLICIES: Record<string, PartitionPolicy> = {
   DEF: { maxJobsPerUser: 300, maxSubmitPerUser: 40 },
@@ -136,4 +139,7 @@ export const PARTITION_POLICIES: Record<string, PartitionPolicy> = {
   MS_Amorphous: { grpJobs: 1 },
 };
 
-export const partitionPolicy = (name: string): PartitionPolicy => PARTITION_POLICIES[name] ?? {};
+export const partitionPolicy = (name: string, policy?: PolicySnapshot): PartitionPolicy => ({
+  ...(PARTITION_POLICIES[name] ?? {}),
+  ...(policy?.partition_policies?.[name] ?? {}),
+});

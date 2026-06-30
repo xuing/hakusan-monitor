@@ -11,7 +11,7 @@ Output is shaped like the Slurm `--json` payloads (`{"nodes":[...]}`,
 fixtures.
 """
 from __future__ import annotations
-import os, re, json, time, shlex, subprocess
+import math, os, re, json, time, shlex, subprocess
 
 MARK = "@@HM@@"
 SEP = "|@|"   # field separator unlikely to occur in any value (e.g. job names)
@@ -95,6 +95,143 @@ def _mem_mb(s):
     unit = m.group(2).upper()
     mult = {"": 1, "K": 1 / 1024, "M": 1, "G": 1024, "T": 1024 * 1024, "P": 1024 * 1024 * 1024}
     return int(n * mult.get(unit, 1))
+
+
+def _mem_gb(s):
+    mb = _mem_mb(s)
+    return int(math.ceil(mb / 1024)) if mb else 0
+
+
+def _wall_compact(s):
+    if not s or s in ("N/A", "(null)", "None", "NULL", "UNLIMITED"):
+        return ""
+    days = 0
+    rest = s
+    if "-" in s:
+        d, rest = s.split("-", 1)
+        days = _int(d)
+    parts = rest.split(":")
+    if len(parts) != 3:
+        return ""
+    hours, minutes, seconds = (_int(x) for x in parts)
+    total_minutes = days * 1440 + hours * 60 + minutes + (1 if seconds else 0)
+    if total_minutes <= 0:
+        return ""
+    if total_minutes % 1440 == 0:
+        return f"{total_minutes // 1440}d"
+    if total_minutes % 60 == 0:
+        return f"{total_minutes // 60}h"
+    return f"{total_minutes}m"
+
+
+def _parse_tres(text):
+    out = {}
+    gpu_vals = []
+    for item in (text or "").split(","):
+        if "=" not in item:
+            continue
+        key, val = item.split("=", 1)
+        key, val = key.strip(), val.strip()
+        if key == "cpu":
+            out["cores"] = _int(val)
+        elif key == "mem":
+            out["mem_gb"] = _mem_gb(val)
+        elif key == "node":
+            out["nodes"] = _int(val)
+        elif key.startswith("gres/gpu"):
+            gpu_vals.append(_int(val))
+    if gpu_vals:
+        # Slurm may show both generic and typed GPU TRES. Treat that as the same
+        # limit rather than adding them together.
+        out["gpus"] = max(gpu_vals)
+    return {k: v for k, v in out.items() if v}
+
+
+def parse_qos_policies(text):
+    qos = {}
+    for line in text.splitlines():
+        if not line.strip():
+            continue
+        p = (line.split("|") + [""] * 8)[:8]
+        name, max_tres, max_wall, grp_jobs, max_jobs_pu, max_submit_pu, min_tres, flags = p
+        if not name:
+            continue
+        tres = _parse_tres(max_tres)
+        min_vals = _parse_tres(min_tres)
+        cap = {}
+        if tres.get("cores"):
+            cap["maxCores"] = tres["cores"]
+        if min_vals.get("cores"):
+            cap["minCores"] = min_vals["cores"]
+        if tres.get("mem_gb"):
+            cap["maxMemGb"] = tres["mem_gb"]
+        if tres.get("gpus"):
+            cap["maxGpus"] = tres["gpus"]
+        if tres.get("nodes"):
+            cap["maxNodes"] = tres["nodes"]
+        wall = _wall_compact(max_wall)
+        if wall:
+            cap["wall"] = wall
+        policy = {}
+        if _int(grp_jobs):
+            policy["grpJobs"] = _int(grp_jobs)
+        if _int(max_jobs_pu):
+            policy["maxJobsPerUser"] = _int(max_jobs_pu)
+        if _int(max_submit_pu):
+            policy["maxSubmitPerUser"] = _int(max_submit_pu)
+        qos[name] = {
+            "name": name,
+            "max_tres": max_tres,
+            "min_tres": min_tres,
+            "max_wall": max_wall,
+            "flags": flags,
+            "cap": cap,
+            "policy": policy,
+        }
+    return qos
+
+
+def parse_partition_policies(text):
+    parts = {}
+    for line in text.splitlines():
+        if not line.startswith("PartitionName="):
+            continue
+        name = _kv(line, "PartitionName")
+        if not name:
+            continue
+        allow_qos = _kv(line, "AllowQos")
+        parts[name] = {
+            "name": name,
+            "qos": _kv(line, "QoS"),
+            "allow_qos": [] if allow_qos in ("", "(null)") else allow_qos.split(","),
+            "nodes": _kv(line, "Nodes"),
+            "state": _kv(line, "State"),
+            "default": _kv(line, "Default") == "YES",
+        }
+    return parts
+
+
+def build_policy_snapshot(qos_text, partition_text, now, interval):
+    qos = parse_qos_policies(qos_text)
+    partitions = parse_partition_policies(partition_text)
+    caps = {}
+    policies = {}
+    for name, part in partitions.items():
+        q = qos.get(part.get("qos", ""))
+        if not q:
+            continue
+        if q.get("cap"):
+            caps[name] = q["cap"]
+        if q.get("policy"):
+            policies[name] = q["policy"]
+    return {
+        "generated_at": int(now),
+        "interval": int(interval),
+        "qos": qos,
+        "partitions": partitions,
+        "partition_caps": caps,
+        "partition_policies": policies,
+    }
 
 
 def parse_containers(text):
@@ -193,13 +330,20 @@ def parse_cpu_submit_probes(text):
 
 class Source:
     def __init__(self, mode="mock", ssh_host="", ssh_opts="",
-                 mock_dir="mock", timeout=25):
+                 mock_dir="mock", timeout=25, cpu_probe_interval=900,
+                 policy_interval=86400):
         self.mode = mode
         self.ssh_host = ssh_host
         self.ssh_opts = ssh_opts
         self.mock_dir = mock_dir
         self.timeout = timeout
-        self.singularity = None     # filled by fetch() (folded into one round trip)
+        self.cpu_probe_interval = cpu_probe_interval
+        self.policy_interval = policy_interval
+        self.singularity = None
+        self.cpu_probes = []
+        self.cpu_probe_at = 0
+        self.policy_snapshot = None
+        self.policy_at = 0
 
     def _exec(self, script, timeout=None):
         """Run a shell snippet on the cluster (ssh) or locally."""
@@ -218,30 +362,55 @@ class Source:
             return json.load(f)
 
     def fetch(self):
-        """Return (nodes_json, squeue_json). One SSH round trip also captures the
-        Singularity version (in self.singularity) so there's no extra call."""
+        """Return (nodes_json, squeue_json).
+
+        The hot path stays to node + queue reads. CPU start probes and static
+        policy/accounting data are cached on longer TTLs because they are more
+        expensive than scontrol/squeue snapshots.
+        """
         if self.mode == "mock":
             return self._mock("nodes.json"), self._mock("squeue.json")
+        now = time.time()
+        probe_due = not self.cpu_probes or now - self.cpu_probe_at >= self.cpu_probe_interval
+        policy_due = self.policy_snapshot is None or now - self.policy_at >= self.policy_interval
         singularity_cmd = ("singularity --version 2>/dev/null || true"
                            if self.singularity is None else "true")
         sep_q = shlex.quote(SEP)
         cpu_parts = " ".join(shlex.quote(p) for p in CPU_TEST_PARTITIONS)
-        cpu_probe_cmd = (
+        cpu_probe_cmd = ((
             f"SEP={sep_q}; for p in {cpu_parts}; do "
             "out=$(timeout 4s sbatch --test-only -p \"$p\" --wrap=hostname 2>&1); rc=$?; "
             "printf '%s%s%s%s%s\\n' \"$p\" \"$SEP\" \"$rc\" \"$SEP\" \"$out\"; "
             "done"
-        )
+        ) if probe_due else "true")
+        qos_cmd = (
+            "timeout 8s sacctmgr -n -P show qos "
+            "format=Name,MaxTRES%200,MaxWall,GrpJobs,MaxJobsPU,MaxSubmitPU,MinTRES%200,Flags%100 "
+            "2>/dev/null || true"
+        ) if policy_due else "true"
+        partition_cmd = (
+            "timeout 8s scontrol -o show partition 2>/dev/null || true"
+        ) if policy_due else "true"
         out = self._exec(f"scontrol -o show nodes; echo {MARK}; "
                          f"squeue -h -a -o '{SQUEUE_FMT}'; echo {MARK}; "
                          f"(squeue -h -a -O '{CONTAINER_FMT}' 2>/dev/null || true); echo {MARK}; "
                          f"{singularity_cmd}; echo {MARK}; "
-                         f"{cpu_probe_cmd}")
-        nodes_txt, queue_txt, containers_txt, sing_txt, cpu_probe_txt = (out.split(MARK) + ["", "", "", ""])[:5]
+                         f"{cpu_probe_cmd}; echo {MARK}; "
+                         f"{qos_cmd}; echo {MARK}; "
+                         f"{partition_cmd}")
+        sections = (out.split(MARK) + ["", "", "", "", "", ""])[:7]
+        nodes_txt, queue_txt, containers_txt, sing_txt, cpu_probe_txt, qos_txt, partition_txt = sections
         if self.singularity is None and "version" in sing_txt:
             self.singularity = sing_txt.split("version", 1)[-1].strip()
+        if probe_due:
+            self.cpu_probes = parse_cpu_submit_probes(cpu_probe_txt)
+            self.cpu_probe_at = now
+        if policy_due and (qos_txt.strip() or partition_txt.strip()):
+            self.policy_snapshot = build_policy_snapshot(qos_txt, partition_txt, now, self.policy_interval)
+            self.policy_at = now
         queue = parse_queue(queue_txt, parse_containers(containers_txt))
-        queue["cpu_submit_probes"] = parse_cpu_submit_probes(cpu_probe_txt)
+        queue["cpu_submit_probes"] = self.cpu_probes
+        queue["cpu_submit_probes_generated_at"] = int(self.cpu_probe_at) if self.cpu_probe_at else 0
         return parse_nodes(nodes_txt), queue
 
     @staticmethod
