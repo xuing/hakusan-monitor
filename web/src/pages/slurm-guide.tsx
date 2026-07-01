@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { useT, type TFn, type TranslationKey } from "@/i18n";
 import { copyText } from "@/lib/clipboard";
 import type { Tone } from "@/lib/slurm";
+import { cn } from "@/lib/utils";
 
 // Language-neutral data: the shell text and tone are the same in every language.
 // All prose (titles, details, tips) lives in i18n under guide.* — see en.ts.
@@ -72,7 +73,7 @@ export default function SlurmGuidePage() {
       </SectionCard>
 
       <SectionCard title={t("guide.workflowTitle")}>
-        <div className="grid gap-2 md:grid-cols-2">
+        <div className="grid items-start gap-2 md:grid-cols-2">
           {FLOW.map((key, i) => (
             <div key={key} className="rounded-lg border border-border bg-muted/30 px-3 py-2 text-sm">
               <span className="mr-2 font-mono text-xs text-info-fg">{i + 1}</span>
@@ -83,9 +84,15 @@ export default function SlurmGuidePage() {
       </SectionCard>
 
       <SectionCard title={t("guide.partitionTitle")}>
-        <div className="grid gap-2 md:grid-cols-2">
-          {PARTS.map((key) => (
-            <div key={key} className="rounded-lg border border-border bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
+        <div className="grid items-start gap-2 md:grid-cols-2">
+          {PARTS.map((key, i) => (
+            <div
+              key={key}
+              className={cn(
+                "rounded-lg border border-border bg-muted/30 px-3 py-2 text-sm text-muted-foreground",
+                i === PARTS.length - 1 && "md:col-span-2",
+              )}
+            >
               {t(key)}
             </div>
           ))}
@@ -93,14 +100,14 @@ export default function SlurmGuidePage() {
       </SectionCard>
 
       <SectionCard title={t("guide.commandsTitle")}>
-        <div className="grid gap-3 lg:grid-cols-2">
+        <div className="grid items-start gap-3 lg:grid-cols-2">
           {COMMANDS.map((cmd) => (
             <CommandCard key={cmd.key} item={cmd} t={t} />
           ))}
         </div>
       </SectionCard>
 
-      <div className="grid gap-4 lg:grid-cols-2">
+      <div className="grid items-start gap-4 lg:grid-cols-2">
         <SectionCard title={t("guide.etiquetteTitle")}>
           <ul className="space-y-2 text-sm text-muted-foreground">
             {ETIQ.map((key) => (

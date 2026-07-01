@@ -108,16 +108,21 @@ export function ContainersPanel() {
         </div>
       )}
 
-      <div className="grid min-w-0 gap-3 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.3fr)]">
-        <GuideList title={t("container.workflowTitle")} keys={WORKFLOW} />
-        <div className="min-w-0">
-          <div className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">{t("container.examples")}</div>
-          <div className="grid min-w-0 gap-2 md:grid-cols-2">
-            {COMMANDS.map((item) => (
-              <CommandCard key={item.title} title={t(item.title)} detail={t(item.detail)} command={item.command} />
-            ))}
+      <div className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">{t("container.workflowTitle")}</div>
+      <div className="mb-4 grid gap-2 md:grid-cols-2">
+        {WORKFLOW.map((key, i) => (
+          <div key={key} className="rounded-lg border border-border bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
+            <span className="mr-2 font-mono text-xs text-info-fg">{i + 1}</span>
+            {t(key)}
           </div>
-        </div>
+        ))}
+      </div>
+
+      <div className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">{t("container.examples")}</div>
+      <div className="grid items-start gap-2 sm:grid-cols-2 lg:grid-cols-3">
+        {COMMANDS.map((item) => (
+          <CommandCard key={item.title} title={t(item.title)} detail={t(item.detail)} command={item.command} />
+        ))}
       </div>
 
       <GuideList title={t("container.gotchas")} keys={NOTES} className="mt-4" />
@@ -173,7 +178,7 @@ function CommandCard({ title, detail, command }: { title: string; detail: string
           {copied ? <Check className="h-3.5 w-3.5" /> : <Clipboard className="h-3.5 w-3.5" />}
         </Button>
       </div>
-      <pre className="max-w-full overflow-x-auto p-3 font-mono text-[11px] leading-relaxed text-foreground/90">
+      <pre className="max-w-full overflow-x-auto whitespace-pre-wrap break-all p-3 font-mono text-[11px] leading-relaxed text-foreground/90">
         {command}
       </pre>
     </div>
