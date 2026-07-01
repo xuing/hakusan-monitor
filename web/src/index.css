@@ -29,6 +29,7 @@
   /* light theme (default :root) */
   :root {
     color-scheme: light;
+    --font-sans: Inter, system-ui, "Segoe UI", sans-serif;
     --background: 0 0% 100%;
     --foreground: 222 45% 12%;
     --card: 0 0% 100%;
@@ -49,6 +50,16 @@
     --input: 214 24% 86%;
     --ring: 204 100% 40%;
     --radius: 0.6rem;
+  }
+
+  html:lang(zh) {
+    --font-sans: Inter, system-ui, "PingFang SC", "Microsoft YaHei",
+      "Noto Sans CJK SC", "Source Han Sans SC", sans-serif;
+  }
+
+  html:lang(ja) {
+    --font-sans: Inter, system-ui, "Hiragino Sans", "Hiragino Kaku Gothic ProN",
+      "Yu Gothic", "Meiryo", "Noto Sans CJK JP", "Source Han Sans JP", sans-serif;
   }
 
   /* dark theme */

@@ -17,8 +17,7 @@ export default {
   theme: {
     extend: {
       fontFamily: {
-        sans: ["Inter", "system-ui", "Segoe UI", "Hiragino Kaku Gothic ProN",
-               "Noto Sans CJK JP", "Noto Sans CJK SC", "sans-serif"],
+        sans: ["var(--font-sans)"],
         mono: ["ui-monospace", "JetBrains Mono", "SFMono-Regular", "Menlo", "monospace"],
       },
       colors: {

@@ -9,6 +9,14 @@
     <script>
       // Apply saved theme before paint; otherwise follow the browser preference.
       try {
+        const langs = ["ja", "en", "zh"];
+        const savedLang = localStorage.getItem("hm_lang");
+        const browserLangs = navigator.languages && navigator.languages.length ? navigator.languages : [navigator.language];
+        const lang = langs.includes(savedLang)
+          ? savedLang
+          : (browserLangs.map((l) => String(l).slice(0, 2)).find((l) => langs.includes(l)) || "en");
+        document.documentElement.lang = lang;
+
         const saved = localStorage.getItem("hm_theme");
         const dark = saved === "dark" || (!saved && window.matchMedia("(prefers-color-scheme: dark)").matches);
         document.documentElement.classList.toggle("dark", dark);
