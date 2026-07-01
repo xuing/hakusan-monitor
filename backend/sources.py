@@ -12,6 +12,13 @@ fixtures.
 """
 from __future__ import annotations
 import math, os, re, json, time, shlex, subprocess
+from datetime import datetime
+
+try:
+    from zoneinfo import ZoneInfo
+    CLUSTER_TZ = ZoneInfo(os.environ.get("HM_CLUSTER_TZ", "Asia/Tokyo"))
+except Exception:          # unknown TZ name / missing tzdata -> host localtime
+    CLUSTER_TZ = None
 
 MARK = "@@HM@@"
 SEP = "|@|"   # field separator unlikely to occur in any value (e.g. job names)
@@ -73,8 +80,17 @@ def parse_nodes(text):
 
 
 def _epoch(iso):
-    try:                       # squeue %V is local time, e.g. 2026-06-27T10:29:04
-        return int(time.mktime(time.strptime(iso, "%Y-%m-%dT%H:%M:%S")))
+    """squeue %V is cluster-local time, e.g. 2026-06-27T10:29:04.
+
+    Interpret it in the cluster's zone (HM_CLUSTER_TZ, default Asia/Tokyo), not
+    the monitoring host's — otherwise every submit time and probe verdict is
+    shifted when this server runs outside JST.
+    """
+    try:
+        dt = datetime.strptime(iso, "%Y-%m-%dT%H:%M:%S")
+        if CLUSTER_TZ is not None:
+            return int(dt.replace(tzinfo=CLUSTER_TZ).timestamp())
+        return int(time.mktime(dt.timetuple()))
     except Exception:
         return 0
 

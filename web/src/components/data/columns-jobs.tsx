@@ -3,7 +3,7 @@ import { reasonLabel, type TFn } from "@/i18n";
 import { fmtAt, fmtEpoch, fmtLeft, fmtMB } from "@/lib/format";
 import type { RawJob } from "@/types/snapshot";
 import { JobStateBadge } from "./cells";
-import { exactArrayFilter, setSingleFacet } from "./table-filters";
+import { commaArrayFilter, exactArrayFilter, setSingleFacet } from "./table-filters";
 
 const mono = (v: string, cls = "") => <span className={`font-mono text-xs ${cls}`}>{v || "—"}</span>;
 const clickText = "rounded px-1 py-0.5 text-left transition-colors hover:bg-accent hover:text-foreground";
@@ -49,7 +49,7 @@ export function jobColumns<T extends RawJob>(t: TFn): ColumnDef<T>[] {
           {row.original.partition}
         </button>
       ),
-      filterFn: exactArrayFilter,
+      filterFn: commaArrayFilter,
     },
     {
       id: "state",
@@ -62,7 +62,13 @@ export function jobColumns<T extends RawJob>(t: TFn): ColumnDef<T>[] {
       id: "reason",
       accessorFn: (j) => j.state_reason,
       header: t("col.reason"),
-      cell: ({ row }) => <span className="text-xs text-muted-foreground">{reasonLabel(t, row.original.state_reason)}</span>,
+      // Slurm reports Reason=None for running jobs — a pending-reason label
+      // like "Being scheduled" would be nonsense there.
+      cell: ({ row }) => (
+        <span className="text-xs text-muted-foreground">
+          {row.original.job_state === "PENDING" ? reasonLabel(t, row.original.state_reason) : "—"}
+        </span>
+      ),
     },
     { accessorKey: "node_count", header: t("col.nodes"), cell: ({ row }) => <span className="tnum font-mono text-xs">{row.original.node_count}</span> },
     { accessorKey: "cpus", header: t("col.cpus"), cell: ({ row }) => <span className="tnum font-mono text-xs">{row.original.cpus}</span> },

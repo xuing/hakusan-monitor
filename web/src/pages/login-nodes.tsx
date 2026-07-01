@@ -396,7 +396,6 @@ function HistoryPanel({
           colors={colors}
           valueFormatter={formatter}
           startEndOnly
-          showAnimation
           yAxisWidth={44}
           className="h-56"
         />

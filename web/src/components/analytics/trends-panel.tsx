@@ -1,16 +1,17 @@
 import { AreaChart } from "@tremor/react";
+import { ChartPlaceholder } from "@/components/common/chart-placeholder";
 import { Empty } from "@/components/common/empty";
 import { SectionCard } from "@/components/common/section-card";
 import { useApi } from "@/hooks/use-api";
 import { useT } from "@/i18n";
 import { api } from "@/lib/api";
+import { CLUSTER_TIME_ZONE } from "@/lib/format";
 
 const HOURS = 24;
-const CLUSTER_TIME_ZONE = "Asia/Tokyo";
 
 export function TrendsPanel() {
   const t = useT();
-  const { data } = useApi(() => api.history(HOURS), HOURS, 60_000);
+  const { data, loading, error } = useApi(() => api.history(HOURS), HOURS, 60_000);
   const points = data?.points ?? [];
 
   const fmtTime = (ts: number) =>
@@ -29,7 +30,11 @@ export function TrendsPanel() {
 
   return (
     <SectionCard title={t("section.trend")} extra={t("trend.scope")}>
-      {points.length === 0 ? (
+      {!data && loading ? (
+        <ChartPlaceholder className="h-52" />
+      ) : !data && error ? (
+        <Empty>{t("common.fetchError")}</Empty>
+      ) : points.length === 0 ? (
         <Empty>{t("trend.nodata")}</Empty>
       ) : (
         <div className="space-y-6">
@@ -40,7 +45,6 @@ export function TrendsPanel() {
             colors={["blue", "violet"]}
             valueFormatter={(v) => `${v}%`}
             startEndOnly
-            showAnimation
             yAxisWidth={42}
             className="h-52"
           />
@@ -50,7 +54,6 @@ export function TrendsPanel() {
             categories={[t("trend.pending")]}
             colors={["amber"]}
             startEndOnly
-            showAnimation
             showLegend={false}
             yAxisWidth={42}
             className="h-44"

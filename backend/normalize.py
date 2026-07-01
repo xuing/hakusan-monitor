@@ -154,6 +154,7 @@ def normalize(nodes_json, squeue_json, *, cluster="hakusan", slurm_version="",
     pools = {}            # id -> accumulator
     part_nodes = defaultdict(list)
     nodes_down = []
+    sched_avail = 0       # idle/mixed nodes that are NOT draining (schedulable)
 
     for nd in nodes:
         name = nd.get("name", "")
@@ -181,8 +182,11 @@ def normalize(nodes_json, squeue_json, *, cluster="hakusan", slurm_version="",
             for k, v in g_tot.items():
                 gpu_down[k] += v
 
-        # node-level availability (a node is "free" if up and has spare capacity)
-        node_up = b not in ("down", "drain")
+        # node-level availability: a node takes new work only if it is up AND not
+        # draining — Slurm stops scheduling onto DRAIN* nodes even while they
+        # still run jobs (MIXED+DRAIN buckets as "mixed" above, so check the flag).
+        draining = "DRAIN" in set(states)
+        node_up = b not in ("down", "drain") and not draining
         if g_tot:
             gpu_nodes_total += 1
             if node_up and (sum(g_tot.values()) - sum(g_use.values())) > 0:
@@ -220,7 +224,10 @@ def normalize(nodes_json, squeue_json, *, cluster="hakusan", slurm_version="",
             part_nodes[p].append((nd, b, cpus, acpu, g_tot, g_use))
             pa["parts"].add(p)
 
-        if b in ("down", "drain") or (states and "DRAIN" in set(states)):
+        if b in ("idle", "mixed") and not draining:
+            sched_avail += 1
+
+        if b in ("down", "drain") or draining:
             nodes_down.append({"name": name, "state": states,
                                "pool": pid, "reason": nd.get("reason") or ""})
 
@@ -356,8 +363,8 @@ def normalize(nodes_json, squeue_json, *, cluster="hakusan", slurm_version="",
         states = Counter(m[1] for m in members)              # bucketed node states
         other_c = sum(m[2] - m[3] for m in members if m[1] in ("down", "drain"))
         available_nodes = sum(
-            1 for _, b, cpus, acpu, g_tot, g_use in members
-            if b not in ("down", "drain") and (
+            1 for nd_m, b, cpus, acpu, g_tot, g_use in members
+            if b not in ("down", "drain") and "DRAIN" not in set(state_list(nd_m)) and (
                 (sum(g_tot.values()) - sum(g_use.values())) > 0 if kind == "gpu" else (cpus - acpu) > 0
             )
         )
@@ -455,7 +462,7 @@ def normalize(nodes_json, squeue_json, *, cluster="hakusan", slurm_version="",
     releases.sort(key=lambda x: x["end_time"])
     top_releases = releases[:14]
 
-    avail = by_state.get("idle", 0) + by_state.get("mixed", 0)
+    avail = sched_avail
     down = by_state.get("down", 0) + by_state.get("drain", 0)
 
     return {

@@ -1,5 +1,9 @@
 // Pure formatting helpers (no i18n, no React).
 
+/** All absolute times in the UI are cluster-local so they match Slurm's own
+ * strings (fmtAt slices those verbatim) regardless of the viewer's zone. */
+export const CLUSTER_TIME_ZONE = "Asia/Tokyo";
+
 export const pct = (x: number | null | undefined, digits = 0) =>
   `${((x ?? 0) * 100).toFixed(digits)}%`;
 
@@ -66,13 +70,15 @@ export function fmtCountdown(sec: number): string {
   return d > 0 ? `${d}d ${hms}` : hms;
 }
 
-/** Unix epoch -> short local date-time (used for absolute timestamps like submit). */
+/** Unix epoch -> short cluster-local date-time, 24h (matches fmtAt's zone/format). */
 export const fmtEpoch = (ts: number) =>
   ts
     ? new Date(ts * 1000).toLocaleString(undefined, {
+        timeZone: CLUSTER_TIME_ZONE,
         month: "2-digit",
         day: "2-digit",
         hour: "2-digit",
         minute: "2-digit",
+        hour12: false,
       })
     : "—";

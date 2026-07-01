@@ -41,7 +41,7 @@ export default function JobsPage() {
   const facets: DataFacet<JobTableRow>[] = [
     { columnId: "resource_pool", label: t("jobs.filter.resource"), valueLabel: (v) => resourceLabel(v, snap, t) },
     { columnId: "state", label: t("jobs.filter.state"), valueLabel: (v) => stateLabel(v, t) },
-    { columnId: "partition", label: t("col.partition") },
+    { columnId: "partition", label: t("col.partition"), valuesFromRow: (j) => String(j.partition || "").split(",").filter(Boolean) },
     { columnId: "user_name", label: t("col.user") },
   ];
 

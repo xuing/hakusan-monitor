@@ -16,6 +16,13 @@ export function connectLive({ onSnapshot, onStatus }: LiveHandlers): () => void 
   let pollTimer: ReturnType<typeof setInterval> | null = null;
   let gotData = false;
 
+  const stopPolling = () => {
+    if (pollTimer) {
+      clearInterval(pollTimer);
+      pollTimer = null;
+    }
+  };
+
   const startPolling = () => {
     if (pollTimer || closed) return;
     const tick = async () => {
@@ -39,6 +46,7 @@ export function connectLive({ onSnapshot, onStatus }: LiveHandlers): () => void 
     es.onmessage = (e) => {
       if (closed) return;
       gotData = true;
+      stopPolling(); // SSE is back — drop the safety-net poller
       onStatus("live");
       try {
         onSnapshot(JSON.parse(e.data) as Snapshot);
@@ -49,10 +57,11 @@ export function connectLive({ onSnapshot, onStatus }: LiveHandlers): () => void 
     es.onerror = () => {
       if (closed) return;
       onStatus(gotData ? "reconnecting" : "offline");
-      if (!gotData) {
-        es?.close();
-        startPolling(); // SSE blocked (e.g. proxy) -> poll instead
-      }
+      // Poll regardless: EventSource never recovers from non-200 responses
+      // (e.g. the server's SSE connection cap), so without this the page would
+      // sit on "reconnecting" forever while /api/snapshot works fine.
+      if (!gotData) es?.close();
+      startPolling();
     };
   }
 

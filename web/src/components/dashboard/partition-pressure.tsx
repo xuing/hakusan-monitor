@@ -75,7 +75,8 @@ function requestableNow(p: Partition, cap: PartitionCap, isGpu: boolean, pc: Poo
     return { n: Math.min(cap.maxGpus ?? free, free), unit: "gpu", capped: false };
   }
   if ((cap.maxNodes ?? 1) > 1) {
-    return { n: pc.idleNodes, unit: "nodes", capped: false };
+    // never advertise more nodes than the partition's policy allows per job
+    return { n: Math.min(cap.maxNodes ?? pc.idleNodes, pc.idleNodes), unit: "nodes", capped: false };
   }
   const limit = cap.maxCores ?? pc.emptiestNodeFree;
   const n = Math.min(limit, pc.emptiestNodeFree);
@@ -111,7 +112,17 @@ export function PartitionPressure() {
   const { snap } = useLive();
   const { filter } = useResourceFilter();
   const t = useT();
-  if (!snap) return null;
+  if (!snap) {
+    return (
+      <SectionCard bodyClassName="pt-4">
+        <div className="space-y-3">
+          {Array.from({ length: 4 }, (_, i) => (
+            <div key={i} className="h-16 animate-pulse rounded-lg bg-muted/40" />
+          ))}
+        </div>
+      </SectionCard>
+    );
+  }
 
   const matched = snap.partitions.filter((p) => matchPartition(p, filter));
   // Group by hardware pool; app-specific partitions remain under the same pool.
@@ -130,7 +141,7 @@ export function PartitionPressure() {
   );
 
   return (
-    <SectionCard title={t("section.partitions")} extra={`${matched.length} · ${t("part.requestNow")}`}>
+    <SectionCard bodyClassName="pt-4">
       {partitionGroups.length === 0 ? (
         <Empty>—</Empty>
       ) : (
@@ -426,7 +437,7 @@ function PartitionRow({
     !maint && (probeState === "queued" || probeState === "failed")
       ? heroHasEstimate
         ? t("pool.cpuProbeStart", { time: clockOf(cpuProbe!.probe!.start_time) })
-        : partitionCpuProbeLabel(probeState, t)
+        : "—" // the status Tag on the right already says queued/failed — don't repeat it here
       : null;
   // "Available" reads wrong next to a queued/failed verdict — swap to a fitting label,
   // or drop the label entirely when the override text already speaks for itself.

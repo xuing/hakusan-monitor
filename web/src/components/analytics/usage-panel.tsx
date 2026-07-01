@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { ChartPlaceholder } from "@/components/common/chart-placeholder";
 import { Empty } from "@/components/common/empty";
 import { HoverHint } from "@/components/common/hover-hint";
 import { SectionCard } from "@/components/common/section-card";
@@ -6,14 +7,13 @@ import { useApi } from "@/hooks/use-api";
 import { useT, type TFn } from "@/i18n";
 import type { TranslationKey } from "@/i18n/en";
 import { api } from "@/lib/api";
-import { pct } from "@/lib/format";
+import { CLUSTER_TIME_ZONE, pct } from "@/lib/format";
 import { heatColor } from "@/lib/slurm";
 import { cn } from "@/lib/utils";
 import type { UsageCell, UsageHour } from "@/types/snapshot";
 
 const DAYS = 30;
 const WEEK_ORDER = [1, 2, 3, 4, 5, 6, 0]; // Mon … Sun
-const CLUSTER_TIME_ZONE = "Asia/Tokyo";
 const LOW_SAMPLE_COUNT = 3;
 
 type UsageMetric = "gpu" | "cpu" | "pending";
@@ -23,7 +23,7 @@ const METRICS: UsageMetric[] = ["gpu", "cpu", "pending"];
 export function UsagePanel() {
   const t = useT();
   const [metric, setMetric] = useState<UsageMetric>("gpu");
-  const { data } = useApi(() => api.usage(DAYS), DAYS, 5 * 60_000);
+  const { data, loading, error } = useApi(() => api.usage(DAYS), DAYS, 5 * 60_000);
 
   const stats = useMemo(() => {
     const rows = data?.by_hour.filter((h) => h.samples > 0) ?? [];
@@ -51,7 +51,11 @@ export function UsagePanel() {
       }
       extra={data ? coverageText(data, t) : t("usage.lead", { n: DAYS })}
     >
-      {!data || data.total_hours === 0 ? (
+      {!data && loading ? (
+        <ChartPlaceholder className="h-64" />
+      ) : !data && error ? (
+        <Empty>{t("common.fetchError")}</Empty>
+      ) : !data || data.total_hours === 0 ? (
         <Empty>{t("usage.nodata")}</Empty>
       ) : (
         <div className="space-y-4">
@@ -75,7 +79,7 @@ export function UsagePanel() {
                 </button>
               ))}
             </div>
-            <span className="text-[11px] text-muted-foreground">{dateRangeText(data.since, data.until)}</span>
+            <span className="text-[11px] text-muted-foreground">{dateRangeText(data.since, data.until, data.timezone)}</span>
           </div>
 
           <div className="grid gap-2 sm:grid-cols-2">
@@ -263,8 +267,10 @@ function coverageText(data: { days: number; total_hours: number; total_samples: 
   });
 }
 
-function dateRangeText(since: number, until: number) {
-  if (!since || !until) return "JST";
+function dateRangeText(since: number, until: number, timezone?: string) {
+  // hour buckets are computed in the backend's zone — label with what it reports
+  const tzLabel = timezone && timezone !== "localtime" ? timezone : CLUSTER_TIME_ZONE;
+  if (!since || !until) return tzLabel;
   const fmt = (ts: number) =>
     new Date(ts * 1000).toLocaleString(undefined, {
       timeZone: CLUSTER_TIME_ZONE,
@@ -272,6 +278,7 @@ function dateRangeText(since: number, until: number) {
       day: "2-digit",
       hour: "2-digit",
       minute: "2-digit",
+      hour12: false,
     });
-  return `${fmt(since)} - ${fmt(until)} JST`;
+  return `${fmt(since)} - ${fmt(until)} · ${tzLabel}`;
 }
