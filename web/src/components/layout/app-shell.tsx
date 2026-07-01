@@ -15,7 +15,7 @@ export function AppShell() {
 
       <div className="flex min-h-svh flex-col lg:pl-60">
         <Topbar />
-        <main className="mx-auto w-full max-w-[1440px] flex-1 animate-fade-in px-4 py-6">
+        <main className="mx-auto w-full max-w-[1920px] flex-1 animate-fade-in px-4 py-6">
           <Outlet />
         </main>
         <AppFooter />

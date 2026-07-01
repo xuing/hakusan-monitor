@@ -7,7 +7,7 @@ export function AppFooter() {
   const t = useT();
 
   return (
-    <footer className="mx-auto flex max-w-[1440px] flex-wrap items-center justify-between gap-3 border-t border-border px-4 py-4 text-xs text-muted-foreground">
+    <footer className="mx-auto flex w-full max-w-[1920px] flex-wrap items-center justify-between gap-3 border-t border-border px-4 py-4 text-xs text-muted-foreground">
       <span>{t("footer.disclaimer")}</span>
       <span className="flex items-center gap-3">
         <a className="text-foreground/70 hover:underline" href={GITHUB_URL} target="_blank" rel="noreferrer">
