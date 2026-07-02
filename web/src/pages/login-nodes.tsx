@@ -17,7 +17,7 @@ import {
 import { useApi } from "@/hooks/use-api";
 import { useT } from "@/i18n";
 import { api } from "@/lib/api";
-import { fmtDur, pct } from "@/lib/format";
+import { fmtDur, fmtEpoch, pct } from "@/lib/format";
 import type { Tone } from "@/lib/slurm";
 import type {
   LoginHistoryPoint,
@@ -147,7 +147,12 @@ function NodePanel({ node }: { node: LoginNode }) {
           <AlertTriangle className="mt-0.5 h-4 w-4 text-bad-fg" />
           <div>
             <div className="text-sm font-medium text-bad-fg">{node.error || t("login.unavailable")}</div>
-            <div className="mt-1 text-xs text-muted-foreground">{t("login.nodeRetry")}</div>
+            <div className="mt-1 text-xs text-muted-foreground">
+              {(node.fail_count ?? 0) > 0 && (
+                <>{t("login.failStreak", { n: node.fail_count!, time: fmtEpoch(node.sampled_at) })} · </>
+              )}
+              {t("login.nodeRetry")}
+            </div>
           </div>
         </div>
       </SectionCard>

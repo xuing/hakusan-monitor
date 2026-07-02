@@ -132,6 +132,8 @@ class Engine:
         self.max_sse = cfg["max_sse"]
         self.latest = None
         self.error = None
+        self.fail_count = 0     # consecutive failed sample cycles
+        self.last_fail_at = 0
         self.sing_version = None
         self.login_nodes = None
         self._subs = set()
@@ -173,6 +175,7 @@ class Engine:
             snap["jobs"] = jobs
             self.latest = snap
             self.error = None
+            self.fail_count = 0
             self._ready.set()
             self.store.record(snap, int(now))
             self._n += 1
@@ -194,10 +197,14 @@ class Engine:
             return snap
         except Exception as e:
             self.error = str(e)
+            self.fail_count += 1
+            self.last_fail_at = int(now)
             if self.latest is not None:           # keep serving stale data
-                self.latest = {**self.latest, "stale": True, "error": str(e)}
+                self.latest = {**self.latest, "stale": True, "error": str(e),
+                               "fail_count": self.fail_count,
+                               "last_fail_at": self.last_fail_at}
                 self._broadcast(self.latest)
-            print(f"collect failed: {self.error}", flush=True)
+            print(f"collect failed ({self.fail_count}x): {self.error}", flush=True)
             return None
 
     def run(self):
@@ -206,16 +213,19 @@ class Engine:
             time.sleep(self.cfg["interval"])
 
     def snapshot(self):
-        # Wait briefly for the background sampler's first result before triggering
-        # our own fetch — avoids a duplicate query on the login node.
+        # Wait briefly for the background sampler's first result, then give up
+        # with a fast 503. NEVER collect in the request thread: a slow login node
+        # would hold page requests for minutes, and with lazy-loaded routes even
+        # route switches hang once the browser's per-origin pool fills up.
         if self.latest is None:
-            self._ready.wait(timeout=12)
+            self._ready.wait(timeout=8)
         if self.latest is None:
-            self.sample_once()
-        if self.latest is None:
-            raise RuntimeError(self.error or "no data yet")
+            raise RuntimeError(self.error or "warming up — first sample is still collecting")
         s = dict(self.latest)
         s["age_s"] = round(time.time() - s.get("generated_at", time.time()), 1)
+        s["fail_count"] = self.fail_count
+        if self.last_fail_at:
+            s["last_fail_at"] = self.last_fail_at
         return s
 
     # ---- SSE pub/sub ----

@@ -53,6 +53,7 @@ export function LiveIndicator() {
         // it visible on phones too (it's short enough to fit)
         <span className={cn(stale && "text-warn-fg")}>
           {updated} {agoText(t, age)}
+          {stale && (snap?.fail_count ?? 0) > 0 && <> · {t("live.retryCount", { n: snap!.fail_count! })}</>}
         </span>
       )}
     </div>

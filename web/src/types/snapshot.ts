@@ -220,6 +220,9 @@ export interface Snapshot {
   source: string;
   stale: boolean;
   error?: string;
+  /** consecutive failed sample cycles (0 when healthy) */
+  fail_count?: number;
+  last_fail_at?: number;
 }
 
 export interface ContainerInfo {
@@ -416,6 +419,7 @@ export interface LoginNode {
   ok: boolean;
   sampled_at: number;
   error?: string;
+  fail_count?: number;
   cores?: number;
   load?: { "1m": number; "5m": number; "15m": number; per_core: number };
   cpu?: { busy: number | null; iowait: number | null };

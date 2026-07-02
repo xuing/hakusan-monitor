@@ -320,6 +320,7 @@ class LoginNodeCollector:
         self.mask_users = mask_users
         self.latest = None
         self.error = None
+        self._fails = {}   # node id -> consecutive failed samples
 
     def fetch(self, now=None):
         now = int(now or time.time())
@@ -370,10 +371,16 @@ class LoginNodeCollector:
             for fut in as_completed(futs):
                 name, target = futs[fut]
                 try:
-                    nodes.append(fut.result())
+                    node = fut.result()
                 except Exception as e:
-                    nodes.append({"id": name, "target": target, "ok": False,
-                                  "sampled_at": now, "error": str(e)})
+                    node = {"id": name, "target": target, "ok": False,
+                            "sampled_at": now, "error": str(e)}
+                if node.get("ok"):
+                    self._fails.pop(name, None)
+                else:
+                    self._fails[name] = self._fails.get(name, 0) + 1
+                    node["fail_count"] = self._fails[name]
+                nodes.append(node)
         nodes.sort(key=lambda n: n["id"])
         return {"generated_at": now, "interval": self.interval, "configured": True,
                 "nodes": nodes, "stale": False}
