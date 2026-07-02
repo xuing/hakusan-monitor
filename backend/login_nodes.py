@@ -181,26 +181,6 @@ def _procs(text, show_args):
     return [p for p in (_proc(line, show_args) for line in text.splitlines()) if p]
 
 
-def _users(text, mask_users):
-    users = []
-    for line in text.splitlines():
-        p = line.split()
-        if len(p) < 5:
-            continue
-        user = p[0]
-        if mask_users:
-            user = (user[:2] + "***") if len(user) > 2 else "***"
-        users.append({
-            "user": user,
-            "cpu_pct": _float(p[1]),
-            "mem_pct": _float(p[2]),
-            "rss": _int(p[3]) * 1024,
-            "processes": _int(p[4]),
-        })
-    users.sort(key=lambda x: (-x["cpu_pct"], -x["rss"]))
-    return users
-
-
 def _users_from_procs(procs):
     agg = defaultdict(lambda: {"cpu_pct": 0.0, "mem_pct": 0.0, "rss": 0, "processes": 0})
     for proc in procs:

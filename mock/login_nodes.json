@@ -11,8 +11,16 @@
       "ok": true,
       "sampled_at": 0,
       "cores": 32,
-      "load": { "1m": 18.42, "5m": 16.8, "15m": 12.1, "per_core": 0.5756 },
-      "cpu": { "busy": 0.62, "iowait": 0.04 },
+      "load": {
+        "1m": 18.42,
+        "5m": 16.8,
+        "15m": 12.1,
+        "per_core": 0.5756
+      },
+      "cpu": {
+        "busy": 0.62,
+        "iowait": 0.04
+      },
       "memory": {
         "total": 270379286528,
         "available": 149562015744,
@@ -51,20 +59,77 @@
       "processes": {
         "d_state": 1,
         "top_cpu": [
-          { "pid": 18422, "user": "st***", "stat": "R", "cpu_pct": 285.4, "mem_pct": 2.8, "rss": 7516192768, "elapsed_s": 1260, "command": "python", "args": "" },
-          { "pid": 20113, "user": "ab***", "stat": "R", "cpu_pct": 96.1, "mem_pct": 0.6, "rss": 1610612736, "elapsed_s": 320, "command": "gcc", "args": "" }
+          {
+            "pid": 18422,
+            "user": "st***",
+            "stat": "R",
+            "cpu_pct": 285.4,
+            "mem_pct": 2.8,
+            "rss": 7516192768,
+            "elapsed_s": 1260,
+            "command": "python",
+            "args": ""
+          },
+          {
+            "pid": 20113,
+            "user": "ab***",
+            "stat": "R",
+            "cpu_pct": 96.1,
+            "mem_pct": 0.6,
+            "rss": 1610612736,
+            "elapsed_s": 320,
+            "command": "gcc",
+            "args": ""
+          }
         ],
         "top_mem": [
-          { "pid": 18422, "user": "st***", "stat": "R", "cpu_pct": 285.4, "mem_pct": 2.8, "rss": 7516192768, "elapsed_s": 1260, "command": "python", "args": "" },
-          { "pid": 17770, "user": "mn***", "stat": "S", "cpu_pct": 12.0, "mem_pct": 1.9, "rss": 5100273664, "elapsed_s": 8700, "command": "java", "args": "" }
+          {
+            "pid": 18422,
+            "user": "st***",
+            "stat": "R",
+            "cpu_pct": 285.4,
+            "mem_pct": 2.8,
+            "rss": 7516192768,
+            "elapsed_s": 1260,
+            "command": "python",
+            "args": ""
+          },
+          {
+            "pid": 17770,
+            "user": "mn***",
+            "stat": "S",
+            "cpu_pct": 12.0,
+            "mem_pct": 1.9,
+            "rss": 5100273664,
+            "elapsed_s": 8700,
+            "command": "java",
+            "args": ""
+          }
         ]
       },
       "users": [
-        { "user": "st***", "cpu_pct": 292.0, "mem_pct": 3.1, "rss": 8321499136, "processes": 8 },
-        { "user": "ab***", "cpu_pct": 104.3, "mem_pct": 0.9, "rss": 2415919104, "processes": 5 },
-        { "user": "mn***", "cpu_pct": 18.0, "mem_pct": 2.2, "rss": 5905580032, "processes": 12 }
-      ],
-      "pressure": { "score": 0.5, "level": "moderate", "reasons": ["disk max 84%"] }
+        {
+          "user": "st***",
+          "cpu_pct": 292.0,
+          "mem_pct": 3.1,
+          "rss": 8321499136,
+          "processes": 8
+        },
+        {
+          "user": "ab***",
+          "cpu_pct": 104.3,
+          "mem_pct": 0.9,
+          "rss": 2415919104,
+          "processes": 5
+        },
+        {
+          "user": "mn***",
+          "cpu_pct": 18.0,
+          "mem_pct": 2.2,
+          "rss": 5905580032,
+          "processes": 12
+        }
+      ]
     },
     {
       "id": "hakusan2",
@@ -73,8 +138,16 @@
       "ok": true,
       "sampled_at": 0,
       "cores": 32,
-      "load": { "1m": 45.73, "5m": 38.2, "15m": 28.5, "per_core": 1.4291 },
-      "cpu": { "busy": 0.91, "iowait": 0.13 },
+      "load": {
+        "1m": 45.73,
+        "5m": 38.2,
+        "15m": 28.5,
+        "per_core": 1.4291
+      },
+      "cpu": {
+        "busy": 0.91,
+        "iowait": 0.13
+      },
       "memory": {
         "total": 270379286528,
         "available": 21474836480,
@@ -113,26 +186,99 @@
       "processes": {
         "d_state": 6,
         "top_cpu": [
-          { "pid": 22903, "user": "xy***", "stat": "R", "cpu_pct": 710.2, "mem_pct": 9.8, "rss": 26306674688, "elapsed_s": 4920, "command": "python", "args": "" },
-          { "pid": 23011, "user": "xy***", "stat": "R", "cpu_pct": 388.0, "mem_pct": 4.1, "rss": 11081015603, "elapsed_s": 4700, "command": "python", "args": "" },
-          { "pid": 24001, "user": "zz***", "stat": "D", "cpu_pct": 28.4, "mem_pct": 1.5, "rss": 4026531840, "elapsed_s": 910, "command": "rsync", "args": "" }
+          {
+            "pid": 22903,
+            "user": "xy***",
+            "stat": "R",
+            "cpu_pct": 710.2,
+            "mem_pct": 9.8,
+            "rss": 26306674688,
+            "elapsed_s": 4920,
+            "command": "python",
+            "args": ""
+          },
+          {
+            "pid": 23011,
+            "user": "xy***",
+            "stat": "R",
+            "cpu_pct": 388.0,
+            "mem_pct": 4.1,
+            "rss": 11081015603,
+            "elapsed_s": 4700,
+            "command": "python",
+            "args": ""
+          },
+          {
+            "pid": 24001,
+            "user": "zz***",
+            "stat": "D",
+            "cpu_pct": 28.4,
+            "mem_pct": 1.5,
+            "rss": 4026531840,
+            "elapsed_s": 910,
+            "command": "rsync",
+            "args": ""
+          }
         ],
         "top_mem": [
-          { "pid": 22903, "user": "xy***", "stat": "R", "cpu_pct": 710.2, "mem_pct": 9.8, "rss": 26306674688, "elapsed_s": 4920, "command": "python", "args": "" },
-          { "pid": 23011, "user": "xy***", "stat": "R", "cpu_pct": 388.0, "mem_pct": 4.1, "rss": 11081015603, "elapsed_s": 4700, "command": "python", "args": "" },
-          { "pid": 21610, "user": "lm***", "stat": "S", "cpu_pct": 4.2, "mem_pct": 7.2, "rss": 19327352832, "elapsed_s": 21800, "command": "matlab", "args": "" }
+          {
+            "pid": 22903,
+            "user": "xy***",
+            "stat": "R",
+            "cpu_pct": 710.2,
+            "mem_pct": 9.8,
+            "rss": 26306674688,
+            "elapsed_s": 4920,
+            "command": "python",
+            "args": ""
+          },
+          {
+            "pid": 23011,
+            "user": "xy***",
+            "stat": "R",
+            "cpu_pct": 388.0,
+            "mem_pct": 4.1,
+            "rss": 11081015603,
+            "elapsed_s": 4700,
+            "command": "python",
+            "args": ""
+          },
+          {
+            "pid": 21610,
+            "user": "lm***",
+            "stat": "S",
+            "cpu_pct": 4.2,
+            "mem_pct": 7.2,
+            "rss": 19327352832,
+            "elapsed_s": 21800,
+            "command": "matlab",
+            "args": ""
+          }
         ]
       },
       "users": [
-        { "user": "xy***", "cpu_pct": 1114.0, "mem_pct": 14.5, "rss": 38923141120, "processes": 9 },
-        { "user": "zz***", "cpu_pct": 33.0, "mem_pct": 2.1, "rss": 5637144576, "processes": 4 },
-        { "user": "lm***", "cpu_pct": 8.5, "mem_pct": 7.9, "rss": 21260088115, "processes": 6 }
-      ],
-      "pressure": {
-        "score": 1.0,
-        "level": "critical",
-        "reasons": ["load/core 1.43", "CPU busy 91%", "iowait 13%", "memory available 8%", "swap used 50%", "inode max 94%"]
-      }
+        {
+          "user": "xy***",
+          "cpu_pct": 1114.0,
+          "mem_pct": 14.5,
+          "rss": 38923141120,
+          "processes": 9
+        },
+        {
+          "user": "zz***",
+          "cpu_pct": 33.0,
+          "mem_pct": 2.1,
+          "rss": 5637144576,
+          "processes": 4
+        },
+        {
+          "user": "lm***",
+          "cpu_pct": 8.5,
+          "mem_pct": 7.9,
+          "rss": 21260088115,
+          "processes": 6
+        }
+      ]
     }
   ]
 }

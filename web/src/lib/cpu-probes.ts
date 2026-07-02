@@ -1,7 +1,5 @@
 import type { CpuSubmitProbe, Pool, Snapshot } from "@/types/snapshot";
 
-export const CPU_POLICY_ORDER = ["TINY", "DEF", "SINGLE", "SMALL", "LARGE", "XLARGE", "X2LARGE", "LONG", "LONG-L"];
-
 export type CpuProbeState = "now" | "queued" | "failed" | "unknown";
 
 export interface CpuProbeRow {
@@ -11,29 +9,27 @@ export interface CpuProbeRow {
   command: string;
 }
 
+/** Probe rows for the partitions of one pool, in the backend's test order.
+ * The backend (sources.CPU_TEST_PARTITIONS) decides which partitions get
+ * probed — no second copy of that list lives here. */
 export function cpuProbeRows(pool: Pool, snap: Snapshot): CpuProbeRow[] {
-  const raw = snap.cpu_submit_probes ?? [];
-  if (raw.length === 0) return [];
-  const probes = new Map(raw.map((probe) => [probe.partition, probe]));
-  return CPU_POLICY_ORDER
-    .filter((partition) => pool.partitions.includes(partition))
-    .map((partition) => cpuProbeRow(partition, probes.get(partition) ?? null));
+  return (snap.cpu_submit_probes ?? [])
+    .filter((probe) => pool.partitions.includes(probe.partition))
+    .map((probe) => cpuProbeRow(probe.partition, probe));
 }
 
 export function cpuProbeRow(partition: string, probe: CpuSubmitProbe | null): CpuProbeRow {
-  const cores = probe?.processors || cpuDefaultCores(partition);
   return {
     partition,
     probe,
-    cores,
+    cores: probe?.processors || 0,
     command: `salloc -p ${partition}`,
   };
 }
 
 export function cpuProbeForPartition(snap: Snapshot, partition: string): CpuProbeRow | null {
-  if ((snap.cpu_submit_probes ?? []).length === 0) return null;
   const probe = (snap.cpu_submit_probes ?? []).find((item) => item.partition === partition) ?? null;
-  return probe || CPU_POLICY_ORDER.includes(partition) ? cpuProbeRow(partition, probe) : null;
+  return probe ? cpuProbeRow(partition, probe) : null;
 }
 
 export function cpuProbeState(probe: CpuSubmitProbe | null, generatedAt: number): CpuProbeState {
@@ -48,8 +44,4 @@ export function cleanCpuProbeRaw(raw: string) {
     .replace(/\bsbatch:\s*/g, "")
     .replace(/\s+/g, " ")
     .trim();
-}
-
-function cpuDefaultCores(partition: string) {
-  return ["SMALL", "LARGE", "XLARGE", "X2LARGE", "LONG-L"].includes(partition) ? 256 : 16;
 }

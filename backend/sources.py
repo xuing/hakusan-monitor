@@ -20,6 +20,11 @@ try:
 except Exception:          # unknown TZ name / missing tzdata -> host localtime
     CLUSTER_TZ = None
 
+try:                       # flat import when run as `python3 backend/server.py`
+    from cluster_policy import BUILTIN_PARTITION_CAPS, BUILTIN_PARTITION_POLICIES
+except ImportError:        # package import in tests (`from backend.sources import …`)
+    from backend.cluster_policy import BUILTIN_PARTITION_CAPS, BUILTIN_PARTITION_POLICIES
+
 MARK = "@@HM@@"
 SEP = "|@|"   # field separator unlikely to occur in any value (e.g. job names)
 # order matters — see parse_queue()
@@ -228,18 +233,32 @@ def parse_partition_policies(text):
 
 
 def build_policy_snapshot(qos_text, partition_text, now, interval):
+    """Merge the live sacctmgr/scontrol policy over the built-in tables.
+
+    The snapshot always carries a complete caps/policies map (builtins fill any
+    gap), so the frontend never needs its own copy of cluster policy. Each
+    partition is tagged live/builtin so staleness is at least observable.
+    """
     qos = parse_qos_policies(qos_text)
     partitions = parse_partition_policies(partition_text)
-    caps = {}
-    policies = {}
+    live_caps = {}
+    live_policies = {}
     for name, part in partitions.items():
         q = qos.get(part.get("qos", ""))
         if not q:
             continue
         if q.get("cap"):
-            caps[name] = q["cap"]
+            live_caps[name] = q["cap"]
         if q.get("policy"):
-            policies[name] = q["policy"]
+            live_policies[name] = q["policy"]
+    caps = {}
+    origins = {}
+    for name in set(BUILTIN_PARTITION_CAPS) | set(live_caps):
+        caps[name] = {**BUILTIN_PARTITION_CAPS.get(name, {}), **live_caps.get(name, {})}
+        origins[name] = "live" if name in live_caps else "builtin"
+    policies = {}
+    for name in set(BUILTIN_PARTITION_POLICIES) | set(live_policies):
+        policies[name] = {**BUILTIN_PARTITION_POLICIES.get(name, {}), **live_policies.get(name, {})}
     return {
         "generated_at": int(now),
         "interval": int(interval),
@@ -247,6 +266,7 @@ def build_policy_snapshot(qos_text, partition_text, now, interval):
         "partitions": partitions,
         "partition_caps": caps,
         "partition_policies": policies,
+        "cap_origin": origins,
     }
 
 
@@ -358,7 +378,10 @@ class Source:
         self.singularity = None
         self.cpu_probes = []
         self.cpu_probe_at = 0
-        self.policy_snapshot = None
+        # start from the built-in tables so every snapshot carries a complete
+        # policy; the first live sacctmgr round overlays it (policy_at=0 keeps
+        # the collection due immediately)
+        self.policy_snapshot = build_policy_snapshot("", "", time.time(), policy_interval)
         self.policy_at = 0
 
     def _exec(self, script, timeout=None):

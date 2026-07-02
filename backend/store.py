@@ -40,8 +40,6 @@ CREATE TABLE IF NOT EXISTS login_samples (
   disk_used_max   REAL,
   inode_used_max  REAL,
   d_state         INTEGER,
-  pressure_score  REAL,
-  pressure_level  TEXT,
   detail          TEXT,
   PRIMARY KEY (ts, node_id)
 );
@@ -129,8 +127,8 @@ class Store:
                     """INSERT OR REPLACE INTO login_samples
                        (ts,node_id,load1,load_per_core,cpu_busy,cpu_iowait,
                         mem_used_ratio,swap_used_ratio,disk_used_max,inode_used_max,
-                        d_state,pressure_score,pressure_level,detail)
-                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                        d_state,detail)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
                     (
                         ts,
                         node.get("id", ""),
@@ -143,10 +141,7 @@ class Store:
                         max((d.get("use_pct", 0) for d in disks), default=0) / 100.0,
                         max((d.get("inode_use_pct", 0) for d in disks), default=0) / 100.0,
                         (node.get("processes") or {}).get("d_state", 0),
-                        (node.get("pressure") or {}).get("score", 0.0),
-                        (node.get("pressure") or {}).get("level", "low"),
                         json.dumps({
-                            "pressure": node.get("pressure"),
                             "io": node.get("io"),
                             "top_cpu": (node.get("processes") or {}).get("top_cpu", []),
                             "top_mem": (node.get("processes") or {}).get("top_mem", []),
@@ -190,7 +185,7 @@ class Store:
         rows = c.execute(
             """SELECT ts,node_id,load1,load_per_core,cpu_busy,cpu_iowait,
                       mem_used_ratio,swap_used_ratio,disk_used_max,inode_used_max,
-                      d_state,pressure_score,pressure_level,
+                      d_state,
                       row_number() OVER (ORDER BY ts,node_id) AS rn
                FROM login_samples WHERE ts BETWEEN ? AND ? ORDER BY ts,node_id""",
             (since, until)).fetchall()

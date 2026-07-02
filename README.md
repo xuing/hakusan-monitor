@@ -187,8 +187,6 @@ npm run lint     # oxlint
 | `GET /api/login-nodes` | current Hakusan login-node health: load, CPU, memory, disk pressure, processes, users |
 | `GET /api/login-nodes/history?hours=24` | down-sampled login-node health history |
 | `GET /api/usage?days=30` | peak/trough by hour-of-day & weekday (local time) |
-| `GET /api/nodes` | full raw node list (every field) — for the Nodes table |
-| `GET /api/jobs` | full raw job list (every field) — for the Jobs table |
 | `GET /api/meta` | cluster, slurm version, container info, partitions |
 | `GET /api/health` | liveness + source + data age |
 

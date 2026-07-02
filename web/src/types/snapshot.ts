@@ -178,6 +178,8 @@ export interface PolicySnapshot {
   interval: number;
   partition_caps: Record<string, DynamicPartitionCap>;
   partition_policies: Record<string, DynamicPartitionPolicy>;
+  /** per-partition provenance: "live" (sacctmgr) or "builtin" (fallback table) */
+  cap_origin?: Record<string, "live" | "builtin">;
   qos?: Record<string, unknown>;
   partitions?: Record<string, unknown>;
 }
@@ -434,7 +436,6 @@ export interface LoginNode {
     d_state: number;
   };
   users?: LoginUser[];
-  pressure?: { score: number; level: PressureLevel; reasons: string[] };
 }
 
 export interface LoginNodesResponse {
@@ -460,6 +461,4 @@ export interface LoginHistoryPoint {
   disk_used_max: number;
   inode_used_max: number;
   d_state: number;
-  pressure_score: number;
-  pressure_level: PressureLevel;
 }

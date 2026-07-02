@@ -133,8 +133,6 @@ class Engine:
         self.latest = None
         self.error = None
         self.sing_version = None
-        self.raw_nodes = []        # full parsed lists for the raw-data tables
-        self.raw_jobs = []
         self.login_nodes = None
         self._subs = set()
         self._lock = threading.Lock()
@@ -152,15 +150,14 @@ class Engine:
         try:
             nodes, squeue = self.src.fetch()
             self.sing_version = self.src.singularity   # captured in the same round trip
-            self.raw_nodes = nodes.get("nodes", [])
+            raw_nodes = nodes.get("nodes", [])
             # Tag each raw node with its hardware pool here — single source of truth;
             # the client reads node.pool instead of re-deriving the name→pool mapping.
-            for nd in self.raw_nodes:
+            for nd in raw_nodes:
                 nd["pool"] = nz.node_pool(nd.get("name", ""))
             jobs = squeue.get("jobs", [])
             if self.cfg["mask_users"]:   # honour the privacy flag in raw data too
                 jobs = [{**j, "user_name": nz.mask_user(j.get("user_name", ""), True)} for j in jobs]
-            self.raw_jobs = jobs
             snap = nz.normalize(nodes, squeue,
                                 slurm_version=self.src.slurm_version(nodes),
                                 mask_users=self.cfg["mask_users"])
@@ -172,8 +169,8 @@ class Engine:
                 snap["policy"] = self.src.policy_snapshot
             # ship the raw data in the same payload — one pull feeds tables,
             # occupancy and the derived dashboard alike (no repeated fetching).
-            snap["nodes"] = self.raw_nodes
-            snap["jobs"] = self.raw_jobs
+            snap["nodes"] = raw_nodes
+            snap["jobs"] = jobs
             self.latest = snap
             self.error = None
             self._ready.set()
@@ -335,12 +332,6 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(200, eng.snapshot())
             except Exception as e:
                 return self._json(503, {"error": str(e), "source": CFG["source"]})
-        if path == "/api/nodes":
-            return self._json(200, {"generated_at": int(time.time()),
-                                    "count": len(eng.raw_nodes), "nodes": eng.raw_nodes})
-        if path == "/api/jobs":
-            return self._json(200, {"generated_at": int(time.time()),
-                                    "count": len(eng.raw_jobs), "jobs": eng.raw_jobs})
         if path == "/api/history":
             hours = query_float(q, "hours", 24, 1, 168)
             until = int(time.time())

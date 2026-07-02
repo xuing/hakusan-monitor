@@ -9,6 +9,7 @@ import { poolLabel, useT, type TFn } from "@/i18n";
 import type { TranslationKey } from "@/i18n/en";
 import { poolCapacity, type PoolCapacity } from "@/lib/derive";
 import { clockOf, fmtMB, nf } from "@/lib/format";
+import { schedulableGpuSlots } from "@/lib/gpu-fit";
 import { cpuProbeForPartition, cpuProbeState, type CpuProbeRow } from "@/lib/cpu-probes";
 import {
   PolicyLimitChips,
@@ -74,10 +75,13 @@ function availableNodes(p: Partition) {
 // multi-node CPU jobs by free *whole* nodes (they need contiguous nodes to start).
 type Hero = { n: number; unit: "cores" | "gpu" | "nodes"; capped: boolean };
 
-function requestableNow(p: Partition, cap: PartitionCap, isGpu: boolean, pc: PoolCapacity): Hero {
+function requestableNow(p: Partition, cap: PartitionCap, isGpu: boolean, pc: PoolCapacity, gpuSchedulable: number | null): Hero {
   if (isGpu) {
     const free = p.gpu?.free ?? 0;
-    return { n: Math.min(cap.maxGpus ?? free, free), unit: "gpu", capped: false };
+    // agree with the Overview verdict: a free GPU stranded on a node whose
+    // leftover CPU/mem can't host the default request is NOT requestable
+    const sched = Math.min(gpuSchedulable ?? free, free);
+    return { n: Math.min(cap.maxGpus ?? sched, sched), unit: "gpu", capped: false };
   }
   if ((cap.maxNodes ?? 1) > 1) {
     // never advertise more nodes than the partition's policy allows per job
@@ -169,6 +173,9 @@ export function PartitionPressure() {
                       isGpu={isGpu}
                       pc={pc}
                       cpuProbeFor={(p) => (!isGpu ? cpuProbeForPartition(snap, p.name) : null)}
+                      gpuSlotsFor={(p) =>
+                        isGpu && pool ? schedulableGpuSlots(snap.nodes, pool, partitionCap(p.name, snap.policy)) : null
+                      }
                       generatedAt={snap.cpu_submit_probes_generated_at || snap.generated_at}
                       policy={snap.policy}
                       t={t}
@@ -182,6 +189,7 @@ export function PartitionPressure() {
                       isGpu={isGpu}
                       pc={pc}
                       cpuProbeFor={(p) => (!isGpu ? cpuProbeForPartition(snap, p.name) : null)}
+                      gpuSlotsFor={() => null}
                       generatedAt={snap.cpu_submit_probes_generated_at || snap.generated_at}
                       policy={snap.policy}
                       t={t}
@@ -210,6 +218,7 @@ function PartitionRows({
   isGpu,
   pc,
   cpuProbeFor,
+  gpuSlotsFor,
   generatedAt,
   policy,
   t,
@@ -220,6 +229,7 @@ function PartitionRows({
   isGpu: boolean;
   pc: PoolCapacity;
   cpuProbeFor: (p: Partition) => CpuProbeRow | null;
+  gpuSlotsFor: (p: Partition) => number | null;
   generatedAt: number;
   policy?: PolicySnapshot;
   t: TFn;
@@ -240,6 +250,7 @@ function PartitionRows({
             isGpu={isGpu}
             pc={pc}
             cpuProbe={cpuProbeFor(p)}
+            gpuSchedulable={gpuSlotsFor(p)}
             generatedAt={generatedAt}
             policy={policy}
             t={t}
@@ -391,6 +402,7 @@ function PartitionRow({
   isGpu,
   pc,
   cpuProbe,
+  gpuSchedulable,
   generatedAt,
   policy,
   t,
@@ -399,6 +411,7 @@ function PartitionRow({
   isGpu: boolean;
   pc: PoolCapacity;
   cpuProbe: CpuProbeRow | null;
+  gpuSchedulable: number | null;
   generatedAt: number;
   policy?: PolicySnapshot;
   t: TFn;
@@ -410,7 +423,7 @@ function PartitionRow({
   const limitRows = policyLimitRows(runtimePolicy, groupRunning, t);
   const groupLimitReached = Boolean(runtimePolicy.grpJobs && groupRunning >= runtimePolicy.grpJobs);
   const cap = partitionCap(p.name, policy);
-  const hero = requestableNow(p, cap, isGpu, pc);
+  const hero = requestableNow(p, cap, isGpu, pc, gpuSchedulable);
   const probeState = cpuProbe ? cpuProbeState(cpuProbe.probe, generatedAt) : null;
   const canRun = !maint && !groupLimitReached && (probeState ? probeState === "now" : hero.n > 0);
   // The hero count is a naive snapshot of idle hardware in the pool — it has no idea about
@@ -462,9 +475,11 @@ function PartitionRow({
                   <CopyButton text={cpuProbe.command} />
                 </span>
               )}
-              <span className="font-mono text-muted-foreground">
-                {t("pool.cpuProbeNeed", { cores: cpuProbe.cores })}
-              </span>
+              {cpuProbe.cores > 0 && (
+                <span className="font-mono text-muted-foreground">
+                  {t("pool.cpuProbeNeed", { cores: cpuProbe.cores })}
+                </span>
+              )}
               <span className="min-w-0 truncate text-muted-foreground">{cpuProbeDetail(cpuProbe, probeState, t)}</span>
             </div>
           )}
