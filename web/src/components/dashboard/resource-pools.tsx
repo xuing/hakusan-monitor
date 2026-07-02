@@ -497,9 +497,12 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
               <div className="text-[10px] leading-relaxed text-muted-foreground">{t("pool.nodeRequestHint")}</div>
             </div>
           )}
-          <div className="flex items-center gap-2 rounded-md border border-border bg-muted/40 px-2.5 py-1.5">
-            <code className="flex-1 overflow-x-auto whitespace-nowrap font-mono text-[11px]">{cmd}</code>
-            <CopyButton text={cmd} label />
+          {/* terminal-styled on purpose (dark in both themes + $ prompt): with no
+              caption around it, the surface itself has to say "run this in a shell" */}
+          <div className="flex items-center gap-2 rounded-md border border-zinc-800 bg-zinc-950 px-2.5 py-1.5">
+            <span aria-hidden className="select-none font-mono text-[11px] text-zinc-500">$</span>
+            <code className="flex-1 overflow-x-auto whitespace-nowrap font-mono text-[11px] text-zinc-100">{cmd}</code>
+            <CopyButton text={cmd} label className="text-zinc-400 hover:bg-white/10 hover:text-zinc-100" />
           </div>
 
           {/* why / limits — explanation reads after the deliverable, not before it */}
