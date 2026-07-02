@@ -391,6 +391,7 @@ class Source:
         # ("user@hakusan2,user@hakusan1") — every cycle tries them in order, so
         # the primary is restored automatically the moment it answers again.
         self.ssh_hosts = [h.strip() for h in str(ssh_host).split(",") if h.strip()]
+        self._host_bad = set()   # hosts whose previous attempt failed
         self.ssh_opts = ssh_opts
         self.mock_dir = mock_dir
         self.timeout = timeout
@@ -415,15 +416,20 @@ class Source:
             return p.stdout
         errors = []
         for host in self.ssh_hosts:
+            # A host that just failed gets a short probe budget instead of the full
+            # timeout: a wedged login node then costs ~20s per cycle (not 90s that
+            # starves the whole sample), while one success restores the full budget.
+            budget = 20 if host in self._host_bad else (timeout or self.timeout)
             cmd = ["ssh", *shlex.split(self.ssh_opts), host, script]
             try:
-                p = subprocess.run(cmd, capture_output=True, text=True,
-                                   timeout=timeout or self.timeout)
+                p = subprocess.run(cmd, capture_output=True, text=True, timeout=budget)
                 if p.returncode == 0:
+                    self._host_bad.discard(host)
                     return p.stdout
                 errors.append(f"{host}: rc={p.returncode} {p.stderr.strip()[:200]}")
             except subprocess.TimeoutExpired:
-                errors.append(f"{host}: timed out after {timeout or self.timeout}s")
+                errors.append(f"{host}: timed out after {budget}s")
+            self._host_bad.add(host)
             # A killed/hung client can leave a detached ControlMaster behind whose
             # wedged connection would poison every later sample — tear it down so
             # the next attempt (fallback host now, primary next cycle) starts clean.
