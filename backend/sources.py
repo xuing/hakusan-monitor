@@ -370,6 +370,10 @@ class Source:
                  policy_interval=86400):
         self.mode = mode
         self.ssh_host = ssh_host
+        # HM_SSH_HOST accepts a comma-separated preference list
+        # ("user@hakusan2,user@hakusan1") — every cycle tries them in order, so
+        # the primary is restored automatically the moment it answers again.
+        self.ssh_hosts = [h.strip() for h in str(ssh_host).split(",") if h.strip()]
         self.ssh_opts = ssh_opts
         self.mock_dir = mock_dir
         self.timeout = timeout
@@ -386,15 +390,35 @@ class Source:
 
     def _exec(self, script, timeout=None):
         """Run a shell snippet on the cluster (ssh) or locally."""
-        if self.mode == "ssh":
-            cmd = ["ssh", *shlex.split(self.ssh_opts), self.ssh_host, script]
-        else:
-            cmd = ["bash", "-lc", script]
-        p = subprocess.run(cmd, capture_output=True, text=True,
-                           timeout=timeout or self.timeout)
-        if p.returncode != 0:
-            raise RuntimeError(f"collect failed rc={p.returncode}: {p.stderr.strip()[:300]}")
-        return p.stdout
+        if self.mode != "ssh":
+            p = subprocess.run(["bash", "-lc", script], capture_output=True, text=True,
+                               timeout=timeout or self.timeout)
+            if p.returncode != 0:
+                raise RuntimeError(f"collect failed rc={p.returncode}: {p.stderr.strip()[:300]}")
+            return p.stdout
+        errors = []
+        for host in self.ssh_hosts:
+            cmd = ["ssh", *shlex.split(self.ssh_opts), host, script]
+            try:
+                p = subprocess.run(cmd, capture_output=True, text=True,
+                                   timeout=timeout or self.timeout)
+                if p.returncode == 0:
+                    return p.stdout
+                errors.append(f"{host}: rc={p.returncode} {p.stderr.strip()[:200]}")
+            except subprocess.TimeoutExpired:
+                errors.append(f"{host}: timed out after {timeout or self.timeout}s")
+            # A killed/hung client can leave a detached ControlMaster behind whose
+            # wedged connection would poison every later sample — tear it down so
+            # the next attempt (fallback host now, primary next cycle) starts clean.
+            self._drop_control_master(host)
+        raise RuntimeError("collect failed on all hosts — " + " | ".join(errors))
+
+    def _drop_control_master(self, host):
+        try:
+            subprocess.run(["ssh", *shlex.split(self.ssh_opts), "-O", "exit", host],
+                           capture_output=True, text=True, timeout=5)
+        except Exception:
+            pass
 
     def _mock(self, name):
         with open(os.path.join(self.mock_dir, name)) as f:
