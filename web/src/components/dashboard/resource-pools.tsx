@@ -204,37 +204,73 @@ function PoolCard({ pool, snap, t }: { pool: Pool; snap: Snapshot; t: TFn }) {
           </span>
         </div>
 
-        {pool.queue.running > 0 && (
-          <>
-            <button
-              type="button"
-              onClick={() => setOpen(!open)}
-              className="mt-3 flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
-            >
-              <ChevronRight className={cn("h-3.5 w-3.5 transition-transform", open && "rotate-90")} />
-              {t("pool.occupants")} ({pool.queue.running})
-            </button>
-            {open && <Occupants pool={pool} t={t} />}
-          </>
-        )}
+        <div className="-mx-2 mt-3 border-t border-border pt-1.5">
+          {pool.queue.running > 0 && (
+            <>
+              <DisclosureRow
+                open={open}
+                onToggle={() => setOpen(!open)}
+                label={t("pool.occupants")}
+                count={pool.queue.running}
+              />
+              {open && (
+                <div className="px-2 pb-1.5">
+                  <Occupants pool={pool} t={t} />
+                </div>
+              )}
+            </>
+          )}
 
-        {pool.queue.pending > 0 && (
-          <>
-            <button
-              type="button"
-              onClick={() => setQueueOpen(!queueOpen)}
-              className="mt-2 flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
-            >
-              <ChevronRight className={cn("h-3.5 w-3.5 transition-transform", queueOpen && "rotate-90")} />
-              {t("pool.pendingJobs")} ({pool.queue.pending})
-            </button>
-            {queueOpen && <PendingJobs pool={pool} t={t} />}
-          </>
-        )}
+          {pool.queue.pending > 0 && (
+            <>
+              <DisclosureRow
+                open={queueOpen}
+                onToggle={() => setQueueOpen(!queueOpen)}
+                label={t("pool.pendingJobs")}
+                count={pool.queue.pending}
+              />
+              {queueOpen && (
+                <div className="px-2 pb-1.5">
+                  <PendingJobs pool={pool} t={t} />
+                </div>
+              )}
+            </>
+          )}
 
-        {!maint && <RequestSample pool={pool} t={t} />}
+          {!maint && <RequestSample pool={pool} t={t} />}
+        </div>
       </CardContent>
     </Card>
+  );
+}
+
+/** Full-width clickable expander row — the one affordance for every
+ *  collapsible section on a pool card (occupants / pending / quick request). */
+function DisclosureRow({
+  open,
+  onToggle,
+  label,
+  count,
+  summary,
+}: {
+  open: boolean;
+  onToggle: () => void;
+  label: string;
+  count?: number;
+  summary?: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      aria-expanded={open}
+      className="flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-left text-xs text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
+    >
+      <ChevronRight className={cn("h-3.5 w-3.5 shrink-0 transition-transform", open && "rotate-90")} />
+      <span className="font-medium text-foreground/85">{label}</span>
+      {count !== undefined && <span className="tnum font-mono">{count}</span>}
+      {summary && <span className="ml-auto flex min-w-0 items-center gap-1.5 pl-2">{summary}</span>}
+    </button>
   );
 }
 
@@ -343,24 +379,28 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
   const partitionGroups = partitionOptionGroups(pool.partitions, t);
   const fieldCls = "h-7 w-full rounded-md border border-border bg-background px-2 text-[11px] outline-none focus:border-primary";
 
+  // Collapsed one-glance verdict for the row: the queue hint where it exists,
+  // otherwise the probe result for the default CPU partition.
+  const selectedProbeState = selectedCpuRow ? cpuProbeState(selectedCpuRow.probe, cpuProbeGeneratedAt) : null;
+  const rowHint = queueHint ?? (selectedProbeState
+    ? { tone: cpuProbeTone(selectedProbeState), label: cpuProbeLabel(selectedProbeState, t), detail: `-p ${partition}` }
+    : null);
+  const rowSummary = !open && rowHint ? (
+    <>
+      <Tag tone={rowHint.tone}>{rowHint.label}</Tag>
+      {(gpuTip || rowHint.detail) && (
+        <span className="min-w-0 truncate text-[10px] text-muted-foreground">
+          {gpuTip ? t("pool.quickGpuMemHint", { mem: gpuTip.mem }) : rowHint.detail}
+        </span>
+      )}
+    </>
+  ) : null;
+
   return (
-    <div className="mt-3 border-t border-border pt-2.5">
-      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-        <button
-          type="button"
-          onClick={() => setOpen(!open)}
-          className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
-        >
-          <ChevronRight className={cn("h-3.5 w-3.5 transition-transform", open && "rotate-90")} />
-          {t("pool.quickRequest")}
-        </button>
-        {cpuRows.length > 0 && <CpuProbeSummary rows={cpuRows} generatedAt={cpuProbeGeneratedAt} t={t} />}
-        {!open && cpuRows.length === 0 && queueHint && (
-          <QuickRequestSummary hint={queueHint} tip={gpuTip} t={t} />
-        )}
-      </div>
+    <>
+      <DisclosureRow open={open} onToggle={() => setOpen(!open)} label={t("pool.quickRequest")} summary={rowSummary} />
       {open && (
-        <div className="mt-2 space-y-2">
+        <div className="space-y-2 px-2 pb-2 pt-0.5">
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
             {pool.partitions.length > 1 && (
               <Field label={t("col.partition")}>
@@ -409,38 +449,6 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
                 <input value={scriptFile} onChange={(e) => setScriptFile(e.target.value)} className={fieldCls} />
               </Field>
             )}
-          </div>
-          <div className="rounded-md border border-border bg-muted/30 px-2.5 py-2">
-            <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-              <span className="text-xs font-medium text-foreground">{policyName}</span>
-              {policyLimit && <span className="font-mono text-[10px] text-muted-foreground">{policyLimit}</span>}
-            </div>
-            {policyDesc && <div className="mt-1 text-[10px] leading-relaxed text-muted-foreground">{policyDesc}</div>}
-            {selectedCpuRow && <CpuProbeInline row={selectedCpuRow} generatedAt={cpuProbeGeneratedAt} t={t} />}
-            {hasAdvancedOverrides && cpuRows.length > 0 && (
-              <div className="mt-1 text-[10px] leading-relaxed text-muted-foreground">{t("pool.cpuProbeDefaultOnly")}</div>
-            )}
-            {multiNodeCpuPolicy && <div className="mt-1 text-[10px] leading-relaxed text-warn-fg">{t("pool.multiNodeHint")}</div>}
-            {queueHint && (!showGpuFitDetails || groupLimitReached) && (
-              <div className="mt-1 flex flex-wrap items-center gap-1 text-[10px]">
-                <Tag tone={queueHint.tone}>{queueHint.label}</Tag>
-                {queueHint.detail && <span className="text-muted-foreground">{queueHint.detail}</span>}
-              </div>
-            )}
-            {showGpuFitDetails && gpuFit && <GpuFitExplanation fit={gpuFit} t={t} />}
-            {gpuTip && (
-              <GpuFitQuickTip
-                tip={gpuTip}
-                applied={memValue === gpuTip.mem}
-                onApply={() => {
-                  setMem(gpuTip.mem);
-                  setAdvanced(true);
-                }}
-                t={t}
-              />
-            )}
-            <PolicyLimitChips rows={limits} />
-            {groupLimitReached && <div className="mt-1 text-[10px] leading-relaxed text-bad-fg">{t("pool.limitReached")}</div>}
           </div>
           <button
             type="button"
@@ -493,9 +501,43 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
             <code className="flex-1 overflow-x-auto whitespace-nowrap font-mono text-[11px]">{cmd}</code>
             <CopyButton text={cmd} label />
           </div>
+
+          {/* why / limits — explanation reads after the deliverable, not before it */}
+          <div className="rounded-md border border-border bg-muted/30 px-2.5 py-2">
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+              <span className="text-xs font-medium text-foreground">{policyName}</span>
+              {queueHint && (!showGpuFitDetails || groupLimitReached) && (
+                <Tag tone={queueHint.tone}>{queueHint.label}</Tag>
+              )}
+              {policyLimit && <span className="font-mono text-[10px] text-muted-foreground">{policyLimit}</span>}
+            </div>
+            {policyDesc && <div className="mt-1 text-[10px] leading-relaxed text-muted-foreground">{policyDesc}</div>}
+            {queueHint?.detail && (!showGpuFitDetails || groupLimitReached) && (
+              <div className="mt-1 text-[10px] leading-relaxed text-muted-foreground">{queueHint.detail}</div>
+            )}
+            {selectedCpuRow && <CpuProbeInline row={selectedCpuRow} generatedAt={cpuProbeGeneratedAt} t={t} />}
+            {hasAdvancedOverrides && cpuRows.length > 0 && (
+              <div className="mt-1 text-[10px] leading-relaxed text-muted-foreground">{t("pool.cpuProbeDefaultOnly")}</div>
+            )}
+            {multiNodeCpuPolicy && <div className="mt-1 text-[10px] leading-relaxed text-warn-fg">{t("pool.multiNodeHint")}</div>}
+            {showGpuFitDetails && gpuFit && <GpuFitExplanation fit={gpuFit} t={t} />}
+            {gpuTip && (
+              <GpuFitQuickTip
+                tip={gpuTip}
+                applied={memValue === gpuTip.mem}
+                onApply={() => {
+                  setMem(gpuTip.mem);
+                  setAdvanced(true);
+                }}
+                t={t}
+              />
+            )}
+            <PolicyLimitChips rows={limits} />
+            {groupLimitReached && <div className="mt-1 text-[10px] leading-relaxed text-bad-fg">{t("pool.limitReached")}</div>}
+          </div>
         </div>
       )}
-    </div>
+    </>
   );
 }
 
@@ -661,27 +703,6 @@ function partitionRunningJobs(jobs: RawJob[], partition: string) {
   return groupRunning;
 }
 
-function QuickRequestSummary({
-  hint,
-  tip,
-  t,
-}: {
-  hint: NonNullable<ReturnType<typeof requestQueueHint>>;
-  tip: GpuFitTipData | null;
-  t: TFn;
-}) {
-  return (
-    <span className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[10px]">
-      <Tag tone={hint.tone}>{hint.label}</Tag>
-      {tip ? (
-        <span className="text-muted-foreground">{t("pool.quickGpuMemHint", { mem: tip.mem })}</span>
-      ) : hint.detail ? (
-        <span className="max-w-[22rem] truncate text-muted-foreground">{hint.detail}</span>
-      ) : null}
-    </span>
-  );
-}
-
 function GpuFitQuickTip({
   tip,
   applied,
@@ -730,43 +751,6 @@ function partitionOptionGroups(partitions: string[], t: TFn) {
     groups.push({ key: "materials-studio", label: t("part.materialsStudioGroup"), items: materials });
   }
   return groups;
-}
-
-function CpuProbeSummary({ rows, generatedAt, t }: { rows: CpuProbeRow[]; generatedAt: number; t: TFn }) {
-  const byState = rows.reduce(
-    (acc, row) => {
-      acc[cpuProbeState(row.probe, generatedAt)].push(row.partition);
-      return acc;
-    },
-    { now: [] as string[], queued: [] as string[], failed: [] as string[], unknown: [] as string[] },
-  );
-  return (
-    <span className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[10px]">
-      <span className="text-muted-foreground">{t("pool.cpuProbeTitle")}:</span>
-      {byState.now.length > 0 ? (
-        <span className="text-ok-fg">
-          {t("pool.cpuProbeNow")} {byState.now.join(", ")}
-        </span>
-      ) : (
-        <span className="text-warn-fg">{t("pool.cpuProbeNoImmediate")}</span>
-      )}
-      {byState.queued.length > 0 && (
-        <span className="text-warn-fg">
-          {t("pool.cpuProbeQueued")} {byState.queued.join(", ")}
-        </span>
-      )}
-      {byState.failed.length > 0 && (
-        <span className="text-bad-fg">
-          {t("pool.cpuProbeFailed")} {byState.failed.join(", ")}
-        </span>
-      )}
-      {byState.unknown.length > 0 && (
-        <span className="text-muted-foreground">
-          {t("pool.cpuProbeNoData")} {byState.unknown.join(", ")}
-        </span>
-      )}
-    </span>
-  );
 }
 
 function cpuOptionLabel(partition: string, rows: CpuProbeRow[], generatedAt: number, t: TFn) {
