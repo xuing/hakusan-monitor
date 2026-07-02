@@ -450,6 +450,52 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
               </Field>
             )}
           </div>
+          {/* terminal-styled on purpose (dark in both themes + $ prompt): with no
+              caption around it, the surface itself has to say "run this in a shell" */}
+          <div className="flex items-center gap-2 rounded-md border border-zinc-800 bg-zinc-950 px-2.5 py-1.5">
+            <span aria-hidden className="select-none font-mono text-[11px] text-zinc-500">$</span>
+            <code className="flex-1 overflow-x-auto whitespace-nowrap font-mono text-[11px] text-zinc-100">{cmd}</code>
+            <CopyButton text={cmd} label className="text-zinc-400 hover:bg-white/10 hover:text-zinc-100" />
+          </div>
+
+          {/* why / limits — explanation reads after the deliverable, not before it */}
+          <div className="rounded-md border border-border bg-muted/30 px-2.5 py-2">
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+              <span className="text-xs font-medium text-foreground">{policyName}</span>
+              {queueHint && (!showGpuFitDetails || groupLimitReached) && (
+                <Tag tone={queueHint.tone}>{queueHint.label}</Tag>
+              )}
+              {policyLimit && <span className="font-mono text-[10px] text-muted-foreground">{policyLimit}</span>}
+            </div>
+            {policyDesc && <div className="mt-1 text-[10px] leading-relaxed text-muted-foreground">{policyDesc}</div>}
+            {queueHint?.detail && (!showGpuFitDetails || groupLimitReached) && (
+              <div className="mt-1 text-[10px] leading-relaxed text-muted-foreground">{queueHint.detail}</div>
+            )}
+            {selectedCpuRow && <CpuProbeInline row={selectedCpuRow} generatedAt={cpuProbeGeneratedAt} t={t} />}
+            {hasAdvancedOverrides && cpuRows.length > 0 && (
+              <div className="mt-1 text-[10px] leading-relaxed text-muted-foreground">{t("pool.cpuProbeDefaultOnly")}</div>
+            )}
+            {multiNodeCpuPolicy && <div className="mt-1 text-[10px] leading-relaxed text-warn-fg">{t("pool.multiNodeHint")}</div>}
+            {gpuTip && (
+              <GpuFitQuickTip
+                tip={gpuTip}
+                applied={memValue === gpuTip.mem}
+                onApply={() => {
+                  setMem(gpuTip.mem);
+                  setAdvanced(true);
+                }}
+                t={t}
+              />
+            )}
+            {/* diagnostic detail below the fix-it row: when applying the tip makes
+                this block disappear, nothing above the clicked button moves */}
+            {showGpuFitDetails && gpuFit && <GpuFitExplanation fit={gpuFit} t={t} />}
+            <PolicyLimitChips rows={limits} />
+            {groupLimitReached && <div className="mt-1 text-[10px] leading-relaxed text-bad-fg">{t("pool.limitReached")}</div>}
+          </div>
+
+          {/* last on purpose: it only grows downward, so toggling it (or the
+              mem-tip auto-open) never shifts the command or the tip button */}
           <button
             type="button"
             onClick={() => setAdvanced(!advanced)}
@@ -497,47 +543,6 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
               <div className="text-[10px] leading-relaxed text-muted-foreground">{t("pool.nodeRequestHint")}</div>
             </div>
           )}
-          {/* terminal-styled on purpose (dark in both themes + $ prompt): with no
-              caption around it, the surface itself has to say "run this in a shell" */}
-          <div className="flex items-center gap-2 rounded-md border border-zinc-800 bg-zinc-950 px-2.5 py-1.5">
-            <span aria-hidden className="select-none font-mono text-[11px] text-zinc-500">$</span>
-            <code className="flex-1 overflow-x-auto whitespace-nowrap font-mono text-[11px] text-zinc-100">{cmd}</code>
-            <CopyButton text={cmd} label className="text-zinc-400 hover:bg-white/10 hover:text-zinc-100" />
-          </div>
-
-          {/* why / limits — explanation reads after the deliverable, not before it */}
-          <div className="rounded-md border border-border bg-muted/30 px-2.5 py-2">
-            <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-              <span className="text-xs font-medium text-foreground">{policyName}</span>
-              {queueHint && (!showGpuFitDetails || groupLimitReached) && (
-                <Tag tone={queueHint.tone}>{queueHint.label}</Tag>
-              )}
-              {policyLimit && <span className="font-mono text-[10px] text-muted-foreground">{policyLimit}</span>}
-            </div>
-            {policyDesc && <div className="mt-1 text-[10px] leading-relaxed text-muted-foreground">{policyDesc}</div>}
-            {queueHint?.detail && (!showGpuFitDetails || groupLimitReached) && (
-              <div className="mt-1 text-[10px] leading-relaxed text-muted-foreground">{queueHint.detail}</div>
-            )}
-            {selectedCpuRow && <CpuProbeInline row={selectedCpuRow} generatedAt={cpuProbeGeneratedAt} t={t} />}
-            {hasAdvancedOverrides && cpuRows.length > 0 && (
-              <div className="mt-1 text-[10px] leading-relaxed text-muted-foreground">{t("pool.cpuProbeDefaultOnly")}</div>
-            )}
-            {multiNodeCpuPolicy && <div className="mt-1 text-[10px] leading-relaxed text-warn-fg">{t("pool.multiNodeHint")}</div>}
-            {showGpuFitDetails && gpuFit && <GpuFitExplanation fit={gpuFit} t={t} />}
-            {gpuTip && (
-              <GpuFitQuickTip
-                tip={gpuTip}
-                applied={memValue === gpuTip.mem}
-                onApply={() => {
-                  setMem(gpuTip.mem);
-                  setAdvanced(true);
-                }}
-                t={t}
-              />
-            )}
-            <PolicyLimitChips rows={limits} />
-            {groupLimitReached && <div className="mt-1 text-[10px] leading-relaxed text-bad-fg">{t("pool.limitReached")}</div>}
-          </div>
         </div>
       )}
     </>
