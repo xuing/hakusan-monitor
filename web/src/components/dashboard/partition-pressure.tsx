@@ -94,7 +94,8 @@ function requestableNow(p: Partition, cap: PartitionCap, isGpu: boolean, pc: Poo
 
 function heroText(t: TFn, h: Hero): string {
   if (h.unit === "gpu") return `${nf(h.n)} ${t("unit.gpu")}`;
-  if (h.unit === "nodes") return `${nf(h.n)} ${t("part.wholeNodes")}`;
+  // "0 台整空节点" reads like a contradiction next to the queue tag — say it in words
+  if (h.unit === "nodes") return h.n > 0 ? `${nf(h.n)} ${t("part.wholeNodes")}` : t("part.noWholeNodes");
   return `${nf(h.n)}c`;
 }
 
@@ -427,19 +428,28 @@ function PartitionRow({
   const probeState = cpuProbe ? cpuProbeState(cpuProbe.probe, generatedAt) : null;
   const canRun = !maint && !groupLimitReached && (probeState ? probeState === "now" : hero.n > 0);
   // The hero count is a naive snapshot of idle hardware in the pool — it has no idea about
-  // QOS group limits or scheduling priority. sbatch --test-only does. When the probe gives a
-  // definitive negative answer for this exact partition, defer to it instead of showing a node/
-  // core count that would contradict the "will queue" badge right next to it.
+  // QOS group limits, scheduling priority, or the fact that multi-node jobs can piece
+  // together scattered cores. sbatch --test-only does. Whenever the probe's verdict
+  // contradicts the naive count (negative verdict vs a positive count, OR positive verdict
+  // vs a zero count), defer to the probe and let the status Tag speak.
   const heroHasEstimate = Boolean(probeState === "queued" && cpuProbe?.probe?.start_time);
   const heroOverride =
     !maint && (probeState === "queued" || probeState === "failed")
       ? heroHasEstimate
         ? t("pool.cpuProbeStart", { time: clockOf(cpuProbe!.probe!.start_time) })
         : "—" // the status Tag on the right already says queued/failed — don't repeat it here
+      : !maint && probeState === "now" && hero.n <= 0
+        ? "—" // probe proved the default request starts even though no whole node is idle
+        : null;
+  // "Available" reads wrong next to a queued/failed verdict — and next to a zero —
+  // swap to a fitting label, or drop it when the override/tag already speaks.
+  const heroLabel = !heroOverride
+    ? hero.n > 0
+      ? t("part.requestNow")
+      : null
+    : heroHasEstimate
+      ? t("col.startEst")
       : null;
-  // "Available" reads wrong next to a queued/failed verdict — swap to a fitting label,
-  // or drop the label entirely when the override text already speaks for itself.
-  const heroLabel = !heroOverride ? t("part.requestNow") : heroHasEstimate ? t("col.startEst") : null;
   const showTestedCommand = Boolean(cpuProbe?.probe && !maint && (probeState === "now" || probeState === "queued"));
 
   return (
@@ -452,7 +462,12 @@ function PartitionRow({
         <div className="min-w-0">
           <div className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5">
             {heroLabel && <span className="text-[11px] text-muted-foreground">{heroLabel}</span>}
-            <span className={cn("font-mono text-base font-semibold", canRun ? "text-ok-fg" : "text-muted-foreground")}>
+            <span
+              className={cn(
+                "font-mono text-base font-semibold",
+                canRun && heroOverride !== "—" ? "text-ok-fg" : "text-muted-foreground",
+              )}
+            >
               {maint ? "—" : (heroOverride ?? heroText(t, hero))}
               {!heroOverride && hero.capped && !maint && (
                 <HoverHint text={t("part.capHint")} className="ml-0.5 align-super text-[10px]" />

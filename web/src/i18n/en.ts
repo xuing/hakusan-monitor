@@ -125,6 +125,7 @@ export const en = {
   "part.willQueue": "Will queue",
   "part.requestNow": "Available",
   "part.wholeNodes": "whole idle nodes",
+  "part.noWholeNodes": "no whole idle node",
   "part.capHint": "Limited by the emptiest node — below this partition's policy max.",
   "dim.cpu": "CPU",
   "dim.gpu": "GPU",

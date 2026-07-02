@@ -125,6 +125,7 @@ export const ja: Record<TranslationKey, string> = {
   "part.willQueue": "待機",
   "part.requestNow": "申請可",
   "part.wholeNodes": "完全空きノード",
+  "part.noWholeNodes": "完全空きノードなし",
   "part.capHint": "最も空いているノードに制限され、ポリシー上限には届きません。",
   "dim.cpu": "CPU",
   "dim.gpu": "GPU",

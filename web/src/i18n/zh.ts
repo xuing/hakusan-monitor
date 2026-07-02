@@ -125,6 +125,7 @@ export const zh: Record<TranslationKey, string> = {
   "part.willQueue": "会排队",
   "part.requestNow": "可申请",
   "part.wholeNodes": "台整空节点",
+  "part.noWholeNodes": "无整空节点",
   "part.capHint": "受最空节点限制，达不到该分区的策略上限。",
   "dim.cpu": "CPU",
   "dim.gpu": "GPU",
