@@ -1,17 +1,25 @@
 import { Fragment, useEffect, useState, type ReactNode } from "react";
-import { Check, ChevronRight, Copy } from "lucide-react";
+import { ChevronRight } from "lucide-react";
 import { Bar } from "@/components/common/bar";
+import { CopyButton } from "@/components/common/copy-button";
 import { Tag } from "@/components/common/tag";
 import { Card, CardContent } from "@/components/ui/card";
 import { useLive } from "@/hooks/use-live";
 import { useResourceFilter } from "@/hooks/use-resource-filter";
 import { poolLabel, reasonLabel, useT, type TFn, type TranslationKey } from "@/i18n";
-import { copyText } from "@/lib/clipboard";
 import { expandHostlist, occupantsForPool, poolCapacity } from "@/lib/derive";
 import { clockOf, fmtCountdown, fmtDur, fmtMB, nf, parseDur } from "@/lib/format";
+import {
+  PolicyLimitChips,
+  cpuProbeDetail,
+  cpuProbeLabel,
+  cpuProbeTone,
+  fmtPolicyLimit,
+  policyLimitRows,
+} from "@/lib/policy-hints";
 import { isMaterialsStudioPartition, matchPool, partitionCap, partitionPolicy, type PartitionPolicy } from "@/lib/slurm";
 import { cn } from "@/lib/utils";
-import { cleanCpuProbeRaw, cpuProbeRows, cpuProbeState, type CpuProbeRow, type CpuProbeState } from "@/lib/cpu-probes";
+import { cpuProbeRows, cpuProbeState, type CpuProbeRow } from "@/lib/cpu-probes";
 import type { Occupant, Partition, Pool, PoolGpu, RawJob, RawNode, Snapshot } from "@/types/snapshot";
 
 // Minimal starter per pool. Hakusan's submit plugin applies the partition
@@ -258,7 +266,6 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
   const [cores, setCores] = useState("");
   const [mem, setMem] = useState("");
   const [time, setTime] = useState("");
-  const [copied, setCopied] = useState(false);
   if (!base) return null;
 
   const isGpu = pool.kind === "gpu";
@@ -316,20 +323,14 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
   const cmd = mode === "interactive" ? `salloc ${flags.join(" ")}` : `sbatch ${flags.join(" ")} ${script}`;
   const policyName = trMaybe(t, `policy.${partition}`, partition);
   const policyDesc = trMaybe(t, `policy.${partition}.desc`, "");
-  const policyLimit = fmtPolicyLimit(cap, t, isGpu);
+  const limitText = fmtPolicyLimit(cap, isGpu, t);
+  const policyLimit = limitText ? `${t("part.policyLimit")} ${limitText}` : "";
   const multiNodeCpuPolicy = !isGpu && (cap.maxNodes ?? 1) > 1;
   const nodeOptions = numberOptions(cap.maxNodes, [1, 2, 3, 4, 8, 16, 32]);
   const coreOptions = numberOptions(cap.maxCores, [1, 2, 4, 8, 16, 26, 32, 52, 64, 96, 128, 208, 256, 512, 768, 1024, 2048, 4096, 8192]);
   const timeOptions = timeOptionsFor(cap.wall, t);
   const partitionGroups = partitionOptionGroups(pool.partitions, t);
   const fieldCls = "h-7 w-full rounded-md border border-border bg-background px-2 text-[11px] outline-none focus:border-primary";
-
-  const copy = async () => {
-    if (await copyText(cmd)) {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1200);
-    }
-  };
 
   return (
     <div className="mt-3 border-t border-border pt-2.5">
@@ -427,25 +428,7 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
                 t={t}
               />
             )}
-            {limits.length > 0 && (
-              <div className="mt-2 flex flex-wrap gap-1">
-                {limits.map((row) => (
-                  <span
-                    key={row.key}
-                    className={cn(
-                      "rounded-md border px-1.5 py-0.5 text-[10px]",
-                      row.reached
-                        ? "border-bad/40 bg-bad-soft text-bad-fg"
-                        : row.near
-                          ? "border-warn/40 bg-warn-soft text-warn-fg"
-                          : "border-border bg-background/70 text-muted-foreground",
-                    )}
-                  >
-                    {row.label}
-                  </span>
-                ))}
-              </div>
-            )}
+            <PolicyLimitChips rows={limits} />
             {groupLimitReached && <div className="mt-1 text-[10px] leading-relaxed text-bad-fg">{t("pool.limitReached")}</div>}
           </div>
           <button
@@ -497,14 +480,7 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
           )}
           <div className="flex items-center gap-2 rounded-md border border-border bg-muted/40 px-2.5 py-1.5">
             <code className="flex-1 overflow-x-auto whitespace-nowrap font-mono text-[11px]">{cmd}</code>
-            <button
-              type="button"
-              onClick={copy}
-              className="inline-flex shrink-0 items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground"
-            >
-              {copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
-              {t(copied ? "helper.copied" : "helper.copy")}
-            </button>
+            <CopyButton text={cmd} label />
           </div>
         </div>
       )}
@@ -674,41 +650,6 @@ function partitionRunningJobs(jobs: RawJob[], partition: string) {
   return groupRunning;
 }
 
-function limitLevel(current: number, max: number) {
-  return {
-    reached: current >= max,
-    near: max > 1 && current >= Math.ceil(max * 0.8),
-  };
-}
-
-function policyLimitRows(policy: PartitionPolicy, groupRunning: number, t: TFn) {
-  const rows: Array<{ key: string; label: string; reached: boolean; near: boolean }> = [];
-  if (policy.grpJobs) {
-    rows.push({
-      key: "grp",
-      label: t("pool.limitGroup", { n: groupRunning, max: policy.grpJobs }),
-      ...limitLevel(groupRunning, policy.grpJobs),
-    });
-  }
-  if (policy.maxJobsPerUser) {
-    rows.push({
-      key: "userRun",
-      label: t("pool.limitUserRunning", { max: policy.maxJobsPerUser }),
-      reached: false,
-      near: false,
-    });
-  }
-  if (policy.maxSubmitPerUser) {
-    rows.push({
-      key: "userSubmit",
-      label: t("pool.limitUserSubmitted", { max: policy.maxSubmitPerUser }),
-      reached: false,
-      near: false,
-    });
-  }
-  return rows;
-}
-
 function QuickRequestSummary({
   hint,
   tip,
@@ -839,47 +780,9 @@ function CpuProbeInline({ row, generatedAt, t }: { row: CpuProbeRow; generatedAt
   );
 }
 
-function cpuProbeLabel(state: CpuProbeState, t: TFn) {
-  if (state === "now") return t("pool.cpuProbeNow");
-  if (state === "queued") return t("pool.cpuProbeQueued");
-  if (state === "unknown") return t("pool.cpuProbeNoData");
-  return t("pool.cpuProbeFailed");
-}
-
-function cpuProbeTone(state: CpuProbeState) {
-  if (state === "now") return "ok" as const;
-  if (state === "queued") return "warn" as const;
-  if (state === "unknown") return "neutral" as const;
-  return "bad" as const;
-}
-
-function cpuProbeDetail(row: CpuProbeRow, state: CpuProbeState, t: TFn) {
-  const probe = row.probe;
-  if (!probe) return t("pool.cpuProbeNoData");
-  if (state === "now") return probe.nodes ? t("pool.cpuProbeNodes", { nodes: probe.nodes }) : "";
-  if (state === "queued" && probe.start_time) return t("pool.cpuProbeStart", { time: clockOf(probe.start_time) });
-  return truncateProbeRaw(cleanCpuProbeRaw(probe.raw));
-}
-
-function truncateProbeRaw(text: string) {
-  if (!text) return "";
-  return text.length > 120 ? `${text.slice(0, 117)}...` : text;
-}
-
 function trMaybe(t: TFn, key: string, fallback: string) {
   const translated = t(key as TranslationKey);
   return translated === key ? fallback : translated;
-}
-
-function fmtPolicyLimit(cap: ReturnType<typeof partitionCap>, t: TFn, isGpu: boolean) {
-  const parts = [
-    cap.maxNodes ? `${cap.maxNodes} ${t("spec.nodes")}` : "",
-    isGpu && cap.maxGpus ? `${cap.maxGpus} ${t("pool.gpuTotal")}` : "",
-    cap.maxCores ? `${cap.maxCores} ${t("unit.cores")}` : "",
-    cap.maxMemGb ? `${cap.maxMemGb} GB` : "",
-    cap.wall ?? "",
-  ].filter(Boolean);
-  return parts.length ? `${t("part.policyLimit")}: ${parts.join(" / ")}` : "";
 }
 
 function Field({ label, children }: { label: string; children: ReactNode }) {

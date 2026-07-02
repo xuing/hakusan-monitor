@@ -1,10 +1,9 @@
-import { useState } from "react";
 import { Check, Copy, ExternalLink } from "lucide-react";
+import { useCopied } from "@/components/common/copy-button";
 import { SectionCard } from "@/components/common/section-card";
 import { Tag } from "@/components/common/tag";
 import { Button } from "@/components/ui/button";
 import { useT, type TFn, type TranslationKey } from "@/i18n";
-import { copyText } from "@/lib/clipboard";
 import type { Tone } from "@/lib/slurm";
 import { cn } from "@/lib/utils";
 
@@ -138,13 +137,7 @@ export default function SlurmGuidePage() {
 }
 
 function CommandCard({ item, t }: { item: Command; t: TFn }) {
-  const [copied, setCopied] = useState(false);
-  const copy = async () => {
-    if (await copyText(item.command)) {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1200);
-    }
-  };
+  const [copied, copy] = useCopied();
 
   return (
     <div className="rounded-lg border border-border bg-muted/20 p-3">
@@ -159,7 +152,7 @@ function CommandCard({ item, t }: { item: Command; t: TFn }) {
         {item.command}
       </pre>
       <div className="mt-2 flex justify-end">
-        <Button variant="outline" size="sm" className="h-8 gap-1.5" onClick={copy}>
+        <Button variant="outline" size="sm" className="h-8 gap-1.5" onClick={() => void copy(item.command)}>
           {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
           {copied ? t("helper.copied") : t("helper.copy")}
         </Button>

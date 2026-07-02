@@ -132,6 +132,10 @@ export function DataTable<T>({
     getExpandedRowModel: getExpandedRowModel(),
     getPaginationRowModel: getPaginationRowModel(),
     globalFilterFn: "includesString",
+    // live snapshots replace `data` every few minutes — don't yank the user
+    // back to page 1 or collapse their expanded rows on each refresh
+    autoResetPageIndex: false,
+    autoResetExpanded: false,
   });
 
   const filteredCount = table.getFilteredRowModel().rows.length;
@@ -173,7 +177,7 @@ export function DataTable<T>({
         </div>
       </div>
 
-      <div className="overflow-hidden rounded-lg border border-border bg-card">
+      <div className="overflow-hidden rounded-xl border border-border bg-card">
         <div className="max-h-[calc(100vh-260px)] overflow-auto">
           <Table>
             <TableHeader className="sticky top-0 z-10 bg-muted">

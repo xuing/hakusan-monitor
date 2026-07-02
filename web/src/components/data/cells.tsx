@@ -1,19 +1,35 @@
 import { Tag } from "@/components/common/tag";
-import type { Tone } from "@/lib/slurm";
+import { utilTone, type Tone } from "@/lib/slurm";
 
 const NODE_STATE_TONE: Record<string, Tone> = {
   ALLOCATED: "info",
   MIXED: "warn",
   IDLE: "ok",
   DOWN: "bad",
-  DRAIN: "bad",
-  DRAINING: "bad",
+  // draining = administratively leaving but still healthy/running jobs — warn,
+  // matching the Overview "nodes needing attention" panel (down stays red).
+  DRAIN: "warn",
+  DRAINING: "warn",
   NOT_RESPONDING: "bad",
   FAIL: "bad",
   MAINT: "neutral",
   RESERVED: "neutral",
   PLANNED: "neutral",
   COMPLETING: "warn",
+};
+
+const JOB_STATE_TONE: Record<string, Tone> = {
+  RUNNING: "ok",
+  PENDING: "warn",
+  COMPLETING: "info",
+  COMPLETED: "info",
+  SUSPENDED: "neutral",
+  FAILED: "bad",
+  CANCELLED: "bad",
+  TIMEOUT: "bad",
+  NODE_FAIL: "bad",
+  OUT_OF_MEMORY: "bad",
+  PREEMPTED: "bad",
 };
 
 export function StateBadges({ states, onSelect }: { states: string[]; onSelect?: (state: string) => void }) {
@@ -29,7 +45,7 @@ export function StateBadges({ states, onSelect }: { states: string[]; onSelect?:
 }
 
 export function JobStateBadge({ state, onClick }: { state: string; onClick?: () => void }) {
-  const tone: Tone = state === "RUNNING" ? "ok" : state === "PENDING" ? "warn" : "info";
+  const tone: Tone = JOB_STATE_TONE[state] ?? "neutral";
   return (
     <TagButton tone={tone} onClick={onClick}>
       {state}
@@ -56,10 +72,18 @@ function TagButton({ tone, children, onClick }: { tone: Tone; children: string; 
   );
 }
 
+const TONE_BAR: Record<Tone, string> = {
+  ok: "var(--green-10)",
+  warn: "var(--amber-10)",
+  bad: "var(--red-10)",
+  info: "var(--blue-10)",
+  neutral: "hsl(var(--muted-foreground))",
+};
+
 /** "alloc/total" with a compact load bar. */
 export function AllocCell({ a, total }: { a: number; total: number }) {
   const r = total ? a / total : 0;
-  const color = r >= 0.85 ? "var(--red-10)" : r >= 0.6 ? "var(--amber-10)" : "var(--green-10)";
+  const color = TONE_BAR[utilTone(r)];
   return (
     <div className="flex items-center gap-2">
       <span className="tnum w-14 font-mono text-xs">

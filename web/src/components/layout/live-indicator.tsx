@@ -49,7 +49,9 @@ export function LiveIndicator() {
         {label}
       </span>
       {age !== null && (
-        <span className={cn("hidden sm:inline", stale && "text-warn-fg")}>
+        // data age is the key trust signal on a 300s-sampling dashboard — keep
+        // it visible on phones too (it's short enough to fit)
+        <span className={cn(stale && "text-warn-fg")}>
           {updated} {agoText(t, age)}
         </span>
       )}

@@ -1,5 +1,4 @@
-import { useState } from "react";
-import { Check, Copy } from "lucide-react";
+import { CopyButton } from "@/components/common/copy-button";
 import { Empty } from "@/components/common/empty";
 import { HoverHint } from "@/components/common/hover-hint";
 import { SectionCard } from "@/components/common/section-card";
@@ -8,22 +7,28 @@ import { useLive } from "@/hooks/use-live";
 import { useResourceFilter } from "@/hooks/use-resource-filter";
 import { poolLabel, useT, type TFn } from "@/i18n";
 import type { TranslationKey } from "@/i18n/en";
-import { copyText } from "@/lib/clipboard";
 import { poolCapacity, type PoolCapacity } from "@/lib/derive";
 import { clockOf, fmtMB, nf } from "@/lib/format";
-import { cleanCpuProbeRaw, cpuProbeForPartition, cpuProbeState, type CpuProbeRow, type CpuProbeState } from "@/lib/cpu-probes";
+import { cpuProbeForPartition, cpuProbeState, type CpuProbeRow } from "@/lib/cpu-probes";
+import {
+  PolicyLimitChips,
+  cpuProbeDetail,
+  cpuProbeLabel,
+  cpuProbeTone,
+  fmtPolicyLimit,
+  policyLimitRows,
+} from "@/lib/policy-hints";
 import {
   isMaterialsStudioPartition,
   matchPartition,
   partitionCap,
   partitionPolicy as slurmPartitionPolicy,
   type PartitionCap,
-  type PartitionPolicy,
 } from "@/lib/slurm";
 import { cn } from "@/lib/utils";
 import type { Partition, PolicySnapshot, Pool } from "@/types/snapshot";
 
-const PARTITION_POLICIES: Record<string, { title: TranslationKey; desc: TranslationKey }> = {
+const POLICY_I18N_KEYS: Record<string, { title: TranslationKey; desc: TranslationKey }> = {
   DEF: { title: "policy.DEF", desc: "policy.DEF.desc" },
   TINY: { title: "policy.TINY", desc: "policy.TINY.desc" },
   SINGLE: { title: "policy.SINGLE", desc: "policy.SINGLE.desc" },
@@ -52,7 +57,7 @@ const PARTITION_POLICIES: Record<string, { title: TranslationKey; desc: Translat
 };
 
 function partitionLabelPolicy(name: string): { title: TranslationKey; desc: TranslationKey } {
-  return PARTITION_POLICIES[name] ?? { title: "policy.other", desc: "policy.other.desc" };
+  return POLICY_I18N_KEYS[name] ?? { title: "policy.other", desc: "policy.other.desc" };
 }
 
 function isMaintPartition(p: Partition) {
@@ -87,25 +92,6 @@ function heroText(t: TFn, h: Hero): string {
   if (h.unit === "gpu") return `${nf(h.n)} ${t("unit.gpu")}`;
   if (h.unit === "nodes") return `${nf(h.n)} ${t("part.wholeNodes")}`;
   return `${nf(h.n)}c`;
-}
-
-function fmtCapMem(gb?: number) {
-  if (!gb) return "";
-  if (gb >= 1024) {
-    const tb = gb / 1024;
-    return `${Number.isInteger(tb) ? tb : tb.toFixed(1)}TB`;
-  }
-  return `${gb}GB`;
-}
-
-function fmtPolicyLimit(cap: PartitionCap, isGpu: boolean, nodesLabel: string) {
-  const parts: string[] = [];
-  if (isGpu && cap.maxGpus) parts.push(`${cap.maxGpus} GPU`);
-  if (cap.maxCores) parts.push(`${nf(cap.maxCores)}c`);
-  if (cap.maxMemGb) parts.push(fmtCapMem(cap.maxMemGb));
-  if (cap.maxNodes) parts.push(`${nf(cap.maxNodes)} ${nodesLabel}`);
-  if (cap.wall) parts.push(cap.wall);
-  return parts.join(" / ") || "—";
 }
 
 export function PartitionPressure() {
@@ -417,12 +403,11 @@ function PartitionRow({
   policy?: PolicySnapshot;
   t: TFn;
 }) {
-  const [copied, setCopied] = useState(false);
   const maint = isMaintPartition(p);
   const labelPolicy = partitionLabelPolicy(p.name);
   const runtimePolicy = slurmPartitionPolicy(p.name, policy);
   const groupRunning = p.jobs.running;
-  const limitRows = partitionPolicyLimitRows(runtimePolicy, groupRunning, t);
+  const limitRows = policyLimitRows(runtimePolicy, groupRunning, t);
   const groupLimitReached = Boolean(runtimePolicy.grpJobs && groupRunning >= runtimePolicy.grpJobs);
   const cap = partitionCap(p.name, policy);
   const hero = requestableNow(p, cap, isGpu, pc);
@@ -443,13 +428,6 @@ function PartitionRow({
   // or drop the label entirely when the override text already speaks for itself.
   const heroLabel = !heroOverride ? t("part.requestNow") : heroHasEstimate ? t("col.startEst") : null;
   const showTestedCommand = Boolean(cpuProbe?.probe && !maint && (probeState === "now" || probeState === "queued"));
-  const copyCommand = async () => {
-    if (!cpuProbe || !showTestedCommand) return;
-    if (await copyText(cpuProbe.command)) {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1200);
-    }
-  };
 
   return (
     <div className={maint ? "py-2 opacity-55" : "py-2"}>
@@ -468,34 +446,26 @@ function PartitionRow({
               )}
             </span>
             <span className="font-mono text-[11px] text-muted-foreground">
-              {t("part.policyLimit")} {fmtPolicyLimit(cap, isGpu, t("spec.nodes"))}
+              {t("part.policyLimit")} {fmtPolicyLimit(cap, isGpu, t) || "—"}
             </span>
             <span className={cn("font-mono text-[11px]", p.jobs.pending > 0 ? "text-warn-fg" : "text-muted-foreground")}>
               {t("part.run")}{nf(p.jobs.running)} {t("part.pend")}{nf(p.jobs.pending)}
             </span>
           </div>
           <div className="mt-0.5 truncate text-[11px] text-muted-foreground/80">{t(labelPolicy.desc)}</div>
-          {limitRows.length > 0 && <PartitionPolicyLimits rows={limitRows} />}
+          <PolicyLimitChips rows={limitRows} />
           {cpuProbe && !maint && (
             <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px]">
               {showTestedCommand && (
                 <span className="inline-flex max-w-full min-w-0 items-center gap-1 text-muted-foreground">
                   <span className="min-w-0 truncate font-mono text-foreground">{cpuProbe.command}</span>
-                  <button
-                    type="button"
-                    onClick={copyCommand}
-                    title={t(copied ? "helper.copied" : "helper.copy")}
-                    aria-label={t(copied ? "helper.copied" : "helper.copy")}
-                    className="rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
-                  >
-                    {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
-                  </button>
+                  <CopyButton text={cpuProbe.command} />
                 </span>
               )}
               <span className="font-mono text-muted-foreground">
                 {t("pool.cpuProbeNeed", { cores: cpuProbe.cores })}
               </span>
-              <span className="min-w-0 truncate text-muted-foreground">{partitionCpuProbeDetail(cpuProbe, probeState, t)}</span>
+              <span className="min-w-0 truncate text-muted-foreground">{cpuProbeDetail(cpuProbe, probeState, t)}</span>
             </div>
           )}
         </div>
@@ -505,7 +475,7 @@ function PartitionRow({
           ) : groupLimitReached ? (
             <Tag tone="warn">{t("part.willQueue")}</Tag>
           ) : probeState ? (
-            <Tag tone={partitionCpuProbeTone(probeState)}>{partitionCpuProbeLabel(probeState, t)}</Tag>
+            <Tag tone={cpuProbeTone(probeState)}>{cpuProbeLabel(probeState, t)}</Tag>
           ) : canRun ? (
             <Tag tone="ok">{t("part.canAllocate")}</Tag>
           ) : (
@@ -517,91 +487,3 @@ function PartitionRow({
   );
 }
 
-function PartitionPolicyLimits({
-  rows,
-}: {
-  rows: Array<{ key: string; label: string; reached: boolean; near: boolean }>;
-}) {
-  return (
-    <div className="mt-1 flex flex-wrap gap-1">
-      {rows.map((row) => (
-        <span
-          key={row.key}
-          className={cn(
-            "rounded-md border px-1.5 py-0.5 text-[10px]",
-            row.reached
-              ? "border-bad/30 bg-bad-soft text-bad-fg"
-              : row.near
-                ? "border-warn/30 bg-warn-soft text-warn-fg"
-                : "border-border bg-muted/40 text-muted-foreground",
-          )}
-        >
-          {row.label}
-        </span>
-      ))}
-    </div>
-  );
-}
-
-function partitionPolicyLimitRows(policy: PartitionPolicy, groupRunning: number, t: TFn) {
-  const rows: Array<{ key: string; label: string; reached: boolean; near: boolean }> = [];
-  if (policy.grpJobs) {
-    rows.push({
-      key: "grp",
-      label: t("pool.limitGroup", { n: groupRunning, max: policy.grpJobs }),
-      ...limitLevel(groupRunning, policy.grpJobs),
-    });
-  }
-  if (policy.maxJobsPerUser && policy.maxSubmitPerUser) {
-    rows.push({
-      key: "user",
-      label: t("pool.limitUserBoth", { running: policy.maxJobsPerUser, submitted: policy.maxSubmitPerUser }),
-      reached: false,
-      near: false,
-    });
-  } else if (policy.maxJobsPerUser) {
-    rows.push({
-      key: "userRun",
-      label: t("pool.limitUserRunning", { max: policy.maxJobsPerUser }),
-      reached: false,
-      near: false,
-    });
-  } else if (policy.maxSubmitPerUser) {
-    rows.push({
-      key: "userSubmit",
-      label: t("pool.limitUserSubmitted", { max: policy.maxSubmitPerUser }),
-      reached: false,
-      near: false,
-    });
-  }
-  return rows;
-}
-
-function limitLevel(current: number, max: number) {
-  return {
-    reached: current >= max,
-    near: max > 1 && current >= Math.ceil(max * 0.8),
-  };
-}
-
-function partitionCpuProbeLabel(state: CpuProbeState, t: TFn) {
-  if (state === "now") return t("pool.cpuProbeNow");
-  if (state === "queued") return t("pool.cpuProbeQueued");
-  if (state === "unknown") return t("pool.cpuProbeNoData");
-  return t("pool.cpuProbeFailed");
-}
-
-function partitionCpuProbeTone(state: CpuProbeState) {
-  if (state === "now") return "ok" as const;
-  if (state === "queued") return "warn" as const;
-  if (state === "unknown") return "neutral" as const;
-  return "bad" as const;
-}
-
-function partitionCpuProbeDetail(row: CpuProbeRow, state: CpuProbeState | null, t: TFn) {
-  if (!row.probe) return t("pool.cpuProbeNoData");
-  if (state === "now") return row.probe.nodes ? t("pool.cpuProbeNodes", { nodes: row.probe.nodes }) : "";
-  if (state === "queued" && row.probe.start_time) return t("pool.cpuProbeStart", { time: clockOf(row.probe.start_time) });
-  const raw = cleanCpuProbeRaw(row.probe.raw);
-  return raw.length > 120 ? `${raw.slice(0, 117)}...` : raw;
-}

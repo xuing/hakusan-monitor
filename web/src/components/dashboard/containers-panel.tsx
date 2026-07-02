@@ -1,11 +1,11 @@
-import { useState, type ReactNode } from "react";
-import { Check, Clipboard, ExternalLink } from "lucide-react";
+import type { ReactNode } from "react";
+import { Check, Copy, ExternalLink } from "lucide-react";
+import { useCopied } from "@/components/common/copy-button";
 import { SectionCard } from "@/components/common/section-card";
 import { Button } from "@/components/ui/button";
 import { useApi } from "@/hooks/use-api";
 import { useT, type TranslationKey } from "@/i18n";
 import { api } from "@/lib/api";
-import { copyText } from "@/lib/clipboard";
 
 const DOCS_URL = "https://docs.sylabs.io/guides/4.3/user-guide/";
 
@@ -158,14 +158,7 @@ function GuideList({ title, keys, className = "" }: { title: string; keys: Trans
 
 function CommandCard({ title, detail, command }: { title: string; detail: string; command: string }) {
   const t = useT();
-  const [copied, setCopied] = useState(false);
-
-  const copy = async () => {
-    if (await copyText(command)) {
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 1200);
-    }
-  };
+  const [copied, copy] = useCopied();
 
   return (
     <div className="min-w-0 rounded-lg border border-border bg-background">
@@ -174,8 +167,15 @@ function CommandCard({ title, detail, command }: { title: string; detail: string
           <div className="text-sm font-medium text-foreground">{title}</div>
           <div className="mt-0.5 text-xs text-muted-foreground">{detail}</div>
         </div>
-        <Button variant="outline" size="icon" className="h-7 w-7 shrink-0" onClick={copy} title={t(copied ? "helper.copied" : "helper.copy")}>
-          {copied ? <Check className="h-3.5 w-3.5" /> : <Clipboard className="h-3.5 w-3.5" />}
+        <Button
+          variant="outline"
+          size="sm"
+          className="h-7 shrink-0 gap-1.5"
+          onClick={() => void copy(command)}
+          title={t(copied ? "helper.copied" : "helper.copy")}
+        >
+          {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+          {copied ? t("helper.copied") : t("helper.copy")}
         </Button>
       </div>
       <pre className="max-w-full overflow-x-auto whitespace-pre-wrap break-all p-3 font-mono text-[11px] leading-relaxed text-foreground/90">

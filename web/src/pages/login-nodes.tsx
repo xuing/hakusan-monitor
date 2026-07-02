@@ -47,7 +47,7 @@ export default function LoginNodesPage() {
     <div className="space-y-4">
       {current.error && (
         <SectionCard>
-          <div className="flex items-center gap-2 text-sm text-destructive">
+          <div className="flex items-center gap-2 text-sm text-bad-fg">
             <AlertTriangle className="h-4 w-4" />
             {current.error.message}
           </div>
@@ -144,9 +144,9 @@ function NodePanel({ node }: { node: LoginNode }) {
     return (
       <SectionCard title={node.id}>
         <div className="flex items-start gap-2">
-          <AlertTriangle className="mt-0.5 h-4 w-4 text-destructive" />
+          <AlertTriangle className="mt-0.5 h-4 w-4 text-bad-fg" />
           <div>
-            <div className="text-sm font-medium text-destructive">{node.error || t("login.unavailable")}</div>
+            <div className="text-sm font-medium text-bad-fg">{node.error || t("login.unavailable")}</div>
             <div className="mt-1 text-xs text-muted-foreground">{t("login.nodeRetry")}</div>
           </div>
         </div>
@@ -469,9 +469,9 @@ function LoginErrorState({ message }: { message: string }) {
     <div className="space-y-4">
       <SectionCard title={t("login.title")}>
         <div className="flex items-start gap-3">
-          <AlertTriangle className="mt-0.5 h-4 w-4 text-destructive" />
+          <AlertTriangle className="mt-0.5 h-4 w-4 text-bad-fg" />
           <div>
-            <div className="text-sm font-medium text-destructive">{t("login.errorTitle")}</div>
+            <div className="text-sm font-medium text-bad-fg">{t("login.errorTitle")}</div>
             <div className="mt-1 text-xs text-muted-foreground">{t("login.errorDetail")}</div>
             {message && <div className="mt-2 rounded-md bg-muted px-2 py-1 font-mono text-[11px] text-muted-foreground">{message}</div>}
           </div>
