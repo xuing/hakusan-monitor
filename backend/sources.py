@@ -31,7 +31,7 @@ SEP = "|@|"   # field separator unlikely to occur in any value (e.g. job names)
 SQUEUE_FIELDS = ["%i", "%u", "%a", "%P", "%T", "%r", "%D", "%C", "%b", "%V",
                  "%e", "%S", "%L", "%j", "%q", "%N", "%M", "%l", "%m"]
 SQUEUE_FMT = SEP.join(SQUEUE_FIELDS)
-CONTAINER_FMT = "JobID:64,Container:512"
+CONTAINER_FMT = "JobID:64,tres-alloc:256,Container:512"
 CPU_TEST_PARTITIONS = ["TINY", "DEF", "SINGLE", "SMALL", "LARGE", "XLARGE", "X2LARGE", "LONG", "LONG-L"]
 
 
@@ -157,6 +157,7 @@ def _parse_tres(text):
             out["cores"] = _int(val)
         elif key == "mem":
             out["mem_gb"] = _mem_gb(val)
+            out["mem_mb"] = _mem_mb(val)
         elif key == "node":
             out["nodes"] = _int(val)
         elif key.startswith("gres/gpu"):
@@ -271,25 +272,34 @@ def build_policy_snapshot(qos_text, partition_text, now, interval):
 
 
 def parse_containers(text):
-    """`squeue -O JobID,Container` -> {job_id: container image/path}.
+    """`squeue -O JobID,tres-alloc,Container` -> {job_id: {tres, container}}.
 
-    The `-O/--Format` surface exposes fields not available through `-o` single
-    letter formats; SchedMD documents `--Format` as the path to "all fields".
+    The `-O/--Format` surface exposes fields the `-o` single-letter formats
+    cannot express. tres-alloc carries each job's *effective* allocation
+    (memory total, GPU count) for running AND pending jobs — %m is ambiguous
+    (per-CPU requests print with no suffix) and %b misses --gpus-style jobs.
+    Columns are fixed-width per CONTAINER_FMT, so slice, don't split.
     """
     out = {}
     for line in text.splitlines():
-        p = line.strip().split(None, 1)
-        if not p:
+        jid = line[:64].strip()
+        if not jid:
             continue
-        val = p[1].strip() if len(p) > 1 else ""
-        out[p[0]] = "" if val in ("N/A", "(null)", "None", "NULL") else val
+        tres = line[64:320].strip()
+        container = line[320:].strip()
+        out[jid] = {
+            "tres": "" if tres in ("N/A", "(null)", "None", "NULL") else tres,
+            "container": "" if container in ("N/A", "(null)", "None", "NULL") else container,
+        }
     return out
 
 
-def parse_queue(text, containers=None):
+def parse_queue(text, extras=None):
     """`squeue -h -a -o SQUEUE_FMT` -> [{...}] like squeue --json, enriched with
-    every field the raw Jobs table surfaces (see SQUEUE_FIELDS for order)."""
-    containers = containers or {}
+    every field the raw Jobs table surfaces (see SQUEUE_FIELDS for order).
+
+    `extras` is parse_containers' output: per-job tres-alloc + container."""
+    extras = extras or {}
     jobs = []
     for line in text.splitlines():
         p = line.split(SEP)
@@ -297,11 +307,18 @@ def parse_queue(text, containers=None):
             continue
         (jid, user, acct, part, state, reason, nnodes, cpus, gres, submit,
          end, start_est, left, name, qos, nodelist, used, timelimit, min_mem) = p[:19]
+        extra = extras.get(str(jid)) or {}
+        alloc = _parse_tres(extra.get("tres", ""))
         gm = re.search(r"gpu:(?:[A-Za-z0-9_\-]+:)?(\d+)", gres or "")
         nnodes_i = int(nnodes) if nnodes.isdigit() else 0
-        # squeue %b reports GRES *per node* (Slurm --gres is per-node); the job's
-        # total GPUs = per-node × node count, else multi-node GPU jobs undercount.
-        gpu = (int(gm.group(1)) if gm else 0) * (nnodes_i or 1)
+        # GPUs: tres-alloc is authoritative (covers --gpus/--gpus-per-task jobs
+        # that %b reports as N/A). Fallback: %b is GRES *per node*, so the job's
+        # total = per-node × node count.
+        gpu = alloc.get("gpus") or (int(gm.group(1)) if gm else 0) * (nnodes_i or 1)
+        # Memory: %m prints per-CPU requests with no suffix (MinMemoryCPU=6000M
+        # shows as plain "6000M"), so it can be wrong by a factor of NumCPUs.
+        # tres-alloc's mem= is the job's real (or planned) total.
+        mem_mb = alloc.get("mem_mb") or _mem_mb(min_mem)
         jobs.append({
             "job_id": int(jid) if jid.isdigit() else jid,
             "user_name": user, "account": acct, "partition": part,
@@ -310,12 +327,12 @@ def parse_queue(text, containers=None):
             "cpus": int(cpus) if cpus.isdigit() else 0,
             "gpus": gpu,
             "tres_req_str": f"gres/gpu={gpu}" if gpu else "",
-            "container": containers.get(str(jid), ""), "submit_time": _epoch(submit),
+            "container": extra.get("container", ""), "submit_time": _epoch(submit),
             "end_time": _clean(end), "start_est": _clean(start_est),
             "time_left": _clean(left),
             "name": name, "qos": qos, "nodelist": _clean(nodelist),
             "time_used": _clean(used), "time_limit": _clean(timelimit),
-            "min_memory": _clean(min_mem), "min_memory_mb": _mem_mb(min_mem),
+            "min_memory": _clean(min_mem), "min_memory_mb": mem_mb,
         })
     return {"jobs": jobs}
 

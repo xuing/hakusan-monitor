@@ -5,6 +5,7 @@ from backend.sources import (
     _parse_tres,
     _wall_compact,
     build_policy_snapshot,
+    parse_containers,
     parse_cpu_submit_probes,
     parse_qos_policies,
     parse_queue,
@@ -15,7 +16,7 @@ class TresPolicyTests(unittest.TestCase):
     def test_parse_tres_treats_typed_and_generic_gpu_as_same_limit(self):
         self.assertEqual(
             _parse_tres("cpu=26,gres/gpu:nvidia_a40=1,gres/gpu=1,mem=256G,node=1"),
-            {"cores": 26, "mem_gb": 256, "nodes": 1, "gpus": 1},
+            {"cores": 26, "mem_gb": 256, "mem_mb": 262144, "nodes": 1, "gpus": 1},
         )
 
     def test_wall_compact(self):
@@ -85,6 +86,35 @@ class QueueParserTests(unittest.TestCase):
         self.assertEqual(job["node_count"], 2)
         self.assertEqual(job["min_memory_mb"], 524288)
         self.assertEqual(job["nodelist"], "spcc-a40g[13,17]")
+
+    def test_parse_queue_prefers_tres_alloc_over_ambiguous_squeue_fields(self):
+        # %m prints MinMemoryCPU=6000M as a bare "6000M" — without tres-alloc the
+        # 64-CPU job below would show 6 GB instead of its real 375 GiB.
+        line = SEP.join(
+            [
+                "378759", "user02", "student", "DEF", "RUNNING", "None",
+                "1", "64", "N/A", "2026-06-30T12:00:00", "2026-07-07T12:00:00",
+                "N/A", "6-00:00:00", "calc", "normal", "lcpcc-043",
+                "1-00:00:00", "7-00:00:00", "6000M",
+            ],
+        )
+        extras = {"378759": {"tres": "cpu=64,mem=375G,node=1,billing=64", "container": ""}}
+
+        job = parse_queue(line, extras)["jobs"][0]
+
+        self.assertEqual(job["min_memory_mb"], 384000)
+        self.assertEqual(job["gpus"], 0)
+
+        # --gpus-style jobs report %b as N/A; the GPU count must come from tres.
+        extras_gpu = {"378759": {"tres": "cpu=26,mem=260000M,node=1,gres/gpu:h100-20c=1", "container": ""}}
+        job = parse_queue(line, extras_gpu)["jobs"][0]
+        self.assertEqual(job["gpus"], 1)
+
+    def test_parse_containers_slices_fixed_width_columns(self):
+        line = "378759".ljust(64) + "cpu=64,mem=375G,node=1".ljust(256) + "docker://ubuntu:22.04"
+        out = parse_containers(line)
+        self.assertEqual(out["378759"]["tres"], "cpu=64,mem=375G,node=1")
+        self.assertEqual(out["378759"]["container"], "docker://ubuntu:22.04")
 
     def test_parse_cpu_submit_probes(self):
         raw = (
