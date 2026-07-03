@@ -16,7 +16,8 @@ class TresPolicyTests(unittest.TestCase):
     def test_parse_tres_treats_typed_and_generic_gpu_as_same_limit(self):
         self.assertEqual(
             _parse_tres("cpu=26,gres/gpu:nvidia_a40=1,gres/gpu=1,mem=256G,node=1"),
-            {"cores": 26, "mem_gb": 256, "mem_mb": 262144, "nodes": 1, "gpus": 1},
+            {"cores": 26, "mem_gb": 256, "mem_mb": 262144, "nodes": 1, "gpus": 1,
+             "gpu_type": "nvidia_a40"},
         )
 
     def test_wall_compact(self):
@@ -83,6 +84,7 @@ class QueueParserTests(unittest.TestCase):
         job = parse_queue(line)["jobs"][0]
 
         self.assertEqual(job["gpus"], 4)
+        self.assertEqual(job["gpu_type"], "nvidia_a40")
         self.assertEqual(job["node_count"], 2)
         self.assertEqual(job["min_memory_mb"], 524288)
         self.assertEqual(job["nodelist"], "spcc-a40g[13,17]")
@@ -104,11 +106,20 @@ class QueueParserTests(unittest.TestCase):
 
         self.assertEqual(job["min_memory_mb"], 384000)
         self.assertEqual(job["gpus"], 0)
+        self.assertEqual(job["gpu_type"], "")
 
         # --gpus-style jobs report %b as N/A; the GPU count must come from tres.
         extras_gpu = {"378759": {"tres": "cpu=26,mem=260000M,node=1,gres/gpu:h100-20c=1", "container": ""}}
         job = parse_queue(line, extras_gpu)["jobs"][0]
         self.assertEqual(job["gpus"], 1)
+        self.assertEqual(job["gpu_type"], "h100-20c")
+
+        # Pending jobs: tres-alloc's GPU type is a scheduler placeholder, not an
+        # allocation — suppress it unless the user explicitly requested a type.
+        pending = line.replace("RUNNING", "PENDING")
+        job = parse_queue(pending, extras_gpu)["jobs"][0]
+        self.assertEqual(job["gpus"], 1)
+        self.assertEqual(job["gpu_type"], "")
 
     def test_parse_containers_slices_fixed_width_columns(self):
         line = "378759".ljust(64) + "cpu=64,mem=375G,node=1".ljust(256) + "docker://ubuntu:22.04"

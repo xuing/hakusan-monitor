@@ -5,6 +5,7 @@ import { DataTable, type DataFacet } from "@/components/data/data-table";
 import { TableSkeleton } from "@/components/common/table-skeleton";
 import { useLive } from "@/hooks/use-live";
 import { poolLabel, useT, type TFn } from "@/i18n";
+import { poolKindGroups } from "@/components/data/table-filters";
 import { jobsOnNode } from "@/lib/derive";
 import { fmtCountdown, fmtMB, parseDur } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -25,7 +26,7 @@ export default function NodesPage() {
   if (!snap) return <TableSkeleton />;
   const nodes = snap.nodes.slice().sort((a, b) => nodeWeight(a) - nodeWeight(b) || a.name.localeCompare(b.name));
   const facets: DataFacet<RawNode>[] = [
-    { columnId: "pool", label: t("jobs.filter.resource"), valueLabel: (v) => poolLabel(t, v) },
+    { columnId: "pool", label: t("jobs.filter.resource"), valueLabel: (v) => poolLabel(t, v), groups: poolKindGroups(snap, t) },
     { columnId: "state", label: t("col.state"), valuesFromRow: (node) => node.state },
     { columnId: "partitions", label: t("col.partition"), valuesFromRow: (node) => node.partitions },
   ];

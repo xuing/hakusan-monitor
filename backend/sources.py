@@ -148,6 +148,7 @@ def _wall_compact(s):
 def _parse_tres(text):
     out = {}
     gpu_vals = []
+    gpu_types = []
     for item in (text or "").split(","):
         if "=" not in item:
             continue
@@ -162,10 +163,14 @@ def _parse_tres(text):
             out["nodes"] = _int(val)
         elif key.startswith("gres/gpu"):
             gpu_vals.append(_int(val))
+            if key.startswith("gres/gpu:"):
+                gpu_types.append(key.split(":", 1)[1])
     if gpu_vals:
         # Slurm may show both generic and typed GPU TRES. Treat that as the same
         # limit rather than adding them together.
         out["gpus"] = max(gpu_vals)
+    if gpu_types:
+        out["gpu_type"] = "+".join(dict.fromkeys(gpu_types))
     return {k: v for k, v in out.items() if v}
 
 
@@ -309,12 +314,18 @@ def parse_queue(text, extras=None):
          end, start_est, left, name, qos, nodelist, used, timelimit, min_mem) = p[:19]
         extra = extras.get(str(jid)) or {}
         alloc = _parse_tres(extra.get("tres", ""))
-        gm = re.search(r"gpu:(?:[A-Za-z0-9_\-]+:)?(\d+)", gres or "")
+        gm = re.search(r"gpu:(?:([A-Za-z0-9_\-]+):)?(\d+)", gres or "")
         nnodes_i = int(nnodes) if nnodes.isdigit() else 0
         # GPUs: tres-alloc is authoritative (covers --gpus/--gpus-per-task jobs
         # that %b reports as N/A). Fallback: %b is GRES *per node*, so the job's
         # total = per-node × node count.
-        gpu = alloc.get("gpus") or (int(gm.group(1)) if gm else 0) * (nnodes_i or 1)
+        gpu = alloc.get("gpus") or (int(gm.group(2)) if gm else 0) * (nnodes_i or 1)
+        # GPU model: for running jobs tres-alloc holds the real allocation, but
+        # for pending jobs it's a scheduler placeholder (every untyped --gpus
+        # request shows the cluster's first GPU type) — only trust an explicitly
+        # requested type (%b) there.
+        requested_type = (gm.group(1) if gm else "") or ""
+        gpu_type = requested_type if state == "PENDING" else (alloc.get("gpu_type") or requested_type)
         # Memory: %m prints per-CPU requests with no suffix (MinMemoryCPU=6000M
         # shows as plain "6000M"), so it can be wrong by a factor of NumCPUs.
         # tres-alloc's mem= is the job's real (or planned) total.
@@ -326,6 +337,7 @@ def parse_queue(text, extras=None):
             "node_count": nnodes_i,
             "cpus": int(cpus) if cpus.isdigit() else 0,
             "gpus": gpu,
+            "gpu_type": gpu_type if gpu else "",
             "tres_req_str": f"gres/gpu={gpu}" if gpu else "",
             "container": extra.get("container", ""), "submit_time": _epoch(submit),
             "end_time": _clean(end), "start_est": _clean(start_est),

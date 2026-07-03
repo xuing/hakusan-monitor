@@ -297,6 +297,8 @@ export const zh: Record<TranslationKey, string> = {
   "queue.containers": "个使用容器",
   "queue.none": "没有排队作业",
   "jobs.group.cpu": "CPU / 无 GPU",
+  "jobs.groupAll.gpu": "全部 GPU",
+  "jobs.groupAll.cpu": "全部 CPU",
   "jobs.filter.state": "状态",
   "jobs.filter.resource": "资源",
   "releases.none": "暂无已知结束时间的运行作业。",
@@ -492,7 +494,7 @@ export const zh: Record<TranslationKey, string> = {
   "col.timeLeft": "剩余",
   "col.timeLimit": "上限",
   "col.endTime": "结束",
-  "col.startEst": "预计开始",
+  "col.startEst": "开始时间",
   "col.submit": "提交时间",
 
 

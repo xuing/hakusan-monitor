@@ -297,6 +297,8 @@ export const ja: Record<TranslationKey, string> = {
   "queue.containers": "がコンテナ利用",
   "queue.none": "待機中のジョブはありません",
   "jobs.group.cpu": "CPU / GPUなし",
+  "jobs.groupAll.gpu": "GPU 全体",
+  "jobs.groupAll.cpu": "CPU 全体",
   "jobs.filter.state": "状態",
   "jobs.filter.resource": "リソース",
   "releases.none": "終了予定が判明したジョブはありません。",
@@ -492,7 +494,7 @@ export const ja: Record<TranslationKey, string> = {
   "col.timeLeft": "残り",
   "col.timeLimit": "上限",
   "col.endTime": "終了",
-  "col.startEst": "開始予定",
+  "col.startEst": "開始時刻",
   "col.submit": "投入時刻",
 
 

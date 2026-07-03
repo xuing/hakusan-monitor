@@ -14,12 +14,22 @@ export const clockOf = (iso: string) => (iso ? iso.slice(11, 16) : ""); // "23:4
 export const dateOf = (iso: string) => (iso ? iso.slice(5, 10) : ""); // "06-27"
 export const fmtAt = (iso: string) => (iso ? `${dateOf(iso)} ${clockOf(iso)}` : "—");
 
-/** "2:27:53" -> "2:27" ; "1-13:17:04" -> "1-13:17" */
-export const fmtLeft = (s: string) => {
-  if (!s) return "";
-  const p = s.split(":");
-  return p.length >= 3 ? p.slice(0, 2).join(":") : s;
-};
+/** Slurm duration string -> two-unit form so the magnitude is unmistakable:
+ * "1-13:17:04" -> "1d 13h", "2:27:53" -> "2h 27m", "5:09" -> "5m 9s", "0:42" -> "42s".
+ * Non-durations ("UNLIMITED", "INVALID", "N/A") pass through untouched. */
+export function fmtDurUnits(raw: string): string {
+  if (!raw) return "";
+  if (!/^(\d+-)?\d+(:\d+)+$/.test(raw)) return raw;
+  const sec = parseDur(raw);
+  const d = Math.floor(sec / 86400);
+  const h = Math.floor((sec % 86400) / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const s = sec % 60;
+  if (d > 0) return h ? `${d}d ${h}h` : `${d}d`;
+  if (h > 0) return m ? `${h}h ${m}m` : `${h}h`;
+  if (m > 0) return s ? `${m}m ${s}s` : `${m}m`;
+  return `${s}s`;
+}
 
 /** MB -> human (the cluster reports memory in MB). */
 export const fmtMB = (mb: number | null | undefined) => {

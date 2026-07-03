@@ -7,7 +7,7 @@ import { useLive } from "@/hooks/use-live";
 import { poolLabel, useT, type TFn } from "@/i18n";
 import type { TranslationKey } from "@/i18n/en";
 import type { RawJob, Snapshot } from "@/types/snapshot";
-import { exactArrayFilter, setSingleFacet } from "@/components/data/table-filters";
+import { exactArrayFilter, poolKindGroups, setSingleFacet } from "@/components/data/table-filters";
 
 type JobTableRow = RawJob & { resource_pool: string };
 
@@ -39,7 +39,12 @@ export default function JobsPage() {
   if (!snap) return <TableSkeleton />;
   const jobs: JobTableRow[] = snap.jobs.map((j) => ({ ...j, resource_pool: jobResourcePool(j, snap) }));
   const facets: DataFacet<JobTableRow>[] = [
-    { columnId: "resource_pool", label: t("jobs.filter.resource"), valueLabel: (v) => resourceLabel(v, snap, t) },
+    {
+      columnId: "resource_pool",
+      label: t("jobs.filter.resource"),
+      valueLabel: (v) => resourceLabel(v, snap, t),
+      groups: poolKindGroups(snap, t),
+    },
     { columnId: "state", label: t("jobs.filter.state"), valueLabel: (v) => stateLabel(v, t) },
     { columnId: "partition", label: t("col.partition"), valuesFromRow: (j) => String(j.partition || "").split(",").filter(Boolean) },
     { columnId: "user_name", label: t("col.user") },

@@ -1,6 +1,6 @@
 import type { ColumnDef } from "@tanstack/react-table";
 import { reasonLabel, type TFn } from "@/i18n";
-import { fmtAt, fmtEpoch, fmtLeft, fmtMB } from "@/lib/format";
+import { fmtAt, fmtDurUnits, fmtEpoch, fmtMB } from "@/lib/format";
 import type { RawJob } from "@/types/snapshot";
 import { JobStateBadge } from "./cells";
 import { commaArrayFilter, exactArrayFilter, setSingleFacet } from "./table-filters";
@@ -72,7 +72,18 @@ export function jobColumns<T extends RawJob>(t: TFn): ColumnDef<T>[] {
     },
     { accessorKey: "node_count", header: t("col.nodes"), cell: ({ row }) => <span className="tnum font-mono text-xs">{row.original.node_count}</span> },
     { accessorKey: "cpus", header: t("col.cpus"), cell: ({ row }) => <span className="tnum font-mono text-xs">{row.original.cpus}</span> },
-    { accessorKey: "gpus", header: t("col.gpus"), cell: ({ row }) => <span className="tnum font-mono text-xs">{row.original.gpus || "—"}</span> },
+    {
+      accessorKey: "gpus",
+      header: t("col.gpus"),
+      cell: ({ row }) => (
+        <span className="tnum font-mono text-xs">
+          {row.original.gpus || "—"}
+          {row.original.gpus > 0 && row.original.gpu_type && (
+            <span className="text-muted-foreground"> {row.original.gpu_type.replace(/^nvidia_/, "")}</span>
+          )}
+        </span>
+      ),
+    },
     {
       id: "memory",
       accessorFn: (j) => j.min_memory_mb ?? 0,
@@ -81,14 +92,14 @@ export function jobColumns<T extends RawJob>(t: TFn): ColumnDef<T>[] {
     },
     { accessorKey: "qos", header: t("col.qos"), cell: ({ row }) => mono(row.original.qos, "text-muted-foreground") },
     { accessorKey: "nodelist", header: t("col.nodelist"), cell: ({ row }) => mono(row.original.nodelist, "text-muted-foreground") },
-    { accessorKey: "time_used", header: t("col.timeUsed"), cell: ({ row }) => mono(row.original.time_used) },
+    { accessorKey: "time_used", header: t("col.timeUsed"), cell: ({ row }) => mono(fmtDurUnits(row.original.time_used)) },
     {
       id: "timeleft",
       accessorFn: (j) => j.time_left,
       header: t("col.timeLeft"),
-      cell: ({ row }) => mono(fmtLeft(row.original.time_left)),
+      cell: ({ row }) => mono(fmtDurUnits(row.original.time_left)),
     },
-    { accessorKey: "time_limit", header: t("col.timeLimit"), cell: ({ row }) => mono(row.original.time_limit, "text-muted-foreground") },
+    { accessorKey: "time_limit", header: t("col.timeLimit"), cell: ({ row }) => mono(fmtDurUnits(row.original.time_limit), "text-muted-foreground") },
     {
       id: "end",
       accessorFn: (j) => j.end_time,

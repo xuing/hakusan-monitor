@@ -1,4 +1,16 @@
 import type { Row, Table } from "@tanstack/react-table";
+import type { TFn } from "@/i18n";
+import type { Snapshot } from "@/types/snapshot";
+
+/** "All GPU" / "All CPU" quick-select bundles for the resource/pool facets. The
+ * "cpu" sentinel is the jobs page's fallback pool for jobs outside every pool. */
+export function poolKindGroups(snap: Snapshot, t: TFn) {
+  const ids = (kind: string) => snap.pools.filter((p) => p.kind === kind).map((p) => p.id);
+  return [
+    { label: t("jobs.groupAll.gpu"), values: ids("gpu") },
+    { label: t("jobs.groupAll.cpu"), values: [...ids("cpu"), "cpu"] },
+  ];
+}
 
 export function exactArrayFilter<T>(row: Row<T>, columnId: string, filterValue: unknown) {
   const selected = normalizeFilter(filterValue);

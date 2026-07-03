@@ -55,6 +55,8 @@ export interface DataFacet<T> {
   label: string;
   valueLabel?: (value: string) => string;
   valuesFromRow?: (row: T) => string[];
+  /** Quick-select bundles shown above the value list (e.g. "All GPU" -> every GPU pool). */
+  groups?: { label: string; values: string[] }[];
 }
 
 interface DataTableProps<T> {
@@ -334,6 +336,33 @@ function FacetDropdown<T>({ table, facet }: { table: TanStackTable<T>; facet: Da
                 <DropdownMenuSeparator />
               </>
             )}
+            {(facet.groups ?? []).map((group) => {
+              const inGroup = options.filter((o) => group.values.includes(o.value));
+              if (!inGroup.length) return null;
+              const allOn = inGroup.every((o) => selectedSet.has(o.value));
+              return (
+                <DropdownMenuCheckboxItem
+                  key={group.label}
+                  checked={allOn}
+                  onCheckedChange={() => {
+                    const next = new Set(selectedSet);
+                    for (const o of inGroup) {
+                      if (allOn) next.delete(o.value);
+                      else next.add(o.value);
+                    }
+                    applySelection([...next]);
+                  }}
+                  onSelect={(e) => e.preventDefault()}
+                  className="text-xs font-medium"
+                >
+                  <span className="min-w-0 flex-1 truncate">{group.label}</span>
+                  <span className="ml-3 font-mono text-[10px] text-muted-foreground">
+                    {inGroup.reduce((n, o) => n + o.count, 0)}
+                  </span>
+                </DropdownMenuCheckboxItem>
+              );
+            })}
+            {(facet.groups ?? []).some((g) => options.some((o) => g.values.includes(o.value))) && <DropdownMenuSeparator />}
             {options.map((option) => (
               <DropdownMenuCheckboxItem
                 key={option.value}

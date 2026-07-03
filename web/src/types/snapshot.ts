@@ -289,6 +289,7 @@ export interface RawJob {
   node_count: number;
   cpus: number;
   gpus: number;
+  gpu_type?: string;
   tres_req_str: string;
   min_memory?: string;
   min_memory_mb?: number;

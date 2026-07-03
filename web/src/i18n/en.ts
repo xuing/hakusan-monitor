@@ -297,6 +297,8 @@ export const en = {
   "queue.containers": "use containers",
   "queue.none": "No pending jobs",
   "jobs.group.cpu": "CPU / no GPU",
+  "jobs.groupAll.gpu": "All GPU",
+  "jobs.groupAll.cpu": "All CPU",
   "jobs.filter.state": "State",
   "jobs.filter.resource": "Resource",
   "releases.none": "No running jobs report a known end time.",
@@ -493,7 +495,7 @@ export const en = {
   "col.timeLeft": "Left",
   "col.timeLimit": "Limit",
   "col.endTime": "Ends",
-  "col.startEst": "Est. start",
+  "col.startEst": "Start",
   "col.submit": "Submitted",
 
 
