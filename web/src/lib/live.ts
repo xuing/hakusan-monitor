@@ -14,6 +14,8 @@ export function connectLive({ onSnapshot, onStatus }: LiveHandlers): () => void 
   let closed = false;
   let es: EventSource | null = null;
   let pollTimer: ReturnType<typeof setInterval> | null = null;
+  let watchdog: ReturnType<typeof setInterval> | null = null;
+  let lastBeat = Date.now(); // last proof the stream is alive (snapshot or ping)
   let gotData = false;
 
   const stopPolling = () => {
@@ -39,13 +41,15 @@ export function connectLive({ onSnapshot, onStatus }: LiveHandlers): () => void 
     pollTimer = setInterval(() => void tick(), 15000);
   };
 
-  if (typeof EventSource === "undefined") {
-    startPolling();
-  } else {
+  const connect = () => {
+    if (closed) return;
+    es?.close();
+    lastBeat = Date.now();
     es = new EventSource("/api/stream");
     es.onmessage = (e) => {
       if (closed) return;
       gotData = true;
+      lastBeat = Date.now();
       stopPolling(); // SSE is back — drop the safety-net poller
       onStatus("live");
       try {
@@ -54,6 +58,11 @@ export function connectLive({ onSnapshot, onStatus }: LiveHandlers): () => void 
         /* ignore malformed frame */
       }
     };
+    // Server heartbeat (15 s). Snapshots only arrive on new samples (minutes
+    // apart), so this is the only way to tell "quiet but alive" from "dead".
+    es.addEventListener("ping", () => {
+      lastBeat = Date.now();
+    });
     es.onerror = () => {
       if (closed) return;
       onStatus(gotData ? "reconnecting" : "offline");
@@ -63,11 +72,40 @@ export function connectLive({ onSnapshot, onStatus }: LiveHandlers): () => void 
       if (!gotData) es?.close();
       startPolling();
     };
+  };
+
+  const wake = () => {
+    // Coming back from sleep / regaining network: don't wait for the watchdog.
+    if (closed || !es) return;
+    if (document.visibilityState !== "hidden" && Date.now() - lastBeat > 20_000) connect();
+  };
+
+  if (typeof EventSource === "undefined") {
+    startPolling();
+  } else {
+    connect();
+    // A silently dead socket (laptop sleep, wifi switch, NAT timeout) fires no
+    // error event — the page would just freeze on old data. Three missed
+    // heartbeats means the stream is gone: rebuild it (the server replays the
+    // latest snapshot on connect) and poll to cover the gap.
+    watchdog = setInterval(() => {
+      if (closed || !es) return;
+      if (Date.now() - lastBeat > 45_000) {
+        onStatus(gotData ? "reconnecting" : "offline");
+        startPolling();
+        connect();
+      }
+    }, 10_000);
+    document.addEventListener("visibilitychange", wake);
+    window.addEventListener("online", wake);
   }
 
   return () => {
     closed = true;
     es?.close();
     if (pollTimer) clearInterval(pollTimer);
+    if (watchdog) clearInterval(watchdog);
+    document.removeEventListener("visibilitychange", wake);
+    window.removeEventListener("online", wake);
   };
 }

@@ -112,6 +112,25 @@ uses one short read-only command per configured node per interval
 SQLite. Disk space is displayed for reference; disk pressure uses `iostat` when
 available.
 
+### Sampling cadence & cost
+
+Everything below is read-only. The sampler ticks on a fixed cadence (a slow
+round doesn't delay the next one), and fresh cluster data is pushed to browsers
+*before* login-node collection runs, so a wedged login node can't hold it back.
+
+| What | Cadence | Cost on the login node |
+|---|---|---|
+| Cluster snapshot — `scontrol -o show nodes`, `squeue` (jobs), `squeue -O` (per-job tres/container) | 300 s · `HM_SAMPLE_INTERVAL` | one SSH round trip, typically 2–5 s |
+| CPU queue prediction — `sbatch --test-only` × 9 CPU partitions (submits nothing) | 900 s · `HM_CPU_PROBE_INTERVAL` | piggybacks on the snapshot connection; up to +36 s (≤4 s/partition) |
+| Policy & quotas — `sacctmgr show qos`, `scontrol show partition` | 24 h · `HM_POLICY_INTERVAL` | +a few seconds, same connection |
+| Login-node health — loadavg/meminfo/df/iostat/ps | 300 s · `HM_LOGIN_INTERVAL` | one SSH per node, both nodes in parallel, 1–3 s (`iostat` holds a 1 s window) |
+| Container runtime — `singularity --version` | once, first successful sample | negligible |
+| Browser push — SSE | on every new sample | none; a 15 s heartbeat event lets clients detect silently dead connections and reconnect |
+
+The dominant per-cycle cost is the SSH connection itself (0.3–1.2 s cold), so
+`ControlPersist` is set longer than the sample interval to keep one warm,
+reused connection per host.
+
 ## Quick start (demo, no cluster)
 
 ```bash

@@ -19,8 +19,8 @@ const SLURM_POLL_COMMAND =
   "# realtime snapshot: HM_SAMPLE_INTERVAL\n" +
   "scontrol -o show nodes\n" +
   "squeue -h -a -o '<compact fields>'\n" +
-  "# container column; best effort\n" +
-  "squeue -h -a -O 'JobID:64,Container:512'  # optional: container column\n" +
+  "# effective per-job mem/GPU + container; best effort\n" +
+  "squeue -h -a -O 'JobID:64,tres-alloc:256,Container:512'\n" +
   "# CPU prediction: HM_CPU_PROBE_INTERVAL; no job submitted\n" +
   "for p in TINY DEF SINGLE SMALL LARGE XLARGE X2LARGE LONG LONG-L; do\n" +
   "  sbatch --test-only -p \"$p\" --wrap=hostname\n" +
@@ -42,6 +42,16 @@ const LOGIN_POLL_COMMAND =
   "grep '^cpu ' /proc/stat  # after iostat\n" +
   "ps -eo pid=,user=,stat=,pcpu=,pmem=,rss=,etimes=,comm=";
 
+// what / cost are i18n keys; `every` is language-neutral (interval + env knob).
+const CADENCE_ROWS: { what: TranslationKey; every: string; cost: TranslationKey }[] = [
+  { what: "guide.project.cad.snap.what", every: "300 s · HM_SAMPLE_INTERVAL", cost: "guide.project.cad.snap.cost" },
+  { what: "guide.project.cad.probe.what", every: "900 s · HM_CPU_PROBE_INTERVAL", cost: "guide.project.cad.probe.cost" },
+  { what: "guide.project.cad.policy.what", every: "24 h · HM_POLICY_INTERVAL", cost: "guide.project.cad.policy.cost" },
+  { what: "guide.project.cad.login.what", every: "300 s · HM_LOGIN_INTERVAL", cost: "guide.project.cad.login.cost" },
+  { what: "guide.project.cad.sing.what", every: "—", cost: "guide.project.cad.sing.cost" },
+  { what: "guide.project.cad.sse.what", every: "—", cost: "guide.project.cad.sse.cost" },
+];
+
 export default function ProjectGuidePage() {
   const t = useT();
 
@@ -59,6 +69,29 @@ export default function ProjectGuidePage() {
             <ExternalLink className="h-3.5 w-3.5" />
           </a>
           <InfoList title={t("guide.project.pollTitle")} keys={PROJECT_POLLING} />
+        </div>
+      </SectionCard>
+
+      <SectionCard title={t("guide.project.cadenceTitle")}>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-border text-left text-xs uppercase tracking-wide text-muted-foreground">
+                <th className="py-1.5 pr-3 font-medium">{t("guide.project.cad.what")}</th>
+                <th className="py-1.5 pr-3 font-medium">{t("guide.project.cad.every")}</th>
+                <th className="py-1.5 font-medium">{t("guide.project.cad.cost")}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {CADENCE_ROWS.map((row) => (
+                <tr key={row.what} className="border-b border-border/50 align-top last:border-0">
+                  <td className="py-2 pr-3">{t(row.what)}</td>
+                  <td className="whitespace-nowrap py-2 pr-3 font-mono text-xs text-muted-foreground">{row.every}</td>
+                  <td className="py-2 text-muted-foreground">{t(row.cost)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       </SectionCard>
 

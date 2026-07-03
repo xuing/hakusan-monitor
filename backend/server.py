@@ -83,7 +83,9 @@ CFG = {
                   "-o BatchMode=yes -o ConnectTimeout=8 -o ServerAliveInterval=15 "
                   "-o StrictHostKeyChecking=accept-new "
                   "-o ControlMaster=auto -o ControlPath=~/.ssh/hm-%r@%h:%p "
-                  "-o ControlPersist=120"),   # reuse one warm connection
+                  # persist must outlive the sample interval (default 300 s) or
+                  # every cycle pays a cold TCP+KEX+auth handshake
+                  "-o ControlPersist=600"),
     "port":       int(env("HM_PORT", "8787")),
     "source_timeout": float(env("HM_SOURCE_TIMEOUT", "75")),
     "interval":   float(env("HM_SAMPLE_INTERVAL", "300")),   # 5 min — gentle on the login node
@@ -181,6 +183,9 @@ class Engine:
             self._n += 1
             if self._n % 120 == 1:
                 self.store.prune(now)
+            # Push the cluster snapshot before login-node collection: a login
+            # node timing out must not delay fresh cluster data by its timeout.
+            self._broadcast(snap)
             try:
                 login_payload, refreshed = self.login.fetch(now)
                 login_payload = {**login_payload,
@@ -193,7 +198,6 @@ class Engine:
                                     "configured": bool(self.cfg["login_nodes"]),
                                     "nodes": [], "top_users": [], "stale": True,
                                     "error": str(e)}
-            self._broadcast(snap)
             return snap
         except Exception as e:
             self.error = str(e)
@@ -209,8 +213,12 @@ class Engine:
 
     def run(self):
         while True:
+            t0 = time.time()
             self.sample_once()
-            time.sleep(self.cfg["interval"])
+            # Fixed cadence: subtract the collection time so a slow round (login
+            # node timing out, probe cycle) doesn't push every later sample back —
+            # that drift is how data age crept to 6-8 min under failures.
+            time.sleep(max(5.0, self.cfg["interval"] - (time.time() - t0)))
 
     def snapshot(self):
         # Wait briefly for the background sampler's first result, then give up
@@ -393,7 +401,10 @@ class Handler(BaseHTTPRequestHandler):
                     snap = q.get(timeout=15)
                     self._event(snap)
                 except queue.Empty:
-                    self.wfile.write(b": ping\n\n")   # heartbeat
+                    # Named event (not an SSE comment): comments are invisible to
+                    # EventSource, so the client couldn't tell a quiet-but-alive
+                    # stream from a silently dead socket. This feeds its watchdog.
+                    self.wfile.write(b"event: ping\ndata: {}\n\n")
                     self.wfile.flush()
         except (BrokenPipeError, ConnectionResetError):
             pass
