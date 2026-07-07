@@ -7,6 +7,7 @@ import type {
   Meta,
   Snapshot,
   UsagePattern,
+  VisitStats,
 } from "@/types/snapshot";
 
 async function get<T>(path: string): Promise<T> {
@@ -21,6 +22,7 @@ export const api = {
   history: (hours = 24) =>
     get<{ since: number; until: number; points: HistoryPoint[] }>(`/api/history?hours=${hours}`),
   usage: (days = 30) => get<UsagePattern>(`/api/usage?days=${days}`),
+  visits: (days = 30) => get<VisitStats>(`/api/visits?days=${days}`),
   loginNodes: () => get<LoginNodesResponse>("/api/login-nodes"),
   loginHistory: (hours = 24) =>
     get<{ since: number; until: number; points: LoginHistoryPoint[] }>(

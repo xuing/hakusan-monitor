@@ -1,6 +1,11 @@
+import { BarChart } from "@tremor/react";
 import { ExternalLink } from "lucide-react";
+import { ChartPlaceholder } from "@/components/common/chart-placeholder";
+import { Empty } from "@/components/common/empty";
 import { SectionCard } from "@/components/common/section-card";
+import { useApi } from "@/hooks/use-api";
 import { useT, type TranslationKey } from "@/i18n";
+import { api } from "@/lib/api";
 
 const PROJECT_POLLING: TranslationKey[] = [
   "guide.project.poll.1",
@@ -105,6 +110,59 @@ export default function ProjectGuidePage() {
       <SectionCard title={t("guide.project.lightTitle")}>
         <InfoList keys={PROJECT_LIGHT} />
       </SectionCard>
+
+      <VisitsCard />
+    </div>
+  );
+}
+
+function VisitsCard() {
+  const t = useT();
+  const { data, loading } = useApi(() => api.visits(30), null, 300_000);
+
+  const daily = (data?.daily ?? []).map((d) => ({
+    day: d.day.slice(5), // MM-DD
+    [t("guide.visits.daily")]: d.visitors,
+  }));
+
+  return (
+    <SectionCard title={t("guide.visits.title")} extra={t("guide.visits.note")}>
+      {!data && loading ? (
+        <ChartPlaceholder className="h-40" />
+      ) : !data ? (
+        <Empty>{t("common.fetchError")}</Empty>
+      ) : (
+        <div className="space-y-4">
+          <div className="grid grid-cols-3 gap-3">
+            <VisitStat label={t("guide.visits.today")} value={data.today.visitors} />
+            <VisitStat label={t("guide.visits.window")} value={data.window.visitors} />
+            <VisitStat label={t("guide.visits.totalHits")} value={data.total.hits} />
+          </div>
+          {data.total.hits === 0 ? (
+            <Empty>{t("guide.visits.nodata")}</Empty>
+          ) : (
+            <BarChart
+              data={daily}
+              index="day"
+              categories={[t("guide.visits.daily")]}
+              colors={["blue"]}
+              startEndOnly
+              showLegend={false}
+              yAxisWidth={32}
+              className="h-40"
+            />
+          )}
+        </div>
+      )}
+    </SectionCard>
+  );
+}
+
+function VisitStat({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="rounded-lg border border-border px-3 py-2">
+      <div className="text-xs text-muted-foreground">{label}</div>
+      <div className="mt-0.5 font-mono text-xl font-semibold tabular-nums">{value.toLocaleString()}</div>
     </div>
   );
 }

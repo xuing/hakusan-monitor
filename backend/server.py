@@ -6,7 +6,7 @@ Architecture:
                                               ├─ keeps latest snapshot (real-time)
                                               ├─ Store (SQLite TSDB: retention + rollup)
                                               └─ fan-out to SSE subscribers
-    HTTP: /api/snapshot /api/stream(SSE) /api/history /api/usage /api/meta /api/health
+    HTTP: /api/snapshot /api/stream(SSE) /api/history /api/usage /api/visits /api/meta /api/health
           + static SPA.
 
 A background Sampler thread polls on a fixed cadence, so data collection is
@@ -15,7 +15,7 @@ decoupled from requests (true real-time push + durable history for peak/trough).
 Run:  python3 backend/server.py     (see env vars below)
 """
 from __future__ import annotations
-import json, math, os, sys, time, queue, threading
+import hashlib, json, math, os, sys, time, queue, threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
@@ -369,6 +369,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/usage":
             days = query_int(q, "days", 30, 1, 365)
             return self._json(200, eng.store.usage_pattern(days))
+        if path == "/api/visits":
+            days = query_int(q, "days", 30, 1, 365)
+            return self._json(200, eng.store.visit_stats(days))
         if path == "/api/meta":
             return self._json(200, eng.meta())
         if path == "/api/health":
@@ -415,6 +418,19 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(b"data: " + json.dumps(obj).encode() + b"\n\n")
         self.wfile.flush()
 
+    def _record_visit(self):
+        """Anonymous visit counter: hash(ip|user-agent), never blocks serving."""
+        try:
+            ua = self.headers.get("User-Agent", "")
+            if any(m in ua.lower() for m in ("bot", "crawl", "spider", "curl", "wget")):
+                return
+            fwd = self.headers.get("X-Forwarded-For", "")
+            ip = fwd.split(",")[0].strip() if fwd else self.client_address[0]
+            visitor = hashlib.sha256(f"{ip}|{ua}".encode()).hexdigest()[:16]
+            self.engine.store.record_visit(visitor, time.time())
+        except Exception:
+            pass
+
     def _static(self, path):
         root = os.path.realpath(FRONTEND)
         rel = "index.html" if path in ("/", "") else path.lstrip("/")
@@ -424,6 +440,9 @@ class Handler(BaseHTTPRequestHandler):
             full = os.path.join(root, "index.html")   # SPA fallback
             if not os.path.isfile(full):
                 return self._json(404, {"error": "not found"})
+        # A served index.html is one SPA page entry — assets/API calls don't count.
+        if os.path.basename(full) == "index.html" and self.command == "GET":
+            self._record_visit()
         with open(full, "rb") as f:
             data = f.read()
         ext = os.path.splitext(full)[1]

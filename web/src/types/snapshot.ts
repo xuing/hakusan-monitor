@@ -467,3 +467,17 @@ export interface LoginHistoryPoint {
   inode_used_max: number;
   d_state: number;
 }
+
+export interface VisitDay {
+  day: string;
+  visitors: number;
+  hits: number;
+}
+
+export interface VisitStats {
+  days: number;
+  daily: VisitDay[];
+  today: { visitors: number; hits: number };
+  window: { visitors: number; hits: number };
+  total: { visitors: number; hits: number; since: string | null };
+}

@@ -45,6 +45,12 @@ CREATE TABLE IF NOT EXISTS login_samples (
 );
 CREATE INDEX IF NOT EXISTS idx_login_samples_node_ts
   ON login_samples(node_id, ts);
+CREATE TABLE IF NOT EXISTS visits (
+  day     TEXT,                               -- local date, YYYY-MM-DD
+  visitor TEXT,                               -- anonymous hash of ip|user-agent
+  hits    INTEGER NOT NULL DEFAULT 1,
+  PRIMARY KEY (day, visitor)
+);
 """
 
 
@@ -150,6 +156,16 @@ class Store:
                     ),
                 )
 
+    def record_visit(self, visitor, ts):
+        """Count one page entry for an anonymous visitor hash, bucketed by local day."""
+        day = time.strftime("%Y-%m-%d", time.localtime(ts))
+        c = self._conn()
+        with c:
+            c.execute(
+                """INSERT INTO visits (day, visitor, hits) VALUES (?, ?, 1)
+                   ON CONFLICT(day, visitor) DO UPDATE SET hits = hits + 1""",
+                (day, visitor))
+
     def prune(self, now):
         cutoff = int(now) - self.retain_days * 86400
         c = self._conn()
@@ -196,6 +212,40 @@ class Store:
                 d.pop("rn", None)
                 out.append(d)
         return out
+
+    def visit_stats(self, days=30, now=None):
+        """Daily unique visitors / hits for the last `days` local days, plus totals."""
+        now = int(now or time.time())
+        today = time.strftime("%Y-%m-%d", time.localtime(now))
+        first_day = time.strftime("%Y-%m-%d", time.localtime(now - (days - 1) * 86400))
+        c = self._conn()
+        rows = c.execute(
+            """SELECT day, count(*) AS visitors, sum(hits) AS hits
+               FROM visits WHERE day >= ? GROUP BY day ORDER BY day""",
+            (first_day,)).fetchall()
+        by_day = {r["day"]: r for r in rows}
+        daily = []
+        for i in range(days - 1, -1, -1):
+            day = time.strftime("%Y-%m-%d", time.localtime(now - i * 86400))
+            r = by_day.get(day)
+            daily.append({"day": day,
+                          "visitors": r["visitors"] if r else 0,
+                          "hits": r["hits"] if r else 0})
+        totals = c.execute(
+            """SELECT count(DISTINCT visitor) AS visitors,
+                      coalesce(sum(hits), 0) AS hits,
+                      min(day) AS since
+               FROM visits""").fetchone()
+        window = c.execute(
+            """SELECT count(DISTINCT visitor) AS visitors,
+                      coalesce(sum(hits), 0) AS hits
+               FROM visits WHERE day >= ?""", (first_day,)).fetchone()
+        today_row = by_day.get(today)
+        return {"days": days, "daily": daily,
+                "today": {"visitors": today_row["visitors"] if today_row else 0,
+                          "hits": today_row["hits"] if today_row else 0},
+                "window": dict(window),
+                "total": dict(totals)}
 
     def usage_pattern(self, days=30):
         """Peak/trough analysis from the hourly rollup, in **local** time.
