@@ -501,13 +501,17 @@ class Source:
         singularity_cmd = ("singularity --version 2>/dev/null || true"
                            if self.singularity is None else "true")
         sep_q = shlex.quote(SEP)
-        cpu_parts = " ".join(shlex.quote(p) for p in CPU_TEST_PARTITIONS)
-        cpu_probe_cmd = ((
-            f"SEP={sep_q}; for p in {cpu_parts}; do "
-            "out=$(timeout 4s sbatch --test-only -p \"$p\" --wrap=hostname 2>&1); rc=$?; "
-            "printf '%s%s%s%s%s\\n' \"$p\" \"$SEP\" \"$rc\" \"$SEP\" \"$out\"; "
-            "done"
-        ) if probe_due else "true")
+        # The probe's verdict is displayed next to a `salloc -p X` command, and
+        # job_submit.lua pins interactive walltime to 2880 min on every CPU/VM
+        # partition (TINY alone honors -t). Probe with that same walltime so
+        # "starts now" is a statement about the salloc the user will actually
+        # run — with reservations around, walltime decides backfill.
+        cpu_probes = "; ".join(
+            "out=$(timeout 4s sbatch --test-only -p {p}{t} --wrap=hostname 2>&1); rc=$?; "
+            "printf '%s%s%s%s%s\\n' {p} \"$SEP\" \"$rc\" \"$SEP\" \"$out\"".format(
+                p=shlex.quote(p), t="" if p == "TINY" else " -t 2-00:00:00")
+            for p in CPU_TEST_PARTITIONS)
+        cpu_probe_cmd = f"SEP={sep_q}; {cpu_probes}" if probe_due else "true"
         qos_cmd = (
             "timeout 8s sacctmgr -n -P show qos "
             "format=Name,MaxTRES%200,MaxWall,GrpJobs,MaxJobsPU,MaxSubmitPU,MinTRES%200,Flags%100 "

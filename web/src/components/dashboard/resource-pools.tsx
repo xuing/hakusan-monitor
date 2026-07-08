@@ -43,6 +43,18 @@ import { cn } from "@/lib/utils";
 import { cpuProbeRows, cpuProbeState, type CpuProbeRow } from "@/lib/cpu-probes";
 import type { Occupant, Partition, Pool, PoolGpu, RawJob, Snapshot } from "@/types/snapshot";
 
+// Hakusan's job_submit.lua overrides -t on every interactive (salloc) job —
+// set, not capped — to a per-partition-class constant. Measured live 2026-07:
+// GPU partitions (incl. VM-GPU-L) → "time limit is set to 720 minutes"; CPU/
+// VM/LM partitions → "2880 minutes"; TINY alone honors -t (5-min salloc ran
+// as requested). Batch (sbatch) keeps its -t everywhere. Walltime-based
+// verdicts and tips must use these values in interactive mode; short--t
+// tricks are only deliverable through script mode.
+function interactiveForcedSec(partition: string, isGpu: boolean): number | null {
+  if (partition === "TINY") return null;
+  return (isGpu ? 720 : 2880) * 60;
+}
+
 // Minimal starter per pool. Hakusan's submit plugin applies the partition
 // defaults, including the GPU partition's default one GPU per node.
 const SAMPLE: Record<string, { partition: string; requiredFlags?: string[] }> = {
@@ -368,6 +380,19 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
   const bfTip = isGpu && gpuFit && !gpuTip && !groupLimitReached
     ? gpuBackfillTipCommand(gpuFit, pool, pendingActive, Date.now())
     : null;
+  // salloc can't take the -t deal (plugin forces the walltime): in interactive
+  // mode the tip must either say "switch to script mode" or, when the gap
+  // already holds the forced 12h, reduce to the --mem part. mem-less + gap ≥
+  // 12h needs no tip — the queue verdict below already flips to "can start".
+  const forcedSec = mode === "interactive" ? interactiveForcedSec(partition, isGpu) : null;
+  const bfWindowSec = bfTip ? parseWalltimeSec(bfTip.t) : 0;
+  const bfVariant: "script" | "switch" | "fits" | null = !bfTip
+    ? null
+    : forcedSec === null
+      ? "script"
+      : bfWindowSec >= forcedSec
+        ? (bfTip.mem ? "fits" : null)
+        : "switch";
   const defaultGpuBlocked = Boolean(isGpu && gpuFit && gpuFit.rawFree > 0 && gpuFit.schedulable <= 0);
   const showGpuFitDetails = Boolean(defaultGpuBlocked && !memValue);
   const queueHint = selectedCpuRow
@@ -383,14 +408,16 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
         queueFact,
         gpuFit: effectiveGpuFit,
         pendingActive,
-        userTimeSec: parseWalltimeSec(time),
+        // the plugin-forced walltime, not the -t field, is what Slurm sees
+        userTimeSec: forcedSec ?? parseWalltimeSec(time),
         t,
       });
   const flags = [`-p ${partition}`, ...(base.requiredFlags ?? [])];
   if (nodeCount) flags.push(`-N ${nodeCount}`);
   if (coreCount) flags.push(`-c ${coreCount}`);
   if (memValue) flags.push(`--mem=${memValue}`);
-  if (time.trim()) flags.push(`-t ${time.trim()}`);
+  // a -t on a forced-walltime salloc is silently ignored — don't emit one
+  if (time.trim() && forcedSec === null) flags.push(`-t ${time.trim()}`);
   const script = scriptFile.trim() || "job.sh";
   const cmd = mode === "interactive" ? `salloc ${flags.join(" ")}` : `sbatch ${flags.join(" ")} ${script}`;
   const policyName = trMaybe(t, `policy.${partition}`, partition);
@@ -480,6 +507,11 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
             <code className="flex-1 overflow-x-auto whitespace-nowrap font-mono text-[11px] text-zinc-100">{cmd}</code>
             <CopyButton text={cmd} label className="text-zinc-400 hover:bg-white/10 hover:text-zinc-100" />
           </div>
+          {/* script mode is the only route to a short walltime on GPU
+              partitions — offer the verified way to still get a shell */}
+          {mode === "script" && isGpu && (
+            <div className="text-[10px] leading-relaxed text-muted-foreground">{t("pool.scriptPtyHint")}</div>
+          )}
 
           {/* why / limits — explanation reads after the deliverable, not before it */}
           <div className="rounded-md border border-border bg-muted/30 px-2.5 py-2">
@@ -510,13 +542,25 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
                 t={t}
               />
             )}
-            {bfTip && (
+            {bfTip && bfVariant && (
               <GpuBackfillQuickTip
                 tip={bfTip}
-                applied={time === bfTip.t && (!bfTip.mem || memValue === bfTip.mem)}
+                variant={bfVariant}
+                applied={
+                  bfVariant === "fits"
+                    ? memValue === bfTip.mem
+                    : bfVariant === "switch"
+                      // still in interactive mode — the advice (switch to
+                      // script) hasn't been taken even if -t/--mem match
+                      ? false
+                      : time === bfTip.t && (!bfTip.mem || memValue === bfTip.mem)
+                }
                 onApply={() => {
                   if (bfTip.mem) setMem(bfTip.mem);
-                  setTime(bfTip.t);
+                  if (bfVariant !== "fits") {
+                    setTime(bfTip.t);
+                    if (bfVariant === "switch") setMode("script");
+                  }
                   setAdvanced(true);
                 }}
                 t={t}
@@ -568,15 +612,22 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
                   {memError && <span className="mt-0.5 block text-[10px] leading-tight text-bad-fg">{memError}</span>}
                 </Field>
                 <Field label={t("pool.time")}>
-                  <select value={time} onChange={(e) => setTime(e.target.value)} className={fieldCls}>
-                    {/* backfill-tip suggestions aren't in the canonical list */}
-                    {time && !timeOptions.some((opt) => opt.value === time) && (
-                      <option value={time}>{time}</option>
-                    )}
-                    {timeOptions.map((opt) => (
-                      <option key={opt.value || "default"} value={opt.value}>{opt.label}</option>
-                    ))}
-                  </select>
+                  {forcedSec !== null ? (
+                    // the plugin pins interactive walltime; a select would lie
+                    <div className={cn(fieldCls, "flex items-center truncate text-muted-foreground")}>
+                      {t("pool.timeForcedInteractive", { t: forcedSec === 720 * 60 ? "12h" : "2d" })}
+                    </div>
+                  ) : (
+                    <select value={time} onChange={(e) => setTime(e.target.value)} className={fieldCls}>
+                      {/* backfill-tip suggestions aren't in the canonical list */}
+                      {time && !timeOptions.some((opt) => opt.value === time) && (
+                        <option value={time}>{time}</option>
+                      )}
+                      {timeOptions.map((opt) => (
+                        <option key={opt.value || "default"} value={opt.value}>{opt.label}</option>
+                      ))}
+                    </select>
+                  )}
                 </Field>
               </div>
               <div className="text-[10px] leading-relaxed text-muted-foreground">{t("pool.nodeRequestHint")}</div>
@@ -917,25 +968,42 @@ function GpuFitQuickTip({
 
 function GpuBackfillQuickTip({
   tip,
+  variant,
   applied,
   onApply,
   t,
 }: {
   tip: GpuBackfillTipData;
+  /** script: normal -t advice · switch: salloc can't -t, offer script mode · fits: gap ≥ forced 12h, only --mem needed */
+  variant: "script" | "switch" | "fits";
   applied: boolean;
   onApply: () => void;
   t: TFn;
 }) {
   const until = clockShort(tip.untilMs);
+  const text =
+    variant === "switch"
+      ? tip.mem
+        ? t("pool.bfTipSalloc", { node: tip.node, until, mem: tip.mem, t: tip.t })
+        : t("pool.bfTipSallocTime", { node: tip.node, until, t: tip.t })
+      : variant === "fits"
+        ? t("pool.bfTipFits", { node: tip.node, until, mem: tip.mem })
+        : tip.mem
+          ? t("pool.bfTipText", { node: tip.node, until, mem: tip.mem, t: tip.t })
+          : t("pool.bfTipTextTime", { node: tip.node, until, t: tip.t });
+  const applyLabel =
+    variant === "switch"
+      ? t("pool.bfTipSallocApply")
+      : variant === "fits"
+        ? t("pool.fitTipApply", { mem: tip.mem })
+        : tip.mem
+          ? t("pool.bfTipApply", { mem: tip.mem, t: tip.t })
+          : t("pool.bfTipApplyTime", { t: tip.t });
   return (
     <div className="mt-2 rounded-md border border-info/40 bg-info-soft/45 px-2 py-1.5 text-[10px] leading-relaxed">
       <div className="flex flex-wrap items-center gap-1.5">
         <Tag tone="info">{t("pool.bfTip")}</Tag>
-        <span className="text-foreground">
-          {tip.mem
-            ? t("pool.bfTipText", { node: tip.node, until, mem: tip.mem, t: tip.t })
-            : t("pool.bfTipTextTime", { node: tip.node, until, t: tip.t })}
-        </span>
+        <span className="text-foreground">{text}</span>
         <button
           type="button"
           onClick={onApply}
@@ -946,11 +1014,7 @@ function GpuBackfillQuickTip({
               : "border-info/45 bg-background/80 text-info-fg hover:bg-info-soft",
           )}
         >
-          {applied
-            ? t("pool.fitTipApplied")
-            : tip.mem
-              ? t("pool.bfTipApply", { mem: tip.mem, t: tip.t })
-              : t("pool.bfTipApplyTime", { t: tip.t })}
+          {applied ? t("pool.fitTipApplied") : applyLabel}
         </button>
       </div>
     </div>
