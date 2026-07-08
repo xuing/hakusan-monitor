@@ -38,7 +38,7 @@ import {
   type GpuFitNode,
   type GpuFitTipData,
 } from "@/lib/gpu-fit";
-import { isMaterialsStudioPartition, matchPool, partitionCap, partitionPolicy, type PartitionPolicy } from "@/lib/slurm";
+import { isMaterialsStudioPartition, matchPool, partitionCap, partitionPolicy, type PartitionPolicy, type Tone } from "@/lib/slurm";
 import { cn } from "@/lib/utils";
 import { cpuProbeRows, cpuProbeState, type CpuProbeRow } from "@/lib/cpu-probes";
 import type { Occupant, Partition, Pool, PoolGpu, RawJob, Snapshot } from "@/types/snapshot";
@@ -404,23 +404,17 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
   const partitionGroups = partitionOptionGroups(pool.partitions, t);
   const fieldCls = "h-7 w-full rounded-md border border-border bg-background px-2 text-[11px] outline-none focus:border-primary";
 
-  // Collapsed one-glance verdict for the row: the queue hint where it exists,
-  // otherwise the probe result for the default CPU partition.
-  const selectedProbeState = selectedCpuRow ? cpuProbeState(selectedCpuRow.probe, cpuProbeGeneratedAt) : null;
-  const rowHint = queueHint ?? (selectedProbeState
-    ? { tone: cpuProbeTone(selectedProbeState), label: cpuProbeLabel(selectedProbeState, t), detail: `-p ${partition}` }
-    : null);
-  const rowSummary = !open && rowHint ? (
+  // Collapsed one-glance verdict for the row. Scan every partition and lead
+  // with the most startable one — the default partition's "will queue · group
+  // full" must not hide that a sibling policy can start (possibly via a tip).
+  const collapsedPick = !open && snap
+    ? bestPartitionPick(pool, snap, isGpu, pendingActive, cpuRows, cpuProbeGeneratedAt, t)
+    : null;
+  const rowSummary = collapsedPick ? (
     <>
-      <Tag tone={rowHint.tone}>{rowHint.label}</Tag>
-      {(gpuTip || bfTip || rowHint.detail) && (
-        <span className="min-w-0 truncate text-[10px] text-muted-foreground">
-          {gpuTip
-            ? t("pool.quickGpuMemHint", { mem: gpuTip.mem })
-            : bfTip
-              ? t("pool.quickGpuBfHint", { t: bfTip.t })
-              : rowHint.detail}
-        </span>
+      <Tag tone={collapsedPick.tone}>{collapsedPick.label}</Tag>
+      {collapsedPick.text && (
+        <span className="min-w-0 truncate text-[10px] text-muted-foreground">{collapsedPick.text}</span>
       )}
     </>
   ) : null;
@@ -737,6 +731,107 @@ function requestQueueHint({
     };
   }
   return { tone: "ok" as const, label: t("pool.queueHintCanStart"), detail: "" };
+}
+
+interface CollapsedPick {
+  tone: Tone;
+  label: string;
+  text: string;
+}
+
+interface PartitionRequestSummary {
+  partition: string;
+  hint: { tone: Tone; label: string; detail: string } | null;
+  gpuTip: GpuFitTipData | null;
+  bfTip: GpuBackfillTipData | null;
+}
+
+/** Collapsed quick-request row: lead with the pool's most startable partition.
+ *  The default partition saying "will queue · group full" must not bury a
+ *  sibling policy that can start — outright, via the --mem tip, or via the
+ *  backfill window. */
+function bestPartitionPick(
+  pool: Pool,
+  snap: Snapshot,
+  isGpu: boolean,
+  pendingActive: RawJob[],
+  cpuRows: CpuProbeRow[],
+  cpuProbeGeneratedAt: number,
+  t: TFn,
+): CollapsedPick | null {
+  const multi = pool.partitions.length > 1;
+  const prefix = (p: string, text: string) => (multi ? (text ? `${p} · ${text}` : p) : text);
+  // CPU pool: sbatch --test-only probes already hold a per-partition verdict.
+  if (!isGpu && cpuRows.length > 0) {
+    const rank = (row: CpuProbeRow) => {
+      const s = cpuProbeState(row.probe, cpuProbeGeneratedAt);
+      return s === "now" ? 0 : s === "queued" ? 2 : 3;
+    };
+    const best = [...cpuRows].sort((a, b) => rank(a) - rank(b))[0];
+    const state = cpuProbeState(best.probe, cpuProbeGeneratedAt);
+    return { tone: cpuProbeTone(state), label: cpuProbeLabel(state, t), text: `-p ${best.partition}` };
+  }
+  const nowMs = Date.now();
+  const summaries = pool.partitions
+    .filter((p) => !isMaterialsStudioPartition(p))
+    .map((p) => partitionRequestSummary(pool, snap, p, isGpu, pendingActive, nowMs, t))
+    .filter((s): s is PartitionRequestSummary => s !== null);
+  if (summaries.length === 0) return null;
+  const rank = (s: PartitionRequestSummary) =>
+    s.hint?.tone === "ok" ? 0 : s.gpuTip ? 1 : s.bfTip ? 2 : 3;
+  const best = [...summaries].sort((a, b) => rank(a) - rank(b))[0];
+  if (rank(best) === 1 && best.gpuTip) {
+    return { tone: "warn", label: t("pool.fitTip"), text: prefix(best.partition, t("pool.quickGpuMemHint", { mem: best.gpuTip.mem })) };
+  }
+  if (rank(best) === 2 && best.bfTip) {
+    return { tone: "info", label: t("pool.bfTip"), text: prefix(best.partition, t("pool.quickGpuBfHint", { t: best.bfTip.t })) };
+  }
+  if (best.hint) {
+    return { tone: best.hint.tone, label: best.hint.label, text: prefix(best.partition, best.hint.detail) };
+  }
+  return null;
+}
+
+/** The quick-request verdict for one partition with no user overrides — the
+ *  same pipeline the expanded panel runs for the selected partition. */
+function partitionRequestSummary(
+  pool: Pool,
+  snap: Snapshot,
+  partition: string,
+  isGpu: boolean,
+  pendingActive: RawJob[],
+  nowMs: number,
+  t: TFn,
+): PartitionRequestSummary | null {
+  const part = snap.partitions.find((x) => x.name === partition);
+  if (!part) return null;
+  const cap = partitionCap(partition, snap.policy);
+  const policy = partitionPolicy(partition, snap.policy);
+  const groupRunning = partitionRunningJobs(snap.jobs, partition);
+  const groupLimitReached = Boolean(policy.grpJobs && groupRunning >= policy.grpJobs);
+  const gpuFit = isGpu ? gpuFitSnapshot(snap, pool, cap, partition) : null;
+  const gpuTip = isGpu && gpuFit && gpuFit.schedulable <= 0 && !groupLimitReached
+    ? gpuFitTipCommand(gpuFit, pool, pendingActive)
+    : null;
+  const bfTip = isGpu && gpuFit && !gpuTip && !groupLimitReached
+    ? gpuBackfillTipCommand(gpuFit, pool, pendingActive, nowMs)
+    : null;
+  const queueFact = poolQueueFact(snap.jobs, snap.part_pool, pool.id, isGpu, pool, gpuFit?.schedulable ?? 0);
+  const hint = requestQueueHint({
+    part,
+    policy,
+    groupRunning,
+    nodeCount: 0,
+    coreCount: 0,
+    isGpu,
+    poolFree: poolCapacity(snap, pool.id),
+    queueFact,
+    gpuFit,
+    pendingActive,
+    userTimeSec: 0,
+    t,
+  });
+  return { partition, hint, gpuTip, bfTip };
 }
 
 interface QueueFact {
