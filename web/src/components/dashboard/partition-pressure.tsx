@@ -9,7 +9,7 @@ import { poolLabel, useT, type TFn } from "@/i18n";
 import type { TranslationKey } from "@/i18n/en";
 import { poolCapacity, type PoolCapacity } from "@/lib/derive";
 import { clockOf, fmtMB, nf } from "@/lib/format";
-import { schedulableGpuSlots } from "@/lib/gpu-fit";
+import { activePendingForPool, hasUncontestedGpuSlot, schedulableGpuSlots } from "@/lib/gpu-fit";
 import { cpuProbeForPartition, cpuProbeState, type CpuProbeRow } from "@/lib/cpu-probes";
 import {
   PolicyLimitChips,
@@ -162,6 +162,7 @@ export function PartitionPressure() {
             const isGpu = parts[0].kind === "gpu";
             const pool = poolById.get(group.poolKey);
             const pc = poolCapacity(snap, group.poolKey);
+            const pendingActive = isGpu ? activePendingForPool(snap.jobs, snap.part_pool, group.poolKey) : [];
             return (
               <div key={group.key}>
                 <PoolHeader pool={pool} label={poolLabel(t, group.poolKey)} spec={spec} isGpu={isGpu} pc={pc} t={t} />
@@ -177,6 +178,9 @@ export function PartitionPressure() {
                       gpuSlotsFor={(p) =>
                         isGpu && pool ? schedulableGpuSlots(snap.nodes, pool, partitionCap(p.name, snap.policy)) : null
                       }
+                      gpuClearFor={(p) =>
+                        isGpu && pool ? hasUncontestedGpuSlot(snap.nodes, pendingActive, pool, partitionCap(p.name, snap.policy)) : null
+                      }
                       generatedAt={snap.cpu_submit_probes_generated_at || snap.generated_at}
                       policy={snap.policy}
                       t={t}
@@ -191,6 +195,7 @@ export function PartitionPressure() {
                       pc={pc}
                       cpuProbeFor={(p) => (!isGpu ? cpuProbeForPartition(snap, p.name) : null)}
                       gpuSlotsFor={() => null}
+                      gpuClearFor={() => null}
                       generatedAt={snap.cpu_submit_probes_generated_at || snap.generated_at}
                       policy={snap.policy}
                       t={t}
@@ -220,6 +225,7 @@ function PartitionRows({
   pc,
   cpuProbeFor,
   gpuSlotsFor,
+  gpuClearFor,
   generatedAt,
   policy,
   t,
@@ -231,6 +237,7 @@ function PartitionRows({
   pc: PoolCapacity;
   cpuProbeFor: (p: Partition) => CpuProbeRow | null;
   gpuSlotsFor: (p: Partition) => number | null;
+  gpuClearFor: (p: Partition) => boolean | null;
   generatedAt: number;
   policy?: PolicySnapshot;
   t: TFn;
@@ -252,6 +259,7 @@ function PartitionRows({
             pc={pc}
             cpuProbe={cpuProbeFor(p)}
             gpuSchedulable={gpuSlotsFor(p)}
+            gpuClear={gpuClearFor(p)}
             generatedAt={generatedAt}
             policy={policy}
             t={t}
@@ -404,6 +412,7 @@ function PartitionRow({
   pc,
   cpuProbe,
   gpuSchedulable,
+  gpuClear,
   generatedAt,
   policy,
   t,
@@ -413,6 +422,7 @@ function PartitionRow({
   pc: PoolCapacity;
   cpuProbe: CpuProbeRow | null;
   gpuSchedulable: number | null;
+  gpuClear: boolean | null;
   generatedAt: number;
   policy?: PolicySnapshot;
   t: TFn;
@@ -426,7 +436,9 @@ function PartitionRow({
   const cap = partitionCap(p.name, policy);
   const hero = requestableNow(p, cap, isGpu, pc, gpuSchedulable);
   const probeState = cpuProbe ? cpuProbeState(cpuProbe.probe, generatedAt) : null;
-  const canRun = !maint && !groupLimitReached && (probeState ? probeState === "now" : hero.n > 0);
+  // gpuClear === false means every free GPU slot is claimed by queued jobs
+  // (or the node is PLANNED) — "can allocate" would be a false promise.
+  const canRun = !maint && !groupLimitReached && (probeState ? probeState === "now" : hero.n > 0 && gpuClear !== false);
   // The hero count is a naive snapshot of idle hardware in the pool — it has no idea about
   // QOS group limits, scheduling priority, or the fact that multi-node jobs can piece
   // together scattered cores. sbatch --test-only does. Whenever the probe's verdict

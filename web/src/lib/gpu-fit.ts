@@ -169,10 +169,73 @@ export function parseTresMemoryMb(text: string) {
   return Math.round(n * (mult[unit] ?? 1));
 }
 
-export function gpuFitTipCommand(fit: GpuFitInfo, pool: Pool): GpuFitTipData | null {
+// ---- queue contention ---------------------------------------------------
+// A free slot is only "yours to take" when nobody ahead of you in the queue
+// can use it. Slurm serves pending jobs in priority order, so a new request
+// starts immediately only if every active waiter's own request is too big for
+// the leftover resources (then backfill lets the small job through). When the
+// scheduler has already earmarked an idle node for a waiter it reports the
+// node as PLANNED — treat that as "spoken for" even if we count no contenders.
+
+export interface SlotContention {
+  contenders: number;
+  planned: boolean;
+}
+
+export function slotContention(row: GpuFitNode, pendingActive: RawJob[]): SlotContention {
+  const planned = row.node.state.some((s) => String(s).toUpperCase() === "PLANNED");
+  let contenders = 0;
+  for (const job of pendingActive) {
+    // min_memory_mb / cpus / gpus are job totals; a multi-node job claims this
+    // node with its per-node share. A waiter in a GPU pool with no parsed GPU
+    // count still wants one — counting it keeps us on the "says queue" side.
+    const nodes = Math.max(1, job.node_count || 1);
+    const gpus = Math.ceil((job.gpus || 0) / nodes) || 1;
+    const cpus = Math.ceil((job.cpus || 0) / nodes);
+    const memMb = Math.ceil((job.min_memory_mb || 0) / nodes);
+    if (gpus <= row.freeGpu && cpus <= row.freeCores && memMb <= row.freeMemMb) contenders += 1;
+  }
+  return { contenders, planned };
+}
+
+export function contested(c: SlotContention | null | undefined): boolean {
+  return Boolean(c && (c.contenders > 0 || c.planned));
+}
+
+export function fitHasClearSlot(fit: GpuFitInfo, pendingActive: RawJob[]): boolean {
+  return fit.fitNodes.some((row) => !contested(slotContention(row, pendingActive)));
+}
+
+export function hasUncontestedGpuSlot(nodes: RawNode[], pendingActive: RawJob[], pool: Pool, cap: PartitionCap): boolean {
+  const fit = gpuFitFromNodes(nodes, [], pool, cap, "");
+  return fit.schedulable > 0 && fitHasClearSlot(fit, pendingActive);
+}
+
+export function pendingForPool(jobs: RawJob[], partPool: Record<string, string>, poolId: string) {
+  return jobs
+    .filter((j) => String(j.job_state).toUpperCase() === "PENDING")
+    .filter((j) => String(j.partition || "").split(",").some((p) => partPool[p] === poolId));
+}
+
+export function isLimitBlocked(job: RawJob) {
+  const reason = String(job.state_reason || "");
+  return reason.startsWith("QOSMax") || reason === "Dependency" || reason === "JobArrayTaskLimit";
+}
+
+/** Pending jobs that actually compete for capacity: limit-blocked waiters
+ *  (QOSMax*, Dependency…) cannot claim a slot right now, so they don't gate
+ *  the "can start immediately" verdict. */
+export function activePendingForPool(jobs: RawJob[], partPool: Record<string, string>, poolId: string) {
+  return pendingForPool(jobs, partPool, poolId).filter((j) => !isLimitBlocked(j));
+}
+
+export function gpuFitTipCommand(fit: GpuFitInfo, pool: Pool, pendingActive: RawJob[]): GpuFitTipData | null {
   if (!pool.gpu || fit.schedulable > 0) return null;
   const best = fit.stranded.find((row) => row.freeGpu >= 1 && row.freeCores >= fit.need.cores && row.freeMemMb > 1024);
   if (!best) return null;
+  // The --mem trick only queue-jumps while no active waiter fits the slot;
+  // otherwise the queue verdict (not this tip) is the truthful message.
+  if (contested(slotContention(best, pendingActive))) return null;
   const memGb = conservativeMemGb(best.freeMemMb);
   if (memGb <= 0) return null;
   return { mem: `${memGb}G`, node: best.node.name };

@@ -18,11 +18,17 @@ import {
   policyLimitRows,
 } from "@/lib/policy-hints";
 import {
+  activePendingForPool,
   conservativeMemGb,
+  contested,
+  fitHasClearSlot,
   gpuFitSnapshot,
   gpuFitTipCommand,
   gpuFitWithMemOverride,
+  isLimitBlocked,
+  pendingForPool,
   schedulableGpuSlots,
+  slotContention,
   type GpuFitInfo,
   type GpuFitNeed,
   type GpuFitNode,
@@ -101,10 +107,13 @@ function PoolCard({ pool, snap, t }: { pool: Pool; snap: Snapshot; t: TFn }) {
   const samplePartition = SAMPLE[pool.id]?.partition ?? "";
   const gpuFit = isGpu ? gpuFitSnapshot(snap, pool, partitionCap(samplePartition, snap.policy), samplePartition) : null;
   const gpuSched = gpuFit?.schedulable ?? 0;
+  const pendingActive = isGpu ? activePendingForPool(snap.jobs, snap.part_pool, pool.id) : [];
+  // A schedulable slot only means "starts now" if no queued job can claim it first.
+  const gpuClear = !isGpu || !gpuFit || gpuSched <= 0 || fitHasClearSlot(gpuFit, pendingActive);
   const rawGpuFree = isGpu ? pool.gpu?.free ?? 0 : 0;
   const displayFree = isGpu ? rawGpuFree : pool.cores.free;
-  const hasAvailable = (isGpu ? gpuSched > 0 : availableNodes > 0) && !maint;
-  const hasStrandedGpu = isGpu && rawGpuFree > 0 && gpuSched <= 0 && !maint;
+  const hasAvailable = (isGpu ? gpuSched > 0 && gpuClear : availableNodes > 0) && !maint;
+  const hasStrandedGpu = isGpu && rawGpuFree > 0 && !(gpuSched > 0 && gpuClear) && !maint;
   const availableNodesLabel = isGpu
     ? t("pool.gpuFreePhysical", { n: rawGpuFree })
     : t("pool.availableNodes", { n: availableNodes });
@@ -182,7 +191,7 @@ function PoolCard({ pool, snap, t }: { pool: Pool; snap: Snapshot; t: TFn }) {
               </div>
             )}
             <div className="text-[11px] text-muted-foreground">
-              {maint ? null : gpuAvailabilityText(isGpu, gpuFit, gpuSched, rawGpuFree, availableNodesLabel, t)}
+              {maint ? null : gpuAvailabilityText(isGpu, gpuFit, gpuSched, rawGpuFree, availableNodesLabel, pendingActive, t)}
             </div>
           </div>
           <ReleaseHint pool={pool} generatedAt={snap.generated_at} />
@@ -335,6 +344,7 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
       : "";
   const memOverrideMb = memValue ? parsedMemMb : 0;
   const effectiveGpuFit = gpuFit && memOverrideMb > 0 ? gpuFitWithMemOverride(gpuFit, memOverrideMb) : gpuFit;
+  const pendingActive = snap && isGpu ? activePendingForPool(snap.jobs, snap.part_pool, pool.id) : [];
   const queueFact = snap ? poolQueueFact(snap.jobs, snap.part_pool, pool.id, isGpu, pool, effectiveGpuFit?.schedulable ?? 0) : null;
   const limits = policyLimitRows(policy, groupRunning, t);
   const groupLimitReached = Boolean(policy.grpJobs && groupRunning >= policy.grpJobs);
@@ -344,7 +354,7 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
   const cpuProbeGeneratedAt = snap?.cpu_submit_probes_generated_at || snap?.generated_at || 0;
   const hasAdvancedOverrides = Boolean(nodeCount || coreCount || memValue || time.trim());
   const selectedCpuRow = !hasAdvancedOverrides ? cpuRows.find((row) => row.partition === partition) ?? null : null;
-  const gpuTip = isGpu && gpuFit && gpuFit.schedulable <= 0 ? gpuFitTipCommand(gpuFit, pool) : null;
+  const gpuTip = isGpu && gpuFit && gpuFit.schedulable <= 0 ? gpuFitTipCommand(gpuFit, pool, pendingActive) : null;
   const defaultGpuBlocked = Boolean(isGpu && gpuFit && gpuFit.rawFree > 0 && gpuFit.schedulable <= 0);
   const showGpuFitDetails = Boolean(defaultGpuBlocked && !memValue);
   const queueHint = selectedCpuRow
@@ -359,6 +369,7 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
         poolFree: snap ? poolCapacity(snap, pool.id) : null,
         queueFact,
         gpuFit: effectiveGpuFit,
+        pendingActive,
         t,
       });
   const flags = [`-p ${partition}`, ...(base.requiredFlags ?? [])];
@@ -462,13 +473,13 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
           <div className="rounded-md border border-border bg-muted/30 px-2.5 py-2">
             <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
               <span className="text-xs font-medium text-foreground">{policyName}</span>
-              {queueHint && (!showGpuFitDetails || groupLimitReached) && (
+              {queueHint && (!showGpuFitDetails || groupLimitReached || !gpuTip) && (
                 <Tag tone={queueHint.tone}>{queueHint.label}</Tag>
               )}
               {policyLimit && <span className="font-mono text-[10px] text-muted-foreground">{policyLimit}</span>}
             </div>
             {policyDesc && <div className="mt-1 text-[10px] leading-relaxed text-muted-foreground">{policyDesc}</div>}
-            {queueHint?.detail && (!showGpuFitDetails || groupLimitReached) && (
+            {queueHint?.detail && (!showGpuFitDetails || groupLimitReached || !gpuTip) && (
               <div className="mt-1 text-[10px] leading-relaxed text-muted-foreground">{queueHint.detail}</div>
             )}
             {selectedCpuRow && <CpuProbeInline row={selectedCpuRow} generatedAt={cpuProbeGeneratedAt} t={t} />}
@@ -489,7 +500,7 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
             )}
             {/* diagnostic detail below the fix-it row: when applying the tip makes
                 this block disappear, nothing above the clicked button moves */}
-            {showGpuFitDetails && gpuFit && <GpuFitExplanation fit={gpuFit} t={t} />}
+            {showGpuFitDetails && gpuFit && <GpuFitExplanation fit={gpuFit} pendingActive={pendingActive} t={t} />}
             <PolicyLimitChips rows={limits} />
             {groupLimitReached && <div className="mt-1 text-[10px] leading-relaxed text-bad-fg">{t("pool.limitReached")}</div>}
           </div>
@@ -628,6 +639,7 @@ function requestQueueHint({
   poolFree,
   queueFact,
   gpuFit,
+  pendingActive,
   t,
 }: {
   part?: Partition;
@@ -639,6 +651,7 @@ function requestQueueHint({
   poolFree: ReturnType<typeof poolCapacity> | null;
   queueFact: QueueFact | null;
   gpuFit: GpuFitInfo | null;
+  pendingActive: RawJob[];
   t: TFn;
 }) {
   if (!part) return null;
@@ -649,11 +662,28 @@ function requestQueueHint({
   if ((part.available_nodes ?? 0) <= 0) return warn(t("pool.queueReasonNoNode"));
   if (nodeCount > 0 && nodeCount > (part.available_nodes ?? 0)) return warn(t("pool.queueReasonNodes"));
   if (isGpu && (part.gpu?.free ?? 0) <= 0) return warn(t("pool.queueReasonNoGpu"));
-  if (isGpu && gpuFit && gpuFit.rawFree > 0 && gpuFit.schedulable <= 0) return warn(gpuFitShortText(gpuFit, t));
+  if (isGpu && gpuFit && gpuFit.rawFree > 0 && gpuFit.schedulable <= 0) {
+    // Report the queue as the blocker when waiters can claim the free slot —
+    // a memory-shortage message there would suggest a bypass that cannot work.
+    const best = gpuFit.stranded.find((row) => row.freeGpu >= 1) ?? gpuFit.stranded[0];
+    const c = best ? slotContention(best, pendingActive) : null;
+    if (c && c.contenders > 0) return warn(t("pool.queueReasonContested", { n: c.contenders }));
+    if (c?.planned) return warn(t("pool.queueReasonPlanned"));
+    return warn(gpuFitShortText(gpuFit, t));
+  }
   if (isGpu && queueFact && queueFact.free <= 0 && (part.gpu?.free ?? 0) > 0) return warn(t("pool.queueReasonGpuFit"));
   if (!isGpu && coreCount > 0 && poolFree && coreCount > poolFree.emptiestNodeFree) return warn(t("pool.queueReasonCores"));
 
   if (queueFact && queueFact.pending > 0) {
+    // The request fits a free slot AND no queued job can take that slot first
+    // (they're all too big for it) — backfill starts it despite the queue.
+    if (isGpu && gpuFit && gpuFit.schedulable > 0 && fitHasClearSlot(gpuFit, pendingActive)) {
+      return {
+        tone: "ok" as const,
+        label: t("pool.queueHintCanStart"),
+        detail: t("pool.queueContentionClear", { n: queueFact.pending }),
+      };
+    }
     return {
       tone: "warn" as const,
       label: t("pool.queueHintQueued"),
@@ -799,43 +829,60 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
   );
 }
 
-function gpuAvailabilityText(isGpu: boolean, fit: GpuFitInfo | null, schedulable: number, rawFree: number, availableLabel: string, t: TFn) {
+function gpuAvailabilityText(isGpu: boolean, fit: GpuFitInfo | null, schedulable: number, rawFree: number, availableLabel: string, pendingActive: RawJob[], t: TFn) {
   if (!isGpu) return availableLabel;
-  if (schedulable > 0) return availableLabel;
-  if (rawFree > 0) return gpuStrandedText(fit, rawFree, t);
+  if (schedulable > 0) {
+    if (fit && !fitHasClearSlot(fit, pendingActive)) return t("pool.gpuStrandedContested", { n: rawFree });
+    return availableLabel;
+  }
+  if (rawFree > 0) return gpuStrandedText(fit, rawFree, pendingActive, t);
   return t("gpu.full");
 }
 
-function gpuStrandedText(fit: GpuFitInfo | null, rawFree: number, t: TFn) {
+function gpuStrandedText(fit: GpuFitInfo | null, rawFree: number, pendingActive: RawJob[], t: TFn) {
   const rows = fit?.stranded ?? [];
   const mem = rows.some((row) => row.missingMemMb > 0);
   const cpu = rows.some((row) => row.missingCores > 0);
   if (cpu && mem) return t("pool.gpuStrandedCpuMem", { n: rawFree });
   if (cpu) return t("pool.gpuStrandedCpu", { n: rawFree });
   if (mem) {
-    const tip = gpuStrandedMemTip(fit);
-    return tip ? t("pool.gpuStrandedMemTip", { n: rawFree, mem: tip }) : t("pool.gpuStrandedMem", { n: rawFree });
+    const best = strandedTipNode(fit);
+    // Queued jobs (or a PLANNED node) own the rescuable slot: never advertise
+    // the --mem bypass, and don't blame memory — the queue is the real reason.
+    if (best && contested(slotContention(best, pendingActive))) {
+      return t("pool.gpuStrandedContested", { n: rawFree });
+    }
+    const tip = best ? `${conservativeMemGb(best.freeMemMb)}G` : "";
+    return best && conservativeMemGb(best.freeMemMb) > 0
+      ? t("pool.gpuStrandedMemTip", { n: rawFree, mem: tip })
+      : t("pool.gpuStrandedMem", { n: rawFree });
   }
   return t("pool.gpuStranded", { n: rawFree });
 }
 
-function gpuStrandedMemTip(fit: GpuFitInfo | null) {
-  const best = fit?.stranded.find((row) => row.freeGpu >= 1 && row.freeCores >= fit.need.cores && row.freeMemMb > 1024);
-  if (!best) return "";
-  const memGb = conservativeMemGb(best.freeMemMb);
-  return memGb > 0 ? `${memGb}G` : "";
+function strandedTipNode(fit: GpuFitInfo | null) {
+  return fit?.stranded.find((row) => row.freeGpu >= 1 && row.freeCores >= fit.need.cores && row.freeMemMb > 1024) ?? null;
 }
 
-function GpuFitExplanation({ fit, t }: { fit: GpuFitInfo; t: TFn }) {
+function GpuFitExplanation({ fit, pendingActive, t }: { fit: GpuFitInfo; pendingActive: RawJob[]; t: TFn }) {
   const rows = fit.stranded.slice(0, 4);
   if (rows.length === 0) return null;
   const more = Math.max(0, fit.stranded.length - rows.length);
+  const best = strandedTipNode(fit) ?? fit.stranded[0];
+  const contention = best ? slotContention(best, pendingActive) : null;
   return (
     <div className="mt-2 rounded-md border border-warn/35 bg-warn-soft/45 px-2.5 py-2 text-[10px] leading-relaxed">
       <div className="flex flex-wrap items-center gap-1.5">
         <Tag tone="warn">{t("pool.fitBlocked")}</Tag>
         <span className="text-foreground">{t("pool.fitNeed", { partition: fit.need.partition, need: resourceText(fit.need, t) })}</span>
       </div>
+      {contested(contention) && (
+        <div className="mt-1 font-medium text-warn-fg">
+          {contention!.contenders > 0
+            ? t("pool.fitContestedNote", { n: contention!.contenders })
+            : t("pool.fitPlannedNote")}
+        </div>
+      )}
       <div className="mt-1 text-muted-foreground">
         {t("pool.fitRawFree", { gpu: fit.rawFree, nodes: fit.stranded.length, sched: fit.schedulable })}
       </div>
@@ -956,12 +1003,6 @@ function hasAvailableNodes(pool: Pool, snap: Snapshot) {
   return (pool.available_nodes ?? pool.idle_nodes ?? 0) > 0;
 }
 
-function pendingForPool(jobs: RawJob[], partPool: Record<string, string>, poolId: string) {
-  return jobs
-    .filter((j) => String(j.job_state).toUpperCase() === "PENDING")
-    .filter((j) => String(j.partition || "").split(",").some((p) => partPool[p] === poolId));
-}
-
 function PendingJobs({ pool, t }: { pool: Pool; t: TFn }) {
   const { snap } = useLive();
   if (!snap) return null;
@@ -1008,11 +1049,6 @@ function pendingJobResources(job: RawJob, t: TFn) {
   if ((job.min_memory_mb ?? 0) > 0) parts.push(fmtMB(job.min_memory_mb));
   if (job.node_count > 0) parts.push(`${job.node_count} ${t("spec.nodes")}`);
   return parts.join(" · ") || "—";
-}
-
-function isLimitBlocked(job: RawJob) {
-  const reason = String(job.state_reason || "");
-  return reason.startsWith("QOSMax") || reason === "Dependency" || reason === "JobArrayTaskLimit";
 }
 
 function pendingRank(job: RawJob) {
