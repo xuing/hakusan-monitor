@@ -301,6 +301,8 @@ export interface RawJob {
   name: string;
   qos: string;
   nodelist: string;
+  /** backfill scheduler's planned placement for a pending job (hostlist) */
+  sched_nodes?: string;
   time_used: string;
   time_limit: string;
 }

@@ -152,10 +152,16 @@ class QueueParserTests(unittest.TestCase):
         self.assertEqual(job["min_memory_mb"], 245760)
 
     def test_parse_containers_slices_fixed_width_columns(self):
-        line = "378759".ljust(64) + "cpu=64,mem=375G,node=1".ljust(256) + "docker://ubuntu:22.04"
+        line = ("378759".ljust(64) + "cpu=64,mem=375G,node=1".ljust(256)
+                + "spcc-a40g13".ljust(128) + "docker://ubuntu:22.04")
         out = parse_containers(line)
         self.assertEqual(out["378759"]["tres"], "cpu=64,mem=375G,node=1")
+        self.assertEqual(out["378759"]["sched_nodes"], "spcc-a40g13")
         self.assertEqual(out["378759"]["container"], "docker://ubuntu:22.04")
+
+        blank = "1".ljust(64) + "N/A".ljust(256) + "(null)".ljust(128) + "N/A"
+        out = parse_containers(blank)
+        self.assertEqual(out["1"], {"tres": "", "sched_nodes": "", "container": ""})
 
     def test_parse_cpu_submit_probes(self):
         raw = (

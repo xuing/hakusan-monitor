@@ -22,13 +22,17 @@ import {
   conservativeMemGb,
   contested,
   fitHasClearSlot,
+  gpuBackfillTipCommand,
   gpuFitSnapshot,
   gpuFitTipCommand,
   gpuFitWithMemOverride,
   isLimitBlocked,
+  parseWalltimeSec,
   pendingForPool,
   schedulableGpuSlots,
   slotContention,
+  withinBackfillWindow,
+  type GpuBackfillTipData,
   type GpuFitInfo,
   type GpuFitNeed,
   type GpuFitNode,
@@ -359,6 +363,11 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
   const gpuTip = isGpu && gpuFit && gpuFit.schedulable <= 0 && !groupLimitReached
     ? gpuFitTipCommand(gpuFit, pool, pendingActive)
     : null;
+  // When the queue owns the slot (no --mem bypass possible), a reservation's
+  // start time still bounds a backfill gap a short-walltime job can use.
+  const bfTip = isGpu && gpuFit && !gpuTip && !groupLimitReached
+    ? gpuBackfillTipCommand(gpuFit, pool, pendingActive, Date.now())
+    : null;
   const defaultGpuBlocked = Boolean(isGpu && gpuFit && gpuFit.rawFree > 0 && gpuFit.schedulable <= 0);
   const showGpuFitDetails = Boolean(defaultGpuBlocked && !memValue);
   const queueHint = selectedCpuRow
@@ -374,6 +383,7 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
         queueFact,
         gpuFit: effectiveGpuFit,
         pendingActive,
+        userTimeSec: parseWalltimeSec(time),
         t,
       });
   const flags = [`-p ${partition}`, ...(base.requiredFlags ?? [])];
@@ -403,9 +413,13 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
   const rowSummary = !open && rowHint ? (
     <>
       <Tag tone={rowHint.tone}>{rowHint.label}</Tag>
-      {(gpuTip || rowHint.detail) && (
+      {(gpuTip || bfTip || rowHint.detail) && (
         <span className="min-w-0 truncate text-[10px] text-muted-foreground">
-          {gpuTip ? t("pool.quickGpuMemHint", { mem: gpuTip.mem }) : rowHint.detail}
+          {gpuTip
+            ? t("pool.quickGpuMemHint", { mem: gpuTip.mem })
+            : bfTip
+              ? t("pool.quickGpuBfHint", { t: bfTip.t })
+              : rowHint.detail}
         </span>
       )}
     </>
@@ -502,6 +516,18 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
                 t={t}
               />
             )}
+            {bfTip && (
+              <GpuBackfillQuickTip
+                tip={bfTip}
+                applied={time === bfTip.t && (!bfTip.mem || memValue === bfTip.mem)}
+                onApply={() => {
+                  if (bfTip.mem) setMem(bfTip.mem);
+                  setTime(bfTip.t);
+                  setAdvanced(true);
+                }}
+                t={t}
+              />
+            )}
             {/* diagnostic detail below the fix-it row: when applying the tip makes
                 this block disappear, nothing above the clicked button moves */}
             {showGpuFitDetails && gpuFit && <GpuFitExplanation fit={gpuFit} pendingActive={pendingActive} t={t} />}
@@ -549,6 +575,10 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
                 </Field>
                 <Field label={t("pool.time")}>
                   <select value={time} onChange={(e) => setTime(e.target.value)} className={fieldCls}>
+                    {/* backfill-tip suggestions aren't in the canonical list */}
+                    {time && !timeOptions.some((opt) => opt.value === time) && (
+                      <option value={time}>{time}</option>
+                    )}
                     {timeOptions.map((opt) => (
                       <option key={opt.value || "default"} value={opt.value}>{opt.label}</option>
                     ))}
@@ -644,6 +674,7 @@ function requestQueueHint({
   queueFact,
   gpuFit,
   pendingActive,
+  userTimeSec,
   t,
 }: {
   part?: Partition;
@@ -656,6 +687,7 @@ function requestQueueHint({
   queueFact: QueueFact | null;
   gpuFit: GpuFitInfo | null;
   pendingActive: RawJob[];
+  userTimeSec: number;
   t: TFn;
 }) {
   if (!part) return null;
@@ -686,6 +718,16 @@ function requestQueueHint({
         tone: "ok" as const,
         label: t("pool.queueHintCanStart"),
         detail: t("pool.queueContentionClear", { n: queueFact.pending }),
+      };
+    }
+    // Slot reserved for a queued job at a future start, but the user's -t
+    // guarantees this request ends before then — backfill takes it now.
+    if (isGpu && gpuFit && gpuFit.schedulable > 0
+        && withinBackfillWindow(gpuFit, pendingActive, Date.now(), userTimeSec)) {
+      return {
+        tone: "ok" as const,
+        label: t("pool.queueHintCanStart"),
+        detail: t("pool.queueBfOk"),
       };
     }
     return {
@@ -776,6 +818,55 @@ function GpuFitQuickTip({
       </div>
     </div>
   );
+}
+
+function GpuBackfillQuickTip({
+  tip,
+  applied,
+  onApply,
+  t,
+}: {
+  tip: GpuBackfillTipData;
+  applied: boolean;
+  onApply: () => void;
+  t: TFn;
+}) {
+  const until = clockShort(tip.untilMs);
+  return (
+    <div className="mt-2 rounded-md border border-info/40 bg-info-soft/45 px-2 py-1.5 text-[10px] leading-relaxed">
+      <div className="flex flex-wrap items-center gap-1.5">
+        <Tag tone="info">{t("pool.bfTip")}</Tag>
+        <span className="text-foreground">
+          {tip.mem
+            ? t("pool.bfTipText", { node: tip.node, until, mem: tip.mem, t: tip.t })
+            : t("pool.bfTipTextTime", { node: tip.node, until, t: tip.t })}
+        </span>
+        <button
+          type="button"
+          onClick={onApply}
+          className={cn(
+            "rounded border px-1.5 py-0.5 font-medium transition-colors",
+            applied
+              ? "border-ok/40 bg-ok-soft text-ok-fg"
+              : "border-info/45 bg-background/80 text-info-fg hover:bg-info-soft",
+          )}
+        >
+          {applied
+            ? t("pool.fitTipApplied")
+            : tip.mem
+              ? t("pool.bfTipApply", { mem: tip.mem, t: tip.t })
+              : t("pool.bfTipApplyTime", { t: tip.t })}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/** "01:45" today, "7/9 01:45" once it crosses midnight. */
+function clockShort(ms: number) {
+  const d = new Date(ms);
+  const hm = `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+  return d.toDateString() === new Date().toDateString() ? hm : `${d.getMonth() + 1}/${d.getDate()} ${hm}`;
 }
 
 function partitionOptionGroups(partitions: string[], t: TFn) {

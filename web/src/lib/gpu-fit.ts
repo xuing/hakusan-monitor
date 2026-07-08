@@ -241,6 +241,96 @@ export function activePendingForPool(jobs: RawJob[], partPool: Record<string, st
   return pendingForPool(jobs, partPool, poolId).filter((j) => !isLimitBlocked(j));
 }
 
+// ---- backfill window ------------------------------------------------------
+// A PLANNED node is reserved for a queued job at a *future* start time (the
+// reservation waits for other resources to free). The gap until that start is
+// backfillable: Slurm starts a lower-priority job in it iff the job's time
+// limit guarantees it ends before the reservation. SchedNodes + StartTime of
+// the reserving jobs give the window exactly; margin absorbs reservations
+// drifting earlier when running jobs finish ahead of their limits.
+
+const BF_MARGIN_MS = 10 * 60 * 1000;
+const BF_STEP_SEC = 15 * 60;
+const BF_MIN_SEC = 30 * 60;
+
+export interface BackfillWindowInfo {
+  untilMs: number;
+  suggestSec: number;
+}
+
+export function backfillWindow(row: GpuFitNode, pendingActive: RawJob[], nowMs: number): BackfillWindowInfo | null {
+  const starts = pendingActive
+    .filter((j) => j.sched_nodes && expandHostlist(j.sched_nodes).includes(row.node.name))
+    .map((j) => Date.parse(j.start_est || ""))
+    .filter((t) => Number.isFinite(t) && t > nowMs);
+  if (!starts.length) return null;
+  const untilMs = Math.min(...starts);
+  const suggestSec = Math.floor((untilMs - nowMs - BF_MARGIN_MS) / 1000 / BF_STEP_SEC) * BF_STEP_SEC;
+  if (suggestSec < BF_MIN_SEC) return null;
+  return { untilMs, suggestSec };
+}
+
+export interface GpuBackfillTipData {
+  node: string;
+  mem: string; // "" when the default request already fits the node
+  t: string;
+  untilMs: number;
+}
+
+export function gpuBackfillTipCommand(fit: GpuFitInfo, pool: Pool, pendingActive: RawJob[], nowMs: number): GpuBackfillTipData | null {
+  if (!pool.gpu) return null;
+  if (fit.schedulable > 0) {
+    // Slots exist but every one is spoken for — a short job can still sneak in.
+    if (fitHasClearSlot(fit, pendingActive)) return null;
+    for (const row of fit.fitNodes) {
+      const win = backfillWindow(row, pendingActive, nowMs);
+      if (win) return { node: row.node.name, mem: "", t: fmtWalltime(win.suggestSec), untilMs: win.untilMs };
+    }
+    return null;
+  }
+  const best = fit.stranded.find((row) => row.freeGpu >= 1 && row.freeCores >= fit.need.cores && row.freeMemMb > 1024);
+  if (!best) return null;
+  const memGb = conservativeMemGb(best.freeMemMb);
+  if (memGb <= 0) return null;
+  const win = backfillWindow(best, pendingActive, nowMs);
+  if (!win) return null;
+  return { node: best.node.name, mem: `${memGb}G`, t: fmtWalltime(win.suggestSec), untilMs: win.untilMs };
+}
+
+/** True when some contested-but-fitting node's backfill window still holds a
+ *  job of `userTimeSec` — the basis for flipping "will queue" back to "can
+ *  start" once the user picks a short enough -t. */
+export function withinBackfillWindow(fit: GpuFitInfo, pendingActive: RawJob[], nowMs: number, userTimeSec: number): boolean {
+  if (userTimeSec <= 0) return false;
+  return fit.fitNodes.some((row) => {
+    if (!contested(slotContention(row, pendingActive))) return false;
+    const win = backfillWindow(row, pendingActive, nowMs);
+    return win !== null && userTimeSec <= win.suggestSec;
+  });
+}
+
+export function fmtWalltime(sec: number): string {
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  return `${h}:${String(m).padStart(2, "0")}:00`;
+}
+
+/** Slurm -t forms: MM, MM:SS, HH:MM:SS, D-HH, D-HH:MM, D-HH:MM:SS. */
+export function parseWalltimeSec(text: string): number {
+  const s = String(text || "").trim();
+  if (!s) return 0;
+  const dash = s.match(/^(\d+)-(\d+)(?::(\d{1,2}))?(?::(\d{1,2}))?$/);
+  if (dash) {
+    return (Number(dash[1]) * 24 + Number(dash[2])) * 3600 + Number(dash[3] || 0) * 60 + Number(dash[4] || 0);
+  }
+  const parts = s.split(":");
+  if (parts.some((p) => !/^\d+$/.test(p))) return 0;
+  if (parts.length === 1) return Number(parts[0]) * 60;
+  if (parts.length === 2) return Number(parts[0]) * 60 + Number(parts[1]);
+  if (parts.length === 3) return Number(parts[0]) * 3600 + Number(parts[1]) * 60 + Number(parts[2]);
+  return 0;
+}
+
 export function gpuFitTipCommand(fit: GpuFitInfo, pool: Pool, pendingActive: RawJob[]): GpuFitTipData | null {
   if (!pool.gpu || fit.schedulable > 0) return null;
   const best = fit.stranded.find((row) => row.freeGpu >= 1 && row.freeCores >= fit.need.cores && row.freeMemMb > 1024);

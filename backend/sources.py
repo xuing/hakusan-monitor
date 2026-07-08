@@ -31,7 +31,7 @@ SEP = "|@|"   # field separator unlikely to occur in any value (e.g. job names)
 SQUEUE_FIELDS = ["%i", "%u", "%a", "%P", "%T", "%r", "%D", "%C", "%b", "%V",
                  "%e", "%S", "%L", "%j", "%q", "%N", "%M", "%l", "%m"]
 SQUEUE_FMT = SEP.join(SQUEUE_FIELDS)
-CONTAINER_FMT = "JobID:64,tres-alloc:256,Container:512"
+CONTAINER_FMT = "JobID:64,tres-alloc:256,SchedNodes:128,Container:512"
 CPU_TEST_PARTITIONS = ["TINY", "DEF", "SINGLE", "SMALL", "LARGE", "XLARGE", "X2LARGE", "LONG", "LONG-L"]
 
 
@@ -277,12 +277,14 @@ def build_policy_snapshot(qos_text, partition_text, now, interval):
 
 
 def parse_containers(text):
-    """`squeue -O JobID,tres-alloc,Container` -> {job_id: {tres, container}}.
+    """`squeue -O JobID,tres-alloc,SchedNodes,Container` -> {job_id: {...}}.
 
     The `-O/--Format` surface exposes fields the `-o` single-letter formats
     cannot express. tres-alloc carries each job's *effective* allocation
     (memory total, GPU count) for running AND pending jobs — %m is ambiguous
     (per-CPU requests print with no suffix) and %b misses --gpus-style jobs.
+    SchedNodes is the backfill scheduler's planned placement for a pending
+    job — the node it has reserved and the basis for backfill-window math.
     Columns are fixed-width per CONTAINER_FMT, so slice, don't split.
     """
     out = {}
@@ -291,9 +293,11 @@ def parse_containers(text):
         if not jid:
             continue
         tres = line[64:320].strip()
-        container = line[320:].strip()
+        sched = line[320:448].strip()
+        container = line[448:].strip()
         out[jid] = {
             "tres": "" if tres in ("N/A", "(null)", "None", "NULL") else tres,
+            "sched_nodes": "" if sched in ("N/A", "(null)", "None", "NULL") else sched,
             "container": "" if container in ("N/A", "(null)", "None", "NULL") else container,
         }
     return out
@@ -362,6 +366,7 @@ def parse_queue(text, extras=None, pending_reqtres=None):
             "end_time": _clean(end), "start_est": _clean(start_est),
             "time_left": _clean(left),
             "name": name, "qos": qos, "nodelist": _clean(nodelist),
+            "sched_nodes": extra.get("sched_nodes", "") if state == "PENDING" else "",
             "time_used": _clean(used), "time_limit": _clean(timelimit),
             # keep the display string consistent with the corrected total so
             # the UI never shows a per-CPU "10000M" next to a 260000M verdict
