@@ -7,6 +7,7 @@ from backend.sources import (
     build_policy_snapshot,
     parse_containers,
     parse_cpu_submit_probes,
+    parse_pending_reqtres,
     parse_qos_policies,
     parse_queue,
 )
@@ -120,6 +121,35 @@ class QueueParserTests(unittest.TestCase):
         job = parse_queue(pending, extras_gpu)["jobs"][0]
         self.assertEqual(job["gpus"], 1)
         self.assertEqual(job["gpu_type"], "")
+
+    def test_parse_queue_uses_sacct_reqtres_for_pending_memory(self):
+        # A pending 26-CPU job asking --mem-per-cpu=10000M: %m shows "10000M",
+        # tres-alloc is null, and only sacct's ReqTRES has the 260000M total.
+        # Without it the fit logic sees a 10 GB waiter that fits everywhere.
+        line = SEP.join(
+            [
+                "406523", "user03", "student", "GPU-S", "PENDING", "Resources",
+                "1", "26", "gpu:1", "2026-07-04T13:32:39", "N/A",
+                "2026-07-09T01:45:25", "12:00:00", "interactive", "gpu-s", "",
+                "0:00", "12:00:00", "10000M",
+            ],
+        )
+        reqtres = parse_pending_reqtres(
+            "406523|billing=26,cpu=26,gres/gpu:h100-20c=1,mem=260000M,node=1\n"
+            "999999|cpu=1,mem=4G,node=1\n"
+            "|\n",
+        )
+
+        job = parse_queue(line, None, reqtres)["jobs"][0]
+
+        self.assertEqual(job["min_memory_mb"], 260000)
+        self.assertEqual(job["min_memory"], "260000M")
+
+        # Running jobs must keep trusting tres-alloc, not the pending map.
+        running = line.replace("PENDING", "RUNNING")
+        extras = {"406523": {"tres": "cpu=26,mem=240G,node=1", "container": ""}}
+        job = parse_queue(running, extras, reqtres)["jobs"][0]
+        self.assertEqual(job["min_memory_mb"], 245760)
 
     def test_parse_containers_slices_fixed_width_columns(self):
         line = "378759".ljust(64) + "cpu=64,mem=375G,node=1".ljust(256) + "docker://ubuntu:22.04"

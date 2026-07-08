@@ -219,7 +219,19 @@ export function pendingForPool(jobs: RawJob[], partPool: Record<string, string>,
 
 export function isLimitBlocked(job: RawJob) {
   const reason = String(job.state_reason || "");
-  return reason.startsWith("QOSMax") || reason === "Dependency" || reason === "JobArrayTaskLimit";
+  // Anything QOS/association-capped cannot take a free slot right now, no
+  // matter its priority — verified live: a fresh lowest-priority job started
+  // instantly past 27 QOSGrpJobsLimit waiters whose requests fit the node.
+  return (
+    reason.startsWith("QOSMax") ||
+    reason.startsWith("QOSGrp") ||
+    reason.startsWith("AssocMax") ||
+    reason.startsWith("AssocGrp") ||
+    reason === "Dependency" ||
+    reason === "JobArrayTaskLimit" ||
+    reason === "BeginTime" ||
+    reason.startsWith("JobHeld")
+  );
 }
 
 /** Pending jobs that actually compete for capacity: limit-blocked waiters

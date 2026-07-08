@@ -299,12 +299,29 @@ def parse_containers(text):
     return out
 
 
-def parse_queue(text, extras=None):
+def parse_pending_reqtres(text):
+    """`sacct -aX --state=PENDING -o JobID,ReqTRES -P -n` -> {job_id: tres}.
+
+    ReqTRES holds the job's *requested totals* (mem=260000M for a 26-CPU job
+    asking --mem-per-cpu=10000M) — the only place a pending job's real memory
+    footprint is visible without a per-job scontrol call."""
+    out = {}
+    for line in text.splitlines():
+        jid, _, tres = line.partition("|")
+        jid = jid.strip()
+        if jid and tres.strip():
+            out[jid] = tres.strip()
+    return out
+
+
+def parse_queue(text, extras=None, pending_reqtres=None):
     """`squeue -h -a -o SQUEUE_FMT` -> [{...}] like squeue --json, enriched with
     every field the raw Jobs table surfaces (see SQUEUE_FIELDS for order).
 
-    `extras` is parse_containers' output: per-job tres-alloc + container."""
+    `extras` is parse_containers' output: per-job tres-alloc + container.
+    `pending_reqtres` is parse_pending_reqtres' output: per-job requested totals."""
     extras = extras or {}
+    pending_reqtres = pending_reqtres or {}
     jobs = []
     for line in text.splitlines():
         p = line.split(SEP)
@@ -328,8 +345,10 @@ def parse_queue(text, extras=None):
         gpu_type = requested_type if state == "PENDING" else (alloc.get("gpu_type") or requested_type)
         # Memory: %m prints per-CPU requests with no suffix (MinMemoryCPU=6000M
         # shows as plain "6000M"), so it can be wrong by a factor of NumCPUs.
-        # tres-alloc's mem= is the job's real (or planned) total.
-        mem_mb = alloc.get("mem_mb") or _mem_mb(min_mem)
+        # tres-alloc's mem= is the job's real total for RUNNING jobs, but it's
+        # null while pending — there sacct's ReqTRES holds the requested total.
+        req = _parse_tres(pending_reqtres.get(str(jid), "")) if state == "PENDING" else {}
+        mem_mb = req.get("mem_mb") or alloc.get("mem_mb") or _mem_mb(min_mem)
         jobs.append({
             "job_id": int(jid) if jid.isdigit() else jid,
             "user_name": user, "account": acct, "partition": part,
@@ -344,7 +363,10 @@ def parse_queue(text, extras=None):
             "time_left": _clean(left),
             "name": name, "qos": qos, "nodelist": _clean(nodelist),
             "time_used": _clean(used), "time_limit": _clean(timelimit),
-            "min_memory": _clean(min_mem), "min_memory_mb": mem_mb,
+            # keep the display string consistent with the corrected total so
+            # the UI never shows a per-CPU "10000M" next to a 260000M verdict
+            "min_memory": f"{mem_mb}M" if mem_mb and mem_mb != _mem_mb(min_mem) else _clean(min_mem),
+            "min_memory_mb": mem_mb,
         })
     return {"jobs": jobs}
 
@@ -492,12 +514,17 @@ class Source:
         out = self._exec(f"scontrol -o show nodes; echo {MARK}; "
                          f"squeue -h -a -o '{SQUEUE_FMT}'; echo {MARK}; "
                          f"(squeue -h -a -O '{CONTAINER_FMT}' 2>/dev/null || true); echo {MARK}; "
+                         # pending jobs' AllocTRES is null and squeue %m prints
+                         # per-CPU requests indistinguishably from totals (a
+                         # 26-CPU job asking 10000M/CPU shows "10000M" — 26x
+                         # off); sacct's ReqTRES is the only cheap total
+                         f"(timeout 8s sacct -aX --state=PENDING -o JobID,ReqTRES -P -n 2>/dev/null || true); echo {MARK}; "
                          f"{singularity_cmd}; echo {MARK}; "
                          f"{cpu_probe_cmd}; echo {MARK}; "
                          f"{qos_cmd}; echo {MARK}; "
                          f"{partition_cmd}")
-        sections = (out.split(MARK) + ["", "", "", "", "", ""])[:7]
-        nodes_txt, queue_txt, containers_txt, sing_txt, cpu_probe_txt, qos_txt, partition_txt = sections
+        sections = (out.split(MARK) + ["", "", "", "", "", "", ""])[:8]
+        nodes_txt, queue_txt, containers_txt, reqtres_txt, sing_txt, cpu_probe_txt, qos_txt, partition_txt = sections
         if self.singularity is None and "version" in sing_txt:
             self.singularity = sing_txt.split("version", 1)[-1].strip()
         if probe_due:
@@ -506,7 +533,7 @@ class Source:
         if policy_due and (qos_txt.strip() or partition_txt.strip()):
             self.policy_snapshot = build_policy_snapshot(qos_txt, partition_txt, now, self.policy_interval)
             self.policy_at = now
-        queue = parse_queue(queue_txt, parse_containers(containers_txt))
+        queue = parse_queue(queue_txt, parse_containers(containers_txt), parse_pending_reqtres(reqtres_txt))
         queue["cpu_submit_probes"] = self.cpu_probes
         queue["cpu_submit_probes_generated_at"] = int(self.cpu_probe_at) if self.cpu_probe_at else 0
         return parse_nodes(nodes_txt), queue

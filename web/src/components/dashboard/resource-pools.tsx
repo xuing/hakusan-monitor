@@ -354,7 +354,11 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
   const cpuProbeGeneratedAt = snap?.cpu_submit_probes_generated_at || snap?.generated_at || 0;
   const hasAdvancedOverrides = Boolean(nodeCount || coreCount || memValue || time.trim());
   const selectedCpuRow = !hasAdvancedOverrides ? cpuRows.find((row) => row.partition === partition) ?? null : null;
-  const gpuTip = isGpu && gpuFit && gpuFit.schedulable <= 0 ? gpuFitTipCommand(gpuFit, pool, pendingActive) : null;
+  // A full group cap blocks every new job in the partition — no --mem value
+  // bypasses QOSGrpJobsLimit, so the tip would be a false promise there.
+  const gpuTip = isGpu && gpuFit && gpuFit.schedulable <= 0 && !groupLimitReached
+    ? gpuFitTipCommand(gpuFit, pool, pendingActive)
+    : null;
   const defaultGpuBlocked = Boolean(isGpu && gpuFit && gpuFit.rawFree > 0 && gpuFit.schedulable <= 0);
   const showGpuFitDetails = Boolean(defaultGpuBlocked && !memValue);
   const queueHint = selectedCpuRow
