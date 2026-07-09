@@ -662,7 +662,18 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
                   </span>
                   <button
                     type="button"
-                    onClick={() => setPtyOn(!ptyOn)}
+                    onClick={() => {
+                      if (!ptyActive) {
+                        setPtyOn(true);
+                        return;
+                      }
+                      // restore = a CLEAN plain-interactive state: drop the
+                      // -t (meaningless there) and any tip-autofilled --mem;
+                      // a hand-typed --mem survives
+                      setPtyOn(false);
+                      setTime("");
+                      if (memValue && (memValue === bfTip?.mem || memValue === gpuTip?.mem)) setMem("");
+                    }}
                     className="whitespace-nowrap rounded border border-info/45 bg-background/80 px-1.5 py-0.5 font-medium text-info-fg transition-colors hover:bg-info-soft"
                   >
                     {ptyActive ? t("pool.ptyBack") : t("pool.ptyGo")}
