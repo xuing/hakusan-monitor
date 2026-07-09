@@ -233,6 +233,33 @@ export function hasUncontestedGpuSlot(nodes: RawNode[], pendingActive: RawJob[],
   return fit.schedulable > 0 && fitHasClearSlot(fit, pendingActive, nowMs, requiredSec);
 }
 
+export type GpuStrandReason = "mem" | "cpu" | "cpu_mem" | "contested" | "planned" | "fit" | null;
+
+/** Why a pool's physically-free GPUs show 0 for THIS partition's request —
+ *  the fact behind "3 GPU free at the top, 0 GPU on every policy below" that
+ *  a bare hero number leaves unexplained. Checks contention first: even a
+ *  perfectly-sized free slot is unusable if a queued job (or a PLANNED
+ *  reservation) owns it before this partition's request could start. */
+export function gpuStrandReason(fit: GpuFitInfo, pendingActive: RawJob[], nowMs: number, requiredSec: number): GpuStrandReason {
+  if (fit.schedulable > 0) {
+    return fit.fitNodes.every((row) => slotBlocked(slotContention(row, pendingActive, nowMs), requiredSec))
+      ? "contested"
+      : null;
+  }
+  if (fit.rawFree <= 0) return null;
+  const best = fit.stranded[0];
+  if (best) {
+    const c = slotContention(best, pendingActive, nowMs);
+    if (slotBlocked(c, requiredSec)) return c.planned ? "planned" : "contested";
+  }
+  const mem = fit.stranded.some((row) => row.missingMemMb > 0);
+  const cpu = fit.stranded.some((row) => row.missingCores > 0);
+  if (cpu && mem) return "cpu_mem";
+  if (cpu) return "cpu";
+  if (mem) return "mem";
+  return "fit";
+}
+
 export function pendingForPool(jobs: RawJob[], partPool: Record<string, string>, poolId: string) {
   return jobs
     .filter((j) => String(j.job_state).toUpperCase() === "PENDING")

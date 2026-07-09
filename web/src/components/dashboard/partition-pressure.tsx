@@ -9,7 +9,7 @@ import { poolLabel, useT, type TFn } from "@/i18n";
 import type { TranslationKey } from "@/i18n/en";
 import { poolCapacity, type PoolCapacity } from "@/lib/derive";
 import { clockOf, fmtMB, nf } from "@/lib/format";
-import { contendersForPool, hasUncontestedGpuSlot, schedulableGpuSlots } from "@/lib/gpu-fit";
+import { contendersForPool, gpuFitSnapshot, gpuStrandReason, hasUncontestedGpuSlot, schedulableGpuSlots, type GpuStrandReason } from "@/lib/gpu-fit";
 import { cpuProbeForPartition, cpuProbeState, type CpuProbeRow } from "@/lib/cpu-probes";
 import {
   PolicyLimitChips,
@@ -183,6 +183,11 @@ export function PartitionPressure() {
                           ? hasUncontestedGpuSlot(snap.nodes, pendingActive, pool, partitionCap(p.name, snap.policy), Date.now(), 720 * 60)
                           : null
                       }
+                      gpuReasonFor={(p) =>
+                        isGpu && pool
+                          ? gpuStrandReason(gpuFitSnapshot(snap, pool, partitionCap(p.name, snap.policy), p.name), pendingActive, Date.now(), 720 * 60)
+                          : null
+                      }
                       generatedAt={snap.cpu_submit_probes_generated_at || snap.generated_at}
                       policy={snap.policy}
                       t={t}
@@ -198,6 +203,7 @@ export function PartitionPressure() {
                       cpuProbeFor={(p) => (!isGpu ? cpuProbeForPartition(snap, p.name) : null)}
                       gpuSlotsFor={() => null}
                       gpuClearFor={() => null}
+                      gpuReasonFor={() => null}
                       generatedAt={snap.cpu_submit_probes_generated_at || snap.generated_at}
                       policy={snap.policy}
                       t={t}
@@ -228,6 +234,7 @@ function PartitionRows({
   cpuProbeFor,
   gpuSlotsFor,
   gpuClearFor,
+  gpuReasonFor,
   generatedAt,
   policy,
   t,
@@ -240,6 +247,7 @@ function PartitionRows({
   cpuProbeFor: (p: Partition) => CpuProbeRow | null;
   gpuSlotsFor: (p: Partition) => number | null;
   gpuClearFor: (p: Partition) => boolean | null;
+  gpuReasonFor: (p: Partition) => GpuStrandReason;
   generatedAt: number;
   policy?: PolicySnapshot;
   t: TFn;
@@ -262,6 +270,7 @@ function PartitionRows({
             cpuProbe={cpuProbeFor(p)}
             gpuSchedulable={gpuSlotsFor(p)}
             gpuClear={gpuClearFor(p)}
+            gpuReason={gpuReasonFor(p)}
             generatedAt={generatedAt}
             policy={policy}
             t={t}
@@ -415,6 +424,7 @@ function PartitionRow({
   cpuProbe,
   gpuSchedulable,
   gpuClear,
+  gpuReason,
   generatedAt,
   policy,
   t,
@@ -425,6 +435,7 @@ function PartitionRow({
   cpuProbe: CpuProbeRow | null;
   gpuSchedulable: number | null;
   gpuClear: boolean | null;
+  gpuReason: GpuStrandReason;
   generatedAt: number;
   policy?: PolicySnapshot;
   t: TFn;
@@ -495,6 +506,14 @@ function PartitionRow({
             </span>
           </div>
           <div className="mt-0.5 truncate text-xs text-muted-foreground/80">{t(labelPolicy.desc)}</div>
+          {/* explains the gap between the pool header's "N GPU free" and this
+              row's "0 GPU" — a bare zero next to a nonzero pool count reads
+              as a bug otherwise */}
+          {!maint && gpuReason && (
+            <div className="mt-0.5 text-xs text-warn-fg">
+              {t(`part.gpuStrandReason.${gpuReason}` as TranslationKey)}
+            </div>
+          )}
           <PolicyLimitChips rows={limitRows} />
           {cpuProbe && !maint && (
             <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs">
