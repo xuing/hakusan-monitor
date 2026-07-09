@@ -35,7 +35,7 @@ export function QueueInsights() {
         <div className="mb-4">
           <div className="mb-2 flex items-baseline justify-between gap-2">
             <h3 className="text-xs text-muted-foreground">{t("queue.reasons")}</h3>
-            <span className="tnum text-[11px] text-muted-foreground">{reasonTotal}</span>
+            <span className="tnum text-xs text-muted-foreground">{reasonTotal}</span>
           </div>
           <div className="flex h-2.5 w-full gap-px overflow-hidden rounded-full bg-muted">
             {reasonEntries.map(([reason, n]) => (
@@ -49,7 +49,7 @@ export function QueueInsights() {
           </div>
           <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1">
             {reasonEntries.map(([reason, n]) => (
-              <span key={reason} className="inline-flex items-center gap-1.5 text-[11px] text-muted-foreground">
+              <span key={reason} className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
                 <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: reasonColor(reason) }} />
                 {reasonLabel(t, reason)}
                 <span className="tnum text-foreground">{n}</span>

@@ -53,7 +53,7 @@ export function Topbar() {
 
         <div className="ml-auto flex items-center gap-3">
           {snap && (
-            <Badge variant="outline" className="hidden font-mono text-[11px] font-normal text-muted-foreground md:inline-flex">
+            <Badge variant="outline" className="hidden font-mono text-xs font-normal text-muted-foreground md:inline-flex">
               {snap.cluster} · slurm {snap.slurm_version}
             </Badge>
           )}

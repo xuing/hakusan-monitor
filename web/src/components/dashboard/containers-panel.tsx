@@ -178,7 +178,7 @@ function CommandCard({ title, detail, command }: { title: string; detail: string
           {copied ? t("helper.copied") : t("helper.copy")}
         </Button>
       </div>
-      <pre className="max-w-full overflow-x-auto whitespace-pre-wrap break-all p-3 font-mono text-[11px] leading-relaxed text-foreground/90">
+      <pre className="max-w-full overflow-x-auto whitespace-pre-wrap break-all p-3 font-mono text-xs leading-relaxed text-foreground/90">
         {command}
       </pre>
     </div>

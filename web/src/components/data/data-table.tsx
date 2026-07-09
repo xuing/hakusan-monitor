@@ -186,7 +186,7 @@ export function DataTable<T>({
               {table.getHeaderGroups().map((headerGroup) => (
                 <TableRow key={headerGroup.id} className="hover:bg-transparent">
                   {headerGroup.headers.map((header) => (
-                    <TableHead key={header.id} className="h-9 whitespace-nowrap bg-muted text-[11px]">
+                    <TableHead key={header.id} className="h-9 whitespace-nowrap bg-muted text-xs">
                       {header.isPlaceholder ? null : header.column.getCanSort() ? (
                         <button
                           type="button"
@@ -307,7 +307,7 @@ function FacetDropdown<T>({ table, facet }: { table: TanStackTable<T>; facet: Da
       <DropdownMenuTrigger asChild>
         <Button variant={selected.length ? "default" : "outline"} size="sm" className="h-8 max-w-[11rem] px-2.5">
           <span className="truncate">{label}</span>
-          {selected.length > 0 && <span className="rounded bg-background/20 px-1 font-mono text-[10px]">{selected.length}</span>}
+          {selected.length > 0 && <span className="rounded bg-background/20 px-1 font-mono text-xs">{selected.length}</span>}
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="max-h-72 min-w-52">
@@ -320,14 +320,14 @@ function FacetDropdown<T>({ table, facet }: { table: TanStackTable<T>; facet: Da
                 <div className="sticky top-0 z-10 -mx-1 -mt-1 flex justify-end gap-1 bg-popover p-1">
                   <button
                     type="button"
-                    className="rounded px-1.5 py-1 text-[11px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                    className="rounded px-1.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
                     onClick={invert}
                   >
                     {t("table.invert")}
                   </button>
                   <button
                     type="button"
-                    className="rounded px-1.5 py-1 text-[11px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                    className="rounded px-1.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
                     onClick={clear}
                   >
                     {t("table.clear")}
@@ -356,7 +356,7 @@ function FacetDropdown<T>({ table, facet }: { table: TanStackTable<T>; facet: Da
                   className="text-xs font-medium"
                 >
                   <span className="min-w-0 flex-1 truncate">{group.label}</span>
-                  <span className="ml-3 font-mono text-[10px] text-muted-foreground">
+                  <span className="ml-3 font-mono text-xs text-muted-foreground">
                     {inGroup.reduce((n, o) => n + o.count, 0)}
                   </span>
                 </DropdownMenuCheckboxItem>
@@ -372,7 +372,7 @@ function FacetDropdown<T>({ table, facet }: { table: TanStackTable<T>; facet: Da
                 className="text-xs"
               >
                 <span className="min-w-0 flex-1 truncate">{valueLabel(option.value)}</span>
-                <span className="ml-3 font-mono text-[10px] text-muted-foreground">{option.count}</span>
+                <span className="ml-3 font-mono text-xs text-muted-foreground">{option.count}</span>
               </DropdownMenuCheckboxItem>
             ))}
           </>

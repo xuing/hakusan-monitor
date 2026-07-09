@@ -118,7 +118,7 @@ function SplitCard({ label, stats }: { label: string; stats: [number, string, st
           {stats.map(([n, lbl, cls]) => (
             <div key={lbl}>
               <div className={`tnum text-2xl font-semibold leading-none ${cls}`}>{nf(n)}</div>
-              <div className="mt-1 text-[11px] text-muted-foreground">{lbl}</div>
+              <div className="mt-1 text-xs text-muted-foreground">{lbl}</div>
             </div>
           ))}
         </div>

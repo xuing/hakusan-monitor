@@ -54,7 +54,7 @@ export function PoolDetail() {
         {pool.gpu && <Spec label={t("spec.gpu")} value={`${gpuPerNode}× ${pool.gpu.label}`} />}
       </div>
 
-      <div className="mb-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+      <div className="mb-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">
         {t("section.poolNodes")} ({nodes.length})
       </div>
       <div className="max-h-80 space-y-1 overflow-y-auto pr-1">
@@ -68,7 +68,7 @@ export function PoolDetail() {
 
 function NodeRow({ n }: { n: RawNode }) {
   return (
-    <div className="flex items-center gap-3 rounded-md bg-muted/40 px-2.5 py-1.5 text-[11px]">
+    <div className="flex items-center gap-3 rounded-md bg-muted/40 px-2.5 py-1.5 text-xs">
       <span className="w-32 shrink-0 truncate font-mono">{n.name}</span>
       <StateBadges states={n.state} />
       <div className="ml-auto shrink-0">
@@ -80,7 +80,7 @@ function NodeRow({ n }: { n: RawNode }) {
 
 const Spec = ({ label, value }: { label: string; value: string }) => (
   <div>
-    <div className="text-[10px] uppercase tracking-wide text-muted-foreground">{label}</div>
+    <div className="text-xs uppercase tracking-wide text-muted-foreground">{label}</div>
     <div className="font-mono text-sm">{value}</div>
   </div>
 );

@@ -59,7 +59,7 @@ export function UsagePanel() {
         <Empty>{t("usage.nodata")}</Empty>
       ) : (
         <div className="space-y-4">
-          {hasSparseData && <div className="text-[11px] text-warn-fg">{t("usage.lowConfidence")}</div>}
+          {hasSparseData && <div className="text-xs text-warn-fg">{t("usage.lowConfidence")}</div>}
 
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex rounded-md border border-border bg-background p-0.5">
@@ -79,7 +79,7 @@ export function UsagePanel() {
                 </button>
               ))}
             </div>
-            <span className="text-[11px] text-muted-foreground">{dateRangeText(data.since, data.until, data.timezone)}</span>
+            <span className="text-xs text-muted-foreground">{dateRangeText(data.since, data.until, data.timezone)}</span>
           </div>
 
           <div className="grid gap-2 sm:grid-cols-2">
@@ -101,7 +101,7 @@ export function UsagePanel() {
             <Heatmap cells={data.heatmap} metric={metric} maxPending={maxPending} t={t} />
           </div>
 
-          <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
             {t("usage.quietest")}
             <div className="flex gap-0.5">
               {[0, 0.25, 0.5, 0.75, 1].map((v) => (
@@ -131,11 +131,11 @@ function PeakStat({
 }) {
   return (
     <div className="rounded-md border border-border bg-muted/35 px-3 py-2">
-      <div className="text-[11px] uppercase tracking-wide text-muted-foreground">{label}</div>
+      <div className="text-xs uppercase tracking-wide text-muted-foreground">{label}</div>
       <div className={`mt-0.5 font-mono text-base ${tone}`}>
         {hour ? `${String(hour.hour).padStart(2, "0")}:00 · ${formatMetric(metricValue(hour, metric), metric)}` : "—"}
       </div>
-      {hour && <div className="mt-0.5 text-[10px] text-muted-foreground">{t("usage.samples", { n: hour.samples })}</div>}
+      {hour && <div className="mt-0.5 text-xs text-muted-foreground">{t("usage.samples", { n: hour.samples })}</div>}
     </div>
   );
 }
@@ -171,7 +171,7 @@ function ByHour({
           );
         })}
       </div>
-      <div className="mt-1 grid gap-1 text-[9px] text-muted-foreground" style={{ gridTemplateColumns: "repeat(24,1fr)" }}>
+      <div className="mt-1 grid gap-1 text-xs text-muted-foreground" style={{ gridTemplateColumns: "repeat(24,1fr)" }}>
         {data.map((h) => (
           <span key={h.hour} className="text-center">
             {h.hour % 3 === 0 ? h.hour : ""}
@@ -207,7 +207,7 @@ function Heatmap({
     <div className="space-y-1 overflow-x-auto">
       {WEEK_ORDER.map((d) => (
         <div key={d} className="grid items-center gap-1" style={{ gridTemplateColumns: cols }}>
-          <span className="text-[11px] text-muted-foreground">{t(`weekday.${d}` as TranslationKey)}</span>
+          <span className="text-xs text-muted-foreground">{t(`weekday.${d}` as TranslationKey)}</span>
           {Array.from({ length: 24 }, (_, h) => {
             const cell = grid.get(`${d}-${h}`);
             const value = cell ? metricValue(cell, metric) : 0;
@@ -223,7 +223,7 @@ function Heatmap({
           })}
         </div>
       ))}
-      <div className="grid gap-1 text-[9px] text-muted-foreground" style={{ gridTemplateColumns: cols }}>
+      <div className="grid gap-1 text-xs text-muted-foreground" style={{ gridTemplateColumns: cols }}>
         <span />
         {Array.from({ length: 24 }, (_, h) => (
           <span key={h} className="text-center">

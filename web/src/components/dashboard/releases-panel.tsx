@@ -60,14 +60,14 @@ function ReleaseRow({
       <div className="flex items-center justify-between gap-2">
         <span className="flex min-w-0 items-center gap-1.5">
           <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", accent)} />
-          <span className="truncate font-mono text-[12px] font-medium text-info-fg">{release.user}</span>
+          <span className="truncate font-mono text-xs font-medium text-info-fg">{release.user}</span>
         </span>
-        <span className={cn("tnum inline-flex shrink-0 items-center gap-1 rounded-full px-1.5 py-0.5 font-mono text-[10px] font-medium", soft)}>
+        <span className={cn("tnum inline-flex shrink-0 items-center gap-1 rounded-full px-1.5 py-0.5 font-mono text-xs font-medium", soft)}>
           <Clock className="h-2.5 w-2.5" />
           {fmtCountdown(remaining)}
         </span>
       </div>
-      <div className="mt-0.5 flex items-center gap-1.5 pl-3 text-[10px] text-muted-foreground">
+      <div className="mt-0.5 flex items-center gap-1.5 pl-3 text-xs text-muted-foreground">
         <span className={cn("font-medium", fg)}>{resource}</span>
         <span className="text-muted-foreground/40">·</span>
         <span className="truncate">{release.partition}</span>

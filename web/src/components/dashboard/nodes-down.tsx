@@ -35,7 +35,7 @@ export function NodesDown() {
                           <span
                             key={state}
                             className={cn(
-                              "whitespace-nowrap rounded-sm border border-current/20 px-1 py-px text-[9px] uppercase leading-3",
+                              "whitespace-nowrap rounded-sm border border-current/20 px-1 py-px text-xs uppercase leading-4",
                               level.text,
                             )}
                           >

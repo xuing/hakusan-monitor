@@ -49,7 +49,7 @@ export function ResourceFilterChips() {
 function FilterGroup({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div className="flex items-center gap-1.5 rounded-lg border border-border bg-muted/20 px-2 py-1 shadow-sm">
-      <span className="px-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">{label}</span>
+      <span className="px-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">{label}</span>
       <div className="flex flex-wrap items-center gap-1">{children}</div>
     </div>
   );

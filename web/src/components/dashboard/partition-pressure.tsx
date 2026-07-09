@@ -166,7 +166,7 @@ export function PartitionPressure() {
             return (
               <div key={group.key}>
                 <PoolHeader pool={pool} label={poolLabel(t, group.poolKey)} spec={spec} isGpu={isGpu} pc={pc} t={t} />
-                {parts.length > 1 && <p className="mb-1.5 text-[11px] text-muted-foreground/80">{t("part.shared")}</p>}
+                {parts.length > 1 && <p className="mb-1.5 text-xs text-muted-foreground/80">{t("part.shared")}</p>}
                 <div className="space-y-2">
                   {generalParts.length > 0 && (
                     <PartitionRows
@@ -245,7 +245,7 @@ function PartitionRows({
   return (
     <div>
       {label && (
-        <div className="mb-1 flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-[11px]">
+        <div className="mb-1 flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-xs">
           <span className="font-medium text-foreground">{label}</span>
           {note && <span className="text-muted-foreground/80">{note}</span>}
         </div>
@@ -314,13 +314,13 @@ function PoolHeader({
     <div className="mb-1.5 border-b border-border pb-1.5">
       <div className="flex flex-wrap items-baseline gap-x-2">
         <span className="text-sm font-semibold">{label}</span>
-        <span className="font-mono text-[11px] text-muted-foreground">
+        <span className="font-mono text-xs text-muted-foreground">
           {nf(pool?.nodes ?? 0)} {t("spec.nodes")} · {t("spec.perNode")}{" "}
           {spec.gpu_per_node > 0 && `${spec.gpu_per_node} GPU · `}
           {spec.cores_per_node}c · {fmtMB(spec.mem_per_node)}
         </span>
       </div>
-      <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-muted-foreground">
+      <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
         <UnitBlocks {...blocks} />
         {maint ? (
           <>
@@ -469,11 +469,11 @@ function PartitionRow({
       <div className="grid gap-x-3 gap-y-1 sm:grid-cols-[9rem_minmax(0,1fr)_auto] sm:items-center">
         <div className="min-w-0">
           <div className="truncate text-sm font-medium">{p.name}</div>
-          <div className="truncate text-[11px] text-muted-foreground">{t(labelPolicy.title)}</div>
+          <div className="truncate text-xs text-muted-foreground">{t(labelPolicy.title)}</div>
         </div>
         <div className="min-w-0">
           <div className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5">
-            {heroLabel && <span className="text-[11px] text-muted-foreground">{heroLabel}</span>}
+            {heroLabel && <span className="text-xs text-muted-foreground">{heroLabel}</span>}
             <span
               className={cn(
                 "font-mono text-base font-semibold",
@@ -482,20 +482,20 @@ function PartitionRow({
             >
               {maint ? "—" : (heroOverride ?? heroText(t, hero))}
               {!heroOverride && hero.capped && !maint && (
-                <HoverHint text={t("part.capHint")} className="ml-0.5 align-super text-[10px]" />
+                <HoverHint text={t("part.capHint")} className="ml-0.5 align-super text-xs" />
               )}
             </span>
-            <span className="font-mono text-[11px] text-muted-foreground">
+            <span className="font-mono text-xs text-muted-foreground">
               {t("part.policyLimit")} {fmtPolicyLimit(cap, isGpu, t) || "—"}
             </span>
-            <span className={cn("font-mono text-[11px]", p.jobs.pending > 0 ? "text-warn-fg" : "text-muted-foreground")}>
+            <span className={cn("font-mono text-xs", p.jobs.pending > 0 ? "text-warn-fg" : "text-muted-foreground")}>
               {t("part.run")}{nf(p.jobs.running)} {t("part.pend")}{nf(p.jobs.pending)}
             </span>
           </div>
-          <div className="mt-0.5 truncate text-[11px] text-muted-foreground/80">{t(labelPolicy.desc)}</div>
+          <div className="mt-0.5 truncate text-xs text-muted-foreground/80">{t(labelPolicy.desc)}</div>
           <PolicyLimitChips rows={limitRows} />
           {cpuProbe && !maint && (
-            <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px]">
+            <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs">
               {showTestedCommand && (
                 <span className="inline-flex max-w-full min-w-0 items-center gap-1 text-muted-foreground">
                   <span className="min-w-0 truncate font-mono text-foreground">{cpuProbe.command}</span>

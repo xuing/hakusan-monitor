@@ -14,7 +14,7 @@ export function Brand() {
       </div>
       <div className="leading-tight">
         <div className="text-sm font-semibold">{t("app.title")}</div>
-        <div className="text-[11px] text-muted-foreground">{t("app.subtitle")}</div>
+        <div className="text-xs text-muted-foreground">{t("app.subtitle")}</div>
       </div>
     </div>
   );
@@ -28,7 +28,7 @@ export function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
     <nav className="flex flex-col gap-6">
       {SECTIONS.map((section) => (
         <div key={section}>
-          <div className="px-3 pb-2 text-[11px] font-medium uppercase tracking-wider text-muted-foreground/60">
+          <div className="px-3 pb-2 text-xs font-medium uppercase tracking-wider text-muted-foreground/60">
             {t(`nav.section.${section}` as TranslationKey)}
           </div>
           <ul className="space-y-1">

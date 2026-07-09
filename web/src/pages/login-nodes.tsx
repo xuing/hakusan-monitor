@@ -211,7 +211,7 @@ function NodePanel({ node }: { node: LoginNode }) {
               {t("login.diskSpaceRef")}
               <HoverHint text={t("login.diskScope")} />
             </div>
-            <div className="text-[11px] text-muted-foreground">{disks.length}</div>
+            <div className="text-xs text-muted-foreground">{disks.length}</div>
           </div>
           <Table containerClassName="max-h-56 rounded-lg border border-border subtle-scroll">
             <TableHeader className="sticky top-0 z-10 bg-card">
@@ -478,7 +478,7 @@ function LoginErrorState({ message }: { message: string }) {
           <div>
             <div className="text-sm font-medium text-bad-fg">{t("login.errorTitle")}</div>
             <div className="mt-1 text-xs text-muted-foreground">{t("login.errorDetail")}</div>
-            {message && <div className="mt-2 rounded-md bg-muted px-2 py-1 font-mono text-[11px] text-muted-foreground">{message}</div>}
+            {message && <div className="mt-2 rounded-md bg-muted px-2 py-1 font-mono text-xs text-muted-foreground">{message}</div>}
           </div>
         </div>
       </SectionCard>

@@ -64,7 +64,7 @@ export function PolicyLimitChips({ rows }: { rows: PolicyLimitRow[] }) {
         <span
           key={row.key}
           className={cn(
-            "rounded-md border px-1.5 py-0.5 text-[10px]",
+            "rounded-md border px-1.5 py-0.5 text-xs",
             row.reached
               ? "border-bad/30 bg-bad-soft text-bad-fg"
               : row.near

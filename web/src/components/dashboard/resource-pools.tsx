@@ -101,7 +101,7 @@ function PoolGroup({ label, pools, snap, t }: { label: string; pools: Pool[]; sn
       <div className="flex flex-wrap items-center gap-2 border-b border-border pb-1.5">
         <span className={cn("h-2.5 w-2.5 rounded-full", maint ? "bg-muted-foreground/45" : available > 0 ? "bg-ok" : "bg-bad")} />
         <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{label}</span>
-        <span className="font-mono text-[11px] text-muted-foreground">
+        <span className="font-mono text-xs text-muted-foreground">
           {available}/{pools.length} {t("part.available")}
         </span>
       </div>
@@ -178,7 +178,7 @@ function PoolCard({ pool, snap, t }: { pool: Pool; snap: Snapshot; t: TFn }) {
               )}
             />
             <span className="font-semibold">{poolLabel(t, pool.id)}</span>
-            <span className="text-[11px] text-muted-foreground">
+            <span className="text-xs text-muted-foreground">
               {pool.nodes} {t("spec.nodes")} · {fmtMB(pool.mem_per_node)}
             </span>
           </div>
@@ -206,7 +206,7 @@ function PoolCard({ pool, snap, t }: { pool: Pool; snap: Snapshot; t: TFn }) {
                 )}
               </div>
             )}
-            <div className="text-[11px] text-muted-foreground">
+            <div className="text-xs text-muted-foreground">
               {maint ? null : gpuAvailabilityText(isGpu, gpuFit, gpuSched, rawGpuFree, availableNodesLabel, pendingActive, t)}
             </div>
           </div>
@@ -219,7 +219,7 @@ function PoolCard({ pool, snap, t }: { pool: Pool; snap: Snapshot; t: TFn }) {
           <Bar value={maint ? 0 : util} tone={maint ? "neutral" : undefined} className="mt-2" />
         )}
 
-        <div className="mt-2.5 flex flex-wrap items-center gap-x-4 text-[11px] text-muted-foreground">
+        <div className="mt-2.5 flex flex-wrap items-center gap-x-4 text-xs text-muted-foreground">
           <span>
             <b className="text-ok-fg">{pool.queue.running}</b> {t("queue.running")}
           </span>
@@ -313,7 +313,7 @@ function ReleaseHint({ pool, generatedAt }: { pool: Pool; generatedAt: number })
   if (!next && releasingNodes <= 0) return null;
   const remaining = next ? Math.max(0, parseDur(next.left) - (now - generatedAt)) : 0;
   return (
-    <div className="flex flex-col items-end gap-1 text-right text-[11px]">
+    <div className="flex flex-col items-end gap-1 text-right text-xs">
       {next && (
         <span className="text-info-fg">
           ~ {clockOf(next.at)} <span className="text-muted-foreground">({fmtDur(remaining)})</span>
@@ -429,7 +429,7 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
   const coreOptions = numberOptions(cap.maxCores, [1, 2, 4, 8, 16, 26, 32, 52, 64, 96, 128, 208, 256, 512, 768, 1024, 2048, 4096, 8192]);
   const timeOptions = timeOptionsFor(cap.wall, t);
   const partitionGroups = partitionOptionGroups(pool.partitions, t);
-  const fieldCls = "h-7 w-full rounded-md border border-border bg-background px-2 text-[11px] outline-none focus:border-primary";
+  const fieldCls = "h-7 w-full rounded-md border border-border bg-background px-2 text-xs outline-none focus:border-primary";
 
   // Collapsed one-glance verdict for the row. Scan every partition and lead
   // with the most startable one — the default partition's "will queue · group
@@ -441,7 +441,7 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
     <>
       <Tag tone={collapsedPick.tone}>{collapsedPick.label}</Tag>
       {collapsedPick.text && (
-        <span className="min-w-0 truncate text-[10px] text-muted-foreground">{collapsedPick.text}</span>
+        <span className="min-w-0 truncate text-xs text-muted-foreground">{collapsedPick.text}</span>
       )}
     </>
   ) : null;
@@ -485,7 +485,7 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
                     type="button"
                     onClick={() => setMode(m)}
                     className={cn(
-                      "flex-1 rounded-[4px] px-2 text-[11px] transition-colors",
+                      "flex-1 rounded-[4px] px-2 text-xs transition-colors",
                       mode === m ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground",
                     )}
                   >
@@ -503,14 +503,14 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
           {/* terminal-styled on purpose (dark in both themes + $ prompt): with no
               caption around it, the surface itself has to say "run this in a shell" */}
           <div className="flex items-center gap-2 rounded-md border border-zinc-800 bg-zinc-950 px-2.5 py-1.5">
-            <span aria-hidden className="select-none font-mono text-[11px] text-zinc-500">$</span>
-            <code className="flex-1 overflow-x-auto whitespace-nowrap font-mono text-[11px] text-zinc-100">{cmd}</code>
+            <span aria-hidden className="select-none font-mono text-xs text-zinc-500">$</span>
+            <code className="flex-1 overflow-x-auto whitespace-nowrap font-mono text-xs text-zinc-100">{cmd}</code>
             <CopyButton text={cmd} label className="text-zinc-400 hover:bg-white/10 hover:text-zinc-100" />
           </div>
           {/* script mode is the only route to a short walltime on GPU
               partitions — offer the verified way to still get a shell */}
           {mode === "script" && isGpu && (
-            <div className="text-[10px] leading-relaxed text-muted-foreground">{t("pool.scriptPtyHint")}</div>
+            <div className="text-xs leading-relaxed text-muted-foreground">{t("pool.scriptPtyHint")}</div>
           )}
 
           {/* why / limits — explanation reads after the deliverable, not before it */}
@@ -520,17 +520,17 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
               {queueHint && (!showGpuFitDetails || groupLimitReached || !gpuTip) && (
                 <Tag tone={queueHint.tone}>{queueHint.label}</Tag>
               )}
-              {policyLimit && <span className="font-mono text-[10px] text-muted-foreground">{policyLimit}</span>}
+              {policyLimit && <span className="font-mono text-xs text-muted-foreground">{policyLimit}</span>}
             </div>
-            {policyDesc && <div className="mt-1 text-[10px] leading-relaxed text-muted-foreground">{policyDesc}</div>}
+            {policyDesc && <div className="mt-1 text-xs leading-relaxed text-muted-foreground">{policyDesc}</div>}
             {queueHint?.detail && (!showGpuFitDetails || groupLimitReached || !gpuTip) && (
-              <div className="mt-1 text-[10px] leading-relaxed text-muted-foreground">{queueHint.detail}</div>
+              <div className="mt-1 text-xs leading-relaxed text-muted-foreground">{queueHint.detail}</div>
             )}
             {selectedCpuRow && <CpuProbeInline row={selectedCpuRow} generatedAt={cpuProbeGeneratedAt} t={t} />}
             {hasAdvancedOverrides && cpuRows.length > 0 && (
-              <div className="mt-1 text-[10px] leading-relaxed text-muted-foreground">{t("pool.cpuProbeDefaultOnly")}</div>
+              <div className="mt-1 text-xs leading-relaxed text-muted-foreground">{t("pool.cpuProbeDefaultOnly")}</div>
             )}
-            {multiNodeCpuPolicy && <div className="mt-1 text-[10px] leading-relaxed text-warn-fg">{t("pool.multiNodeHint")}</div>}
+            {multiNodeCpuPolicy && <div className="mt-1 text-xs leading-relaxed text-warn-fg">{t("pool.multiNodeHint")}</div>}
             {gpuTip && (
               <GpuFitQuickTip
                 tip={gpuTip}
@@ -570,7 +570,7 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
                 this block disappear, nothing above the clicked button moves */}
             {showGpuFitDetails && gpuFit && <GpuFitExplanation fit={gpuFit} pendingActive={pendingActive} t={t} />}
             <PolicyLimitChips rows={limits} />
-            {groupLimitReached && <div className="mt-1 text-[10px] leading-relaxed text-bad-fg">{t("pool.limitReached")}</div>}
+            {groupLimitReached && <div className="mt-1 text-xs leading-relaxed text-bad-fg">{t("pool.limitReached")}</div>}
           </div>
 
           {/* last on purpose: it only grows downward, so toggling it (or the
@@ -578,7 +578,7 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
           <button
             type="button"
             onClick={() => setAdvanced(!advanced)}
-            className="flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground"
+            className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
           >
             <ChevronRight className={cn("h-3 w-3 transition-transform", advanced && "rotate-90")} />
             {t("pool.advanced")}
@@ -609,7 +609,7 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
                     placeholder={gpuTip?.mem || t("pool.default")}
                     className={cn(fieldCls, memError && "border-bad")}
                   />
-                  {memError && <span className="mt-0.5 block text-[10px] leading-tight text-bad-fg">{memError}</span>}
+                  {memError && <span className="mt-0.5 block text-xs leading-tight text-bad-fg">{memError}</span>}
                 </Field>
                 <Field label={t("pool.time")}>
                   {forcedSec !== null ? (
@@ -630,7 +630,7 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
                   )}
                 </Field>
               </div>
-              <div className="text-[10px] leading-relaxed text-muted-foreground">{t("pool.nodeRequestHint")}</div>
+              <div className="text-xs leading-relaxed text-muted-foreground">{t("pool.nodeRequestHint")}</div>
             </div>
           )}
         </div>
@@ -945,7 +945,7 @@ function GpuFitQuickTip({
   t: TFn;
 }) {
   return (
-    <div className="mt-2 rounded-md border border-warn/40 bg-warn-soft/45 px-2 py-1.5 text-[10px] leading-relaxed">
+    <div className="mt-2 rounded-md border border-warn/40 bg-warn-soft/45 px-2 py-1.5 text-xs leading-relaxed">
       <div className="flex flex-wrap items-center gap-1.5">
         <Tag tone="warn">{t("pool.fitTip")}</Tag>
         <span className="text-foreground">{t("pool.fitTipText", { mem: tip.mem, node: tip.node })}</span>
@@ -1000,7 +1000,7 @@ function GpuBackfillQuickTip({
           ? t("pool.bfTipApply", { mem: tip.mem, t: tip.t })
           : t("pool.bfTipApplyTime", { t: tip.t });
   return (
-    <div className="mt-2 rounded-md border border-info/40 bg-info-soft/45 px-2 py-1.5 text-[10px] leading-relaxed">
+    <div className="mt-2 rounded-md border border-info/40 bg-info-soft/45 px-2 py-1.5 text-xs leading-relaxed">
       <div className="flex flex-wrap items-center gap-1.5">
         <Tag tone="info">{t("pool.bfTip")}</Tag>
         <span className="text-foreground">{text}</span>
@@ -1058,7 +1058,7 @@ function CpuProbeInline({ row, generatedAt, t }: { row: CpuProbeRow; generatedAt
   const state = cpuProbeState(row.probe, generatedAt);
   const detail = cpuProbeDetail(row, state, t);
   return (
-    <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px]">
+    <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs">
       <Tag tone={cpuProbeTone(state)}>{cpuProbeLabel(state, t)}</Tag>
       {row.cores > 0 && (
         <span className="font-mono text-muted-foreground">{t("pool.cpuProbeNeed", { cores: row.cores })}</span>
@@ -1076,7 +1076,7 @@ function trMaybe(t: TFn, key: string, fallback: string) {
 
 function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
-    <label className="min-w-0 text-[10px] text-muted-foreground">
+    <label className="min-w-0 text-xs text-muted-foreground">
       <span className="mb-0.5 block truncate">{label}</span>
       {children}
     </label>
@@ -1125,7 +1125,7 @@ function GpuFitExplanation({ fit, pendingActive, t }: { fit: GpuFitInfo; pending
   const best = strandedTipNode(fit) ?? fit.stranded[0];
   const contention = best ? slotContention(best, pendingActive) : null;
   return (
-    <div className="mt-2 rounded-md border border-warn/35 bg-warn-soft/45 px-2.5 py-2 text-[10px] leading-relaxed">
+    <div className="mt-2 rounded-md border border-warn/35 bg-warn-soft/45 px-2.5 py-2 text-xs leading-relaxed">
       <div className="flex flex-wrap items-center gap-1.5">
         <Tag tone="warn">{t("pool.fitBlocked")}</Tag>
         <span className="text-foreground">{t("pool.fitNeed", { partition: fit.need.partition, need: resourceText(fit.need, t) })}</span>
@@ -1268,7 +1268,7 @@ function PendingJobs({ pool, t }: { pool: Pool; t: TFn }) {
   if (list.length === 0) return null;
   return (
     <div className="mt-2 max-h-64 space-y-1 overflow-y-auto pr-1">
-      <div className="pb-1 text-[10px] text-muted-foreground">{t("pool.pendingShowing", { shown: list.length, total: all.length })}</div>
+      <div className="pb-1 text-xs text-muted-foreground">{t("pool.pendingShowing", { shown: list.length, total: all.length })}</div>
       {list.map((j) => (
         <PendingJobRow key={String(j.job_id)} job={j} t={t} />
       ))}
@@ -1280,7 +1280,7 @@ function PendingJobRow({ job, t }: { job: RawJob; t: TFn }) {
   const rawReason = job.state_reason || "None";
   const reason = reasonLabel(t, rawReason);
   return (
-    <div className="rounded-md bg-muted/40 px-2.5 py-1.5 text-[11px]">
+    <div className="rounded-md bg-muted/40 px-2.5 py-1.5 text-xs">
       <div className="flex items-center justify-between gap-2">
         <span className="font-mono text-info-fg">{job.user_name}</span>
         <div className="flex items-center gap-2 font-mono text-muted-foreground">
@@ -1288,7 +1288,7 @@ function PendingJobRow({ job, t }: { job: RawJob; t: TFn }) {
           <span className="text-foreground">{pendingJobResources(job, t)}</span>
         </div>
       </div>
-      <div className="mt-1 truncate text-[10px] text-muted-foreground">
+      <div className="mt-1 truncate text-xs text-muted-foreground">
         {reason}
         {reason !== rawReason && <span className="font-mono"> ({rawReason})</span>}
       </div>
@@ -1347,7 +1347,7 @@ function Occupants({ pool, t }: { pool: Pool; t: TFn }) {
           onChange={(e) => setQ(e.target.value)}
           placeholder={t("table.search")}
           aria-label={t("table.search")}
-          className="h-7 w-40 rounded-md border border-border bg-background px-2 text-[11px] outline-none focus:border-primary"
+          className="h-7 w-40 rounded-md border border-border bg-background px-2 text-xs outline-none focus:border-primary"
         />
         <div className="flex items-center rounded-md border border-border p-0.5">
           {(["ending", "usage"] as const).map((s) => (
@@ -1356,7 +1356,7 @@ function Occupants({ pool, t }: { pool: Pool; t: TFn }) {
               type="button"
               onClick={() => setSort(s)}
               className={cn(
-                "rounded px-2 py-0.5 text-[11px] transition-colors",
+                "rounded px-2 py-0.5 text-xs transition-colors",
                 sort === s ? "bg-accent text-foreground" : "text-muted-foreground hover:text-foreground",
               )}
             >
@@ -1364,7 +1364,7 @@ function Occupants({ pool, t }: { pool: Pool; t: TFn }) {
             </button>
           ))}
         </div>
-        <span className="tnum ml-auto text-[11px] text-muted-foreground">
+        <span className="tnum ml-auto text-xs text-muted-foreground">
           {shown}/{total}
         </span>
       </div>
@@ -1379,11 +1379,11 @@ function Occupants({ pool, t }: { pool: Pool; t: TFn }) {
           ))
         )}
         {shown === 0 && (
-          <div className="py-3 text-center text-[11px] text-muted-foreground">{t("table.noresults")}</div>
+          <div className="py-3 text-center text-xs text-muted-foreground">{t("table.noresults")}</div>
         )}
       </div>
       {pool.partitions.length > 0 && (
-        <div className="pt-2 text-[11px] text-muted-foreground">
+        <div className="pt-2 text-xs text-muted-foreground">
           {t("pool.submit")}: <span className="font-mono">{pool.partitions.join(", ")}</span>
         </div>
       )}
@@ -1455,7 +1455,7 @@ function OccupantRow({
   // partition normally allows": short is good, long is expensive.
   const barColor = remFrac >= 0.5 ? "bg-bad" : remFrac >= 0.15 ? "bg-warn" : "bg-ok";
   return (
-    <div className="rounded-md bg-muted/40 px-2.5 py-1.5 text-[11px]">
+    <div className="rounded-md bg-muted/40 px-2.5 py-1.5 text-xs">
       <div className="flex items-center justify-between gap-2">
         <span className="font-mono text-info-fg">{o.user}</span>
         <div className="flex items-center gap-2 font-mono text-muted-foreground">
@@ -1480,7 +1480,7 @@ function OccupantRow({
             />
           )}
         </div>
-        <span className="tnum shrink-0 font-mono text-[10px]">
+        <span className="tnum shrink-0 font-mono text-xs">
           <span className="text-foreground">{fmtCountdown(remaining)}</span>
           {requested > 0 && <span className="text-muted-foreground"> / {fmtDur(requested)}</span>}
         </span>
@@ -1500,14 +1500,14 @@ function OccupantUserRow({
 }) {
   const primary = isGpu ? `${group.gpus} ${t("unit.gpu")}` : `${group.cpus}c`;
   return (
-    <div className="rounded-md bg-muted/40 px-2.5 py-1.5 text-[11px]">
+    <div className="rounded-md bg-muted/40 px-2.5 py-1.5 text-xs">
       <div className="flex items-center justify-between gap-2">
         <span className="font-mono text-info-fg">{group.user}</span>
-        <span className="tnum rounded bg-info-soft px-1.5 py-0.5 font-mono text-[10px] font-semibold text-info-fg">
+        <span className="tnum rounded bg-info-soft px-1.5 py-0.5 font-mono text-xs font-semibold text-info-fg">
           {primary}
         </span>
       </div>
-      <div className="mt-1 flex min-w-0 items-center justify-between gap-2 text-[10px] text-muted-foreground">
+      <div className="mt-1 flex min-w-0 items-center justify-between gap-2 text-xs text-muted-foreground">
         <span className="truncate">
           {group.jobs} {t("topusers.jobs")}
           {isGpu && <> · {group.cpus}c</>} · {fmtMB(group.mem_mb)}

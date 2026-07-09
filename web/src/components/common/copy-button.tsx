@@ -30,7 +30,7 @@ export function CopyButton({ text, label, className }: { text: string; label?: b
       aria-label={title}
       className={cn(
         label
-          ? "inline-flex shrink-0 items-center gap-1 text-[11px] text-muted-foreground transition-colors hover:text-foreground"
+          ? "inline-flex shrink-0 items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
           : "shrink-0 rounded p-0.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground",
         className,
       )}

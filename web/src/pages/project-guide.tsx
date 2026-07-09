@@ -185,7 +185,7 @@ function CommandSnippet({ title, text }: { title: string; text: string }) {
   return (
     <div>
       <div className="mb-1 text-xs font-medium text-muted-foreground">{title}</div>
-      <pre className="max-h-56 overflow-auto rounded-md bg-background p-3 font-mono text-[11px] text-foreground/90">
+      <pre className="max-h-56 overflow-auto rounded-md bg-background p-3 font-mono text-xs text-foreground/90">
         {text}
       </pre>
     </div>

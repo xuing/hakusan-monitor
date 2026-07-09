@@ -8,7 +8,7 @@ export function Tag({ tone = "neutral", children, className }: { tone?: Tone; ch
   return (
     <span
       className={cn(
-        "inline-flex items-center whitespace-nowrap rounded px-1.5 py-0.5 text-[10px] font-semibold",
+        "inline-flex items-center whitespace-nowrap rounded px-1.5 py-0.5 text-xs font-semibold",
         c.bg,
         c.text,
         className,
