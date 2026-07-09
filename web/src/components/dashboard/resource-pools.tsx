@@ -39,22 +39,11 @@ import {
   type GpuFitNode,
   type GpuFitTipData,
 } from "@/lib/gpu-fit";
-import { isMaterialsStudioPartition, matchPool, partitionCap, partitionPolicy, type PartitionPolicy, type Tone } from "@/lib/slurm";
+import { interactiveForcedSec, isMaterialsStudioPartition, matchPool, partitionCap, partitionPolicy, type PartitionPolicy, type Tone } from "@/lib/slurm";
 import { cn } from "@/lib/utils";
 import { cpuProbeRows, cpuProbeState, type CpuProbeRow } from "@/lib/cpu-probes";
 import type { Occupant, Partition, Pool, PoolGpu, RawJob, Snapshot } from "@/types/snapshot";
 
-// Hakusan's job_submit.lua overrides -t on every interactive (salloc) job —
-// set, not capped — to a per-partition-class constant. Measured live 2026-07:
-// GPU partitions (incl. VM-GPU-L) → "time limit is set to 720 minutes"; CPU/
-// VM/LM partitions → "2880 minutes"; TINY alone honors -t (5-min salloc ran
-// as requested). Batch (sbatch) keeps its -t everywhere. Walltime-based
-// verdicts and tips must use these values in interactive mode; short--t
-// tricks are only deliverable through script mode.
-function interactiveForcedSec(partition: string, isGpu: boolean): number | null {
-  if (partition === "TINY") return null;
-  return (isGpu ? 720 : 2880) * 60;
-}
 
 // Minimal starter per pool. Hakusan's submit plugin applies the partition
 // defaults, including the GPU partition's default one GPU per node.
@@ -483,7 +472,7 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
       : `sbatch ${flags.join(" ")} ${script}`;
   const policyName = trMaybe(t, `policy.${partition}`, partition);
   const policyDesc = trMaybe(t, `policy.${partition}.desc`, "");
-  const limitText = fmtPolicyLimit(cap, isGpu, t);
+  const limitText = fmtPolicyLimit(cap, isGpu, t, partition);
   const policyLimit = limitText ? `${t("part.policyLimit")} ${limitText}` : "";
   // the scatter warning is about the implicit multi-node DEFAULT — once the
   // user pins -N themselves it describes a state they already left

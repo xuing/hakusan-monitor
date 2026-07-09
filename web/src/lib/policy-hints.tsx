@@ -5,7 +5,7 @@
 import type { TFn } from "@/i18n";
 import { cleanCpuProbeRaw, type CpuProbeRow, type CpuProbeState } from "@/lib/cpu-probes";
 import { clockOf, nf } from "@/lib/format";
-import type { PartitionCap, PartitionPolicy, Tone } from "@/lib/slurm";
+import { interactiveForcedLabel, type PartitionCap, type PartitionPolicy, type Tone } from "@/lib/slurm";
 import { cn } from "@/lib/utils";
 
 export interface PolicyLimitRow {
@@ -89,13 +89,20 @@ export function fmtCapMem(gb?: number) {
 }
 
 /** "8 GPU / 208c / 2TB / 4 nodes / 3d" — no label prefix, "" when the cap is empty. */
-export function fmtPolicyLimit(cap: PartitionCap, isGpu: boolean, t: TFn) {
+export function fmtPolicyLimit(cap: PartitionCap, isGpu: boolean, t: TFn, partition?: string) {
   const parts: string[] = [];
   if (isGpu && cap.maxGpus) parts.push(`${cap.maxGpus} GPU`);
   if (cap.maxCores) parts.push(`${nf(cap.maxCores)}c`);
   if (cap.maxMemGb) parts.push(fmtCapMem(cap.maxMemGb));
   if (cap.maxNodes) parts.push(`${nf(cap.maxNodes)} ${t(cap.maxNodes === 1 ? "spec.nodeSingle" : "spec.nodes")}`);
-  if (cap.wall) parts.push(cap.wall);
+  if (cap.wall) {
+    // the QOS wall only binds sbatch; salloc gets a plugin-forced walltime —
+    // showing "7d" alone reads as a promise interactive can't keep
+    const forced = partition ? interactiveForcedLabel(partition, isGpu) : null;
+    parts.push(forced && forced !== cap.wall
+      ? `${t("pool.modeScript")} ${cap.wall} · ${t("pool.modeInteractive")} ${forced}`
+      : cap.wall);
+  }
   return parts.join(" / ");
 }
 

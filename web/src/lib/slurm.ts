@@ -117,3 +117,19 @@ export const partitionCap = (name: string, policy?: PolicySnapshot): PartitionCa
 
 export const partitionPolicy = (name: string, policy?: PolicySnapshot): PartitionPolicy =>
   policy?.partition_policies?.[name] ?? {};
+
+/** Hakusan's job_submit.lua overrides -t on every interactive (salloc) job —
+ *  set, not capped — to a per-partition-class constant (measured live
+ *  2026-07): GPU partitions → 720 min, CPU/VM/LM → 2880 min, TINY alone
+ *  honors -t. Batch (sbatch) keeps its -t everywhere. */
+export function interactiveForcedSec(partition: string, isGpu: boolean): number | null {
+  if (partition === "TINY") return null;
+  return (isGpu ? 720 : 2880) * 60;
+}
+
+/** Compact label for the forced interactive walltime. */
+export function interactiveForcedLabel(partition: string, isGpu: boolean): string | null {
+  const sec = interactiveForcedSec(partition, isGpu);
+  if (sec === null) return null;
+  return sec === 720 * 60 ? "12h" : "2d";
+}
