@@ -560,7 +560,8 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
           {isGpu && (
             <div className="text-xs leading-relaxed text-muted-foreground">
               {mode === "script" && <>{t("pool.scriptPtyHint")}{" "}</>}
-              {ptyActive && <>{t("pool.ptyNote", { t: ptyTime })}{" "}</>}
+              {ptyActive && <>{t("pool.ptyNote")}{" "}</>}
+              {ptyActive && !time.trim() && <>{t("pool.ptyNoteDefaultTime")}{" "}</>}
               {mode === "interactive" && (
                 <>
                   <button
