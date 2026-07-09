@@ -223,7 +223,7 @@ export const zh: Record<TranslationKey, string> = {
   "guide.pty.step2.detail": "srun --jobid 加入刚才的作业；--overlap 允许你的 shell 和睡觉进程共享这份资源；--pty bash 在计算节点上打开真正的终端。本地断网、合盖都不影响后台作业——重连集群后再跑一遍这一行，就能原样回到之前的现场。",
   "guide.pty.step3.title": "③ 用完立即释放",
   "guide.pty.step3.detail": "退出 shell 并不会结束占位作业——sleep infinity 会一直霸占资源到时限耗尽。做完必须 scancel。",
-  "guide.pty.etiquette": "请保持礼仪：这是插空技巧，不是圈占资源的办法。用完立刻 scancel；-t 按真实需要设置，不要顺手拉满；人离开时不要留着空转的占位作业。",
+  "guide.pty.etiquette": "插空利用空闲资源没问题——只要用完记得 scancel，别让占位作业空转到时限。",
   "pool.quickGpuMemHint": "设置 --mem={mem} 可绕过排队",
   "pool.fitTipApply": "应用 --mem={mem} 到命令",
   "pool.fitTipApplied": "已应用，命令已更新",

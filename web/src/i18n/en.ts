@@ -223,7 +223,7 @@ export const en = {
   "guide.pty.step2.detail": "srun --jobid joins that job; --overlap lets your shell share the resources with the sleeping process; --pty bash gives you a real terminal on the compute node. If your laptop disconnects, the job keeps running — reconnect and run this line again to land back exactly where you were.",
   "guide.pty.step3.title": "3 · Release it when done",
   "guide.pty.step3.detail": "Exiting the shell does NOT end the placeholder — sleep infinity holds the resources until the time limit runs out. Always scancel when you finish.",
-  "guide.pty.etiquette": "Etiquette: this is a gap-filling trick, not a way to park resources. scancel the moment you are done, set -t to your real need instead of maxing it out, and never leave an idle placeholder running while you are away.",
+  "guide.pty.etiquette": "Gap-filling idle resources is perfectly fine — just scancel when done so the placeholder doesn't idle until its time limit.",
   "pool.quickGpuMemHint": "Set --mem={mem} to bypass the queue",
   "pool.fitTipApply": "Apply --mem={mem} to the command",
   "pool.fitTipApplied": "Applied — command updated",

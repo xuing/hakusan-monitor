@@ -223,7 +223,7 @@ export const ja: Record<TranslationKey, string> = {
   "guide.pty.step2.detail": "srun --jobid でそのジョブに参加。--overlap で sleep プロセスと資源を共有でき、--pty bash で計算ノード上の本物の端末が開きます。ローカルが切断されてもジョブは生き続け、再接続してこの行をもう一度実行すれば元の環境に戻れます。",
   "guide.pty.step3.title": "③ 使い終わったら即解放",
   "guide.pty.step3.detail": "シェルを抜けてもジョブは終わりません——sleep infinity が時間制限まで資源を占有し続けます。終わったら必ず scancel。",
-  "guide.pty.etiquette": "マナーを守って：これは隙間利用のテクニックであり、資源の囲い込みではありません。使い終わったら即 scancel、-t は実需で設定、離席中に空回りのジョブを残さないでください。",
+  "guide.pty.etiquette": "空き資源の隙間利用自体は問題ありません。使い終わったら scancel を忘れずに——時間切れまで放置しないでください。",
   "pool.quickGpuMemHint": "--mem={mem} で待機を回避できます",
   "pool.fitTipApply": "--mem={mem} をコマンドに適用",
   "pool.fitTipApplied": "適用済み — コマンド更新",

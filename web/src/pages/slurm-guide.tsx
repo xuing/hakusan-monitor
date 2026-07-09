@@ -128,7 +128,7 @@ export default function SlurmGuidePage() {
               <PtyStep key={step.key} step={step} t={t} />
             ))}
           </div>
-          <div className="mt-3 max-w-4xl rounded-lg border border-warn/40 bg-warn-soft/45 px-3 py-2 text-sm leading-relaxed text-warn-fg">
+          <div className="mt-3 max-w-4xl rounded-lg bg-muted/30 px-3 py-2 text-sm leading-relaxed text-muted-foreground">
             {t("guide.pty.etiquette")}
           </div>
         </SectionCard>
