@@ -565,7 +565,9 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
               {mode === "script" && <>{t("pool.scriptPtyHint")}{" "}</>}
               {ptyActive && <>{t("pool.ptyNote")}{" "}</>}
               {ptyActive && !time.trim() && <>{t("pool.ptyNoteDefaultTime")}{" "}</>}
-              {mode === "interactive" && (
+              {/* the backfill tip's "switch & apply" button IS this toggle
+                  plus the right --mem/-t — don't offer the same jump twice */}
+              {mode === "interactive" && (ptyActive || bfVariant !== "switch") && (
                 <>
                   <button
                     type="button"
