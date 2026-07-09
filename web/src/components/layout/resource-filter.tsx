@@ -2,8 +2,10 @@ import type { ReactNode } from "react";
 import { useLive } from "@/hooks/use-live";
 import { useResourceFilter } from "@/hooks/use-resource-filter";
 import { poolLabel, useT } from "@/i18n";
+import { schedulableGpuSlots } from "@/lib/gpu-fit";
+import { partitionCap } from "@/lib/slurm";
 import { cn } from "@/lib/utils";
-import type { Pool } from "@/types/snapshot";
+import type { Pool, Snapshot } from "@/types/snapshot";
 
 /** "All / GPU group / CPU group" — one chip per hardware pool. */
 export function ResourceFilterChips() {
@@ -34,7 +36,14 @@ export function ResourceFilterChips() {
       </button>
       <FilterGroup label={t("kpi.gpu")}>
         {gpu.map(({ pool }) => (
-          <FilterButton key={pool.id} pool={pool} active={filter === pool.id} label={poolLabel(t, pool.id)} onClick={() => setFilter(pool.id)} />
+          <FilterButton
+            key={pool.id}
+            pool={pool}
+            active={filter === pool.id}
+            label={poolLabel(t, pool.id)}
+            onClick={() => setFilter(pool.id)}
+            gpuSchedulable={gpuPoolSchedulableMax(snap, pool)}
+          />
         ))}
       </FilterGroup>
       <FilterGroup label={t("kpi.cpu")}>
@@ -60,14 +69,32 @@ function FilterButton({
   active,
   label,
   onClick,
+  gpuSchedulable,
 }: {
   pool: Pool;
   active: boolean;
   label: string;
   onClick: () => void;
+  /** GPU pools only: the best any single partition could grant right now —
+   *  same "one grantable policy = green" rule as the Partitions page. */
+  gpuSchedulable?: number;
 }) {
-  const available = hasAvailableNodes(pool);
   const maint = !!pool.gpu?.maint;
+  // GPU: green only if some partition can actually hand out a card now;
+  // physically-idle-but-stranded (every policy blocked) reads amber, not
+  // green — matches the hero number / pool bar on the Partitions page.
+  // CPU: unchanged, plain idle-node availability.
+  const dot = maint
+    ? "bg-muted-foreground/45"
+    : pool.kind === "gpu"
+      ? (gpuSchedulable ?? 0) > 0
+        ? "bg-ok"
+        : (pool.gpu?.free ?? 0) > 0
+          ? "bg-warn"
+          : "bg-bad"
+      : hasAvailableNodes(pool)
+        ? "bg-ok"
+        : "bg-bad";
   return (
     <button
       type="button"
@@ -82,7 +109,7 @@ function FilterButton({
             : "border-border bg-background text-muted-foreground hover:border-primary/60 hover:bg-accent hover:text-foreground",
       )}
     >
-      <span className={cn("h-2 w-2 rounded-full", maint ? "bg-muted-foreground/45" : available ? "bg-ok" : "bg-bad")} />
+      <span className={cn("h-2 w-2 rounded-full", dot)} />
       {label}
     </button>
   );
@@ -90,4 +117,10 @@ function FilterButton({
 
 function hasAvailableNodes(pool: Pool) {
   return (pool.available_nodes ?? pool.idle_nodes ?? 0) > 0;
+}
+
+function gpuPoolSchedulableMax(snap: Snapshot, pool: Pool): number {
+  if (pool.kind !== "gpu") return 0;
+  const parts = snap.partitions.filter((p) => p.pool === pool.id);
+  return Math.max(0, ...parts.map((p) => schedulableGpuSlots(snap.nodes, pool, partitionCap(p.name, snap.policy))));
 }
