@@ -86,6 +86,29 @@
     --ring: 206 100% 50%;
   }
 
+  /* Type scales with the device; 12px stays the floor, not the target.
+     Everything is sized in rem off this root, and the root never drops below
+     100%, so text-xs (0.75rem) can't fall under 12px — while still following
+     the user's browser font-size setting and OS display scaling (Windows
+     125%/150% multiplies CSS px for free). Low-DPI screens (~1dppx) keep the
+     16px root on purpose: integer 12/14px render sharpest under hinting
+     there, and fractional sizes are exactly what reads as "fuzzy". High-DPI
+     screens have the physical pixels for fractional sizes, so on large HiDPI
+     viewports the whole scale lifts a notch instead of sitting on the floor. */
+  html {
+    font-size: 100%;
+  }
+  @media (min-resolution: 1.25dppx) and (min-width: 1600px) {
+    html {
+      font-size: 106.25%; /* 17px root → captions 12.75px, body 14.9px */
+    }
+  }
+  @media (min-resolution: 1.25dppx) and (min-width: 2200px) {
+    html {
+      font-size: 112.5%; /* 18px root → captions 13.5px, body 15.75px */
+    }
+  }
+
   * {
     @apply border-border;
   }
