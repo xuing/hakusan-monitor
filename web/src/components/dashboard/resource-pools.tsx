@@ -566,34 +566,12 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
             <code className={cn("flex-1 overflow-x-auto font-mono text-xs text-zinc-100", ptyActive ? "whitespace-pre" : "whitespace-nowrap")}>{cmd}</code>
             <CopyButton text={cmd} label className="text-zinc-400 hover:bg-white/10 hover:text-zinc-100" />
           </div>
-          {/* interactive keeps one command line with a small switch between
-              plain salloc and the pty recipe. Explanations only appear once
-              they're relevant: the guide link shows AFTER switching (or in
-              script mode where the hint references the recipe) — before
-              that, the entry button alone is enough. */}
-          {isGpu && (mode === "script" || ptyActive || bfVariant !== "switch") && (
+          {isGpu && mode === "script" && (
             <div className="text-xs leading-relaxed text-muted-foreground">
-              {mode === "script" && <>{t("pool.scriptPtyHint")}{" "}</>}
-              {ptyActive && <>{t("pool.ptyNote")}{" "}</>}
-              {ptyActive && !timeSel && <>{t("pool.ptyNoteDefaultTime")}{" "}</>}
-              {/* the backfill tip's "switch & apply" button IS this toggle
-                  plus the right --mem/-t — don't offer the same jump twice */}
-              {mode === "interactive" && (ptyActive || bfVariant !== "switch") && (
-                <>
-                  <button
-                    type="button"
-                    onClick={() => setPtyOn(!ptyOn)}
-                    className="whitespace-nowrap rounded border border-info/45 bg-background/80 px-1.5 py-0.5 font-medium text-info-fg transition-colors hover:bg-info-soft"
-                  >
-                    {ptyActive ? t("pool.ptyBack") : t("pool.ptyGo")}
-                  </button>{" "}
-                </>
-              )}
-              {(mode === "script" || ptyActive) && (
-                <Link to="/slurm#pty" className="whitespace-nowrap text-info-fg hover:underline">
-                  {t("pool.scriptPtyMore")}
-                </Link>
-              )}
+              {t("pool.scriptPtyHint")}{" "}
+              <Link to="/slurm#pty" className="whitespace-nowrap text-info-fg hover:underline">
+                {t("pool.scriptPtyMore")}
+              </Link>
             </div>
           )}
 
@@ -668,6 +646,34 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
                 }}
                 t={t}
               />
+            )}
+            {/* the pty entry shares the tip-box language and appears only while
+                queuing is on the table (and never beside the bf "switch"
+                button, which is the same jump with parameters filled) */}
+            {isGpu && mode === "interactive"
+              && (ptyActive || (bfVariant !== "switch" && queueHint?.tone === "warn")) && (
+              <div className="mt-2 rounded-md border border-info/40 bg-info-soft/45 px-2 py-1.5 text-xs leading-relaxed">
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <Tag tone="info">{t("pool.ptyTag")}</Tag>
+                  <span className="text-foreground">
+                    {ptyActive
+                      ? <>{t("pool.ptyNote")}{!timeSel && <> {t("pool.ptyNoteDefaultTime")}</>}</>
+                      : t("pool.ptyPitch")}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setPtyOn(!ptyOn)}
+                    className="whitespace-nowrap rounded border border-info/45 bg-background/80 px-1.5 py-0.5 font-medium text-info-fg transition-colors hover:bg-info-soft"
+                  >
+                    {ptyActive ? t("pool.ptyBack") : t("pool.ptyGo")}
+                  </button>
+                  {ptyActive && (
+                    <Link to="/slurm#pty" className="whitespace-nowrap text-info-fg hover:underline">
+                      {t("pool.scriptPtyMore")}
+                    </Link>
+                  )}
+                </div>
+              </div>
             )}
             {/* diagnostic detail below the fix-it row: when applying the tip makes
                 this block disappear, nothing above the clicked button moves */}
