@@ -129,7 +129,6 @@ export const zh: Record<TranslationKey, string> = {
   "part.wholeNodes": "台整空节点",
   "part.noWholeNodes": "无整空节点",
   "part.capHint": "受最空节点限制，达不到该分区的策略上限。",
-  "part.gpuUnused": "{n} 张未用",
   "dim.cpu": "CPU",
   "dim.gpu": "GPU",
   "spec.perNode": "每台",

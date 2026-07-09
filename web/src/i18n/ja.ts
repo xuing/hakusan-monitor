@@ -129,7 +129,6 @@ export const ja: Record<TranslationKey, string> = {
   "part.wholeNodes": "完全空きノード",
   "part.noWholeNodes": "完全空きノードなし",
   "part.capHint": "最も空いているノードに制限され、ポリシー上限には届きません。",
-  "part.gpuUnused": "{n} 台未使用",
   "dim.cpu": "CPU",
   "dim.gpu": "GPU",
   "spec.perNode": "ノードあたり",

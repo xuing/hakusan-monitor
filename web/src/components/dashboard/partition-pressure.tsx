@@ -163,9 +163,15 @@ export function PartitionPressure() {
             const pool = poolById.get(group.poolKey);
             const pc = poolCapacity(snap, group.poolKey);
             const pendingActive = isGpu ? contendersForPool(snap, group.poolKey) : [];
+            // "green" for the pool bar = the best any single sibling policy could
+            // actually grant right now — matches the per-row rule: one partition
+            // able to default-request it is enough to count it as available.
+            const gpuSchedulableMax = isGpu && pool
+              ? Math.max(0, ...parts.map((sp) => schedulableGpuSlots(snap.nodes, pool, partitionCap(sp.name, snap.policy))))
+              : undefined;
             return (
               <div key={group.key}>
-                <PoolHeader pool={pool} label={poolLabel(t, group.poolKey)} spec={spec} isGpu={isGpu} pc={pc} t={t} />
+                <PoolHeader pool={pool} label={poolLabel(t, group.poolKey)} spec={spec} isGpu={isGpu} pc={pc} gpuSchedulable={gpuSchedulableMax} t={t} />
                 {parts.length > 1 && <p className="mb-1.5 text-xs text-muted-foreground/80">{t("part.shared")}</p>}
                 <div className="space-y-2">
                   {generalParts.length > 0 && (
@@ -285,6 +291,7 @@ function PoolHeader({
   spec,
   isGpu,
   pc,
+  gpuSchedulable,
   t,
 }: {
   pool?: Pool;
@@ -292,6 +299,7 @@ function PoolHeader({
   spec: Partition["spec"];
   isGpu: boolean;
   pc: PoolCapacity;
+  gpuSchedulable?: number;
   t: TFn;
 }) {
   const maint = isGpu && !!pool?.gpu?.maint;
@@ -330,7 +338,7 @@ function PoolHeader({
         </span>
       </div>
       <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
-        <UnitBlocks {...blocks} />
+        <UnitBlocks {...blocks} schedulable={isGpu ? gpuSchedulable : undefined} />
         {maint ? (
           <>
             <Tag tone="neutral">{t("pool.maint")}</Tag>
@@ -372,15 +380,22 @@ function UnitBlocks({
   down,
   total,
   unit,
+  schedulable,
 }: {
   free: number;
   used: number;
   down: number;
   total: number;
   unit: string;
+  /** GPU pools only: of `free`, how many at least one sibling policy could
+   *  actually grant right now — splits the free segment green/yellow instead
+   *  of counting every physically-idle GPU as equally available. */
+  schedulable?: number;
 }) {
   if (total <= 0) return null;
-  const [freeCells, usedCells, downCells] = scaleCells([free, used, down], total);
+  const stranded = schedulable !== undefined ? Math.max(0, free - schedulable) : 0;
+  const okFree = schedulable !== undefined ? Math.min(schedulable, free) : free;
+  const [okCells, strandedCells, usedCells, downCells] = scaleCells([okFree, stranded, used, down], total);
   const cell = (n: number, cls: string, key: string) =>
     Array.from({ length: n }, (_, i) => (
       <span key={`${key}-${i}`} className={cn("h-2.5 min-w-0 flex-1 rounded-sm", cls)} />
@@ -388,9 +403,10 @@ function UnitBlocks({
   return (
     <div
       className="flex h-2.5 w-36 shrink-0 gap-px"
-      title={`${nf(free)} ${unit} ${unit === "GPU" ? "free" : "available"} · ${nf(used)} used${down ? ` · ${nf(down)} down` : ""}`}
+      title={`${nf(free)} ${unit} ${unit === "GPU" ? "free" : "available"}${stranded ? ` (${nf(stranded)} unused by any policy)` : ""} · ${nf(used)} used${down ? ` · ${nf(down)} down` : ""}`}
     >
-      {cell(freeCells, "bg-ok", "free")}
+      {cell(okCells, "bg-ok", "ok")}
+      {cell(strandedCells, "bg-warn", "stranded")}
       {cell(usedCells, "bg-bad", "used")}
       {cell(downCells, "bg-muted-foreground/40", "down")}
     </div>
@@ -455,6 +471,11 @@ function PartitionRow({
   // together scattered cores. sbatch --test-only does. Whenever the probe's verdict
   // contradicts the naive count (negative verdict vs a positive count, OR positive verdict
   // vs a zero count), defer to the probe and let the status Tag speak.
+  // GPU only: the hero count from bin-packing alone (schedulable via cores/
+  // mem fit) understates what's on screen when nothing fits but the pool
+  // still has idle cards — show that idle count instead of a bare "0", and
+  // let color alone say whether the default request can actually have it.
+  const gpuDisplayHero = isGpu && hero.n <= 0 && gpuStranded > 0 ? { ...hero, n: gpuStranded } : hero;
   const heroHasEstimate = Boolean(probeState === "queued" && cpuProbe?.probe?.start_time);
   const heroOverride =
     !maint && (probeState === "queued" || probeState === "failed")
@@ -488,20 +509,18 @@ function PartitionRow({
             <span
               className={cn(
                 "font-mono text-base font-semibold",
-                canRun && heroOverride !== "—" ? "text-ok-fg" : "text-muted-foreground",
+                canRun && heroOverride !== "—"
+                  ? "text-ok-fg"
+                  : isGpu && !maint && gpuDisplayHero.n > 0
+                    ? "text-warn-fg"
+                    : "text-muted-foreground",
               )}
             >
-              {maint ? "—" : (heroOverride ?? heroText(t, hero))}
+              {maint ? "—" : (heroOverride ?? heroText(t, gpuDisplayHero))}
               {!heroOverride && hero.capped && !maint && (
                 <HoverHint text={t("part.capHint")} className="ml-0.5 align-super text-xs" />
               )}
             </span>
-            {/* the pool header already said "N GPU free"; this partition's
-                own hero can be 0 for the same pool — say how many of those
-                are sitting unused for THIS policy right next to the number */}
-            {!maint && gpuStranded > 0 && (
-              <Tag tone="warn">{t("part.gpuUnused", { n: gpuStranded })}</Tag>
-            )}
             <span className="font-mono text-xs text-muted-foreground">
               {t("part.policyLimit")} {fmtPolicyLimit(cap, isGpu, t, p.name) || "—"}
             </span>

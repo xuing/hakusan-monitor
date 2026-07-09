@@ -129,7 +129,6 @@ export const en = {
   "part.wholeNodes": "whole idle nodes",
   "part.noWholeNodes": "no whole idle node",
   "part.capHint": "Limited by the emptiest node — below this partition's policy max.",
-  "part.gpuUnused": "{n} unused",
   "dim.cpu": "CPU",
   "dim.gpu": "GPU",
   "spec.perNode": "per node",
