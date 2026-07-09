@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { useLive } from "@/hooks/use-live";
 import { useResourceFilter } from "@/hooks/use-resource-filter";
 import { poolLabel, useT } from "@/i18n";
+import { poolCapacity } from "@/lib/derive";
 import { schedulableGpuSlots } from "@/lib/gpu-fit";
 import { partitionCap } from "@/lib/slurm";
 import { cn } from "@/lib/utils";
@@ -48,7 +49,14 @@ export function ResourceFilterChips() {
       </FilterGroup>
       <FilterGroup label={t("kpi.cpu")}>
         {cpu.map(({ pool }) => (
-          <FilterButton key={pool.id} pool={pool} active={filter === pool.id} label={poolLabel(t, pool.id)} onClick={() => setFilter(pool.id)} />
+          <FilterButton
+            key={pool.id}
+            pool={pool}
+            active={filter === pool.id}
+            label={poolLabel(t, pool.id)}
+            onClick={() => setFilter(pool.id)}
+            cpuFreeCores={poolCapacity(snap, pool.id).freeCores}
+          />
         ))}
       </FilterGroup>
     </div>
@@ -70,6 +78,7 @@ function FilterButton({
   label,
   onClick,
   gpuSchedulable,
+  cpuFreeCores,
 }: {
   pool: Pool;
   active: boolean;
@@ -78,6 +87,8 @@ function FilterButton({
   /** GPU pools only: the best any single partition could grant right now —
    *  same "one grantable policy = green" rule as the Partitions page. */
   gpuSchedulable?: number;
+  /** CPU pools only: idle cores scattered on non-fully-idle nodes. */
+  cpuFreeCores?: number;
 }) {
   const maint = !!pool.gpu?.maint;
   // GPU: green only if some partition can actually hand out a card now;
@@ -92,9 +103,11 @@ function FilterButton({
         : (pool.gpu?.free ?? 0) > 0
           ? "bg-warn"
           : "bg-bad"
-      : hasAvailableNodes(pool)
-        ? "bg-ok"
-        : "bg-bad";
+      : (pool.idle_nodes ?? 0) > 0
+        ? "bg-ok" // a WHOLE idle node — any policy can start now
+        : (cpuFreeCores ?? 0) > 0
+          ? "bg-warn" // cores free, but scattered — some requests fit, most queue
+          : "bg-bad"; // literally nothing free — every request queues
   return (
     <button
       type="button"
