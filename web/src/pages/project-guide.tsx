@@ -24,11 +24,14 @@ const SLURM_POLL_COMMAND =
   "# realtime snapshot: HM_SAMPLE_INTERVAL\n" +
   "scontrol -o show nodes\n" +
   "squeue -h -a -o '<compact fields>'\n" +
-  "# effective per-job mem/GPU + container; best effort\n" +
-  "squeue -h -a -O 'JobID:64,tres-alloc:256,Container:512'\n" +
-  "# CPU prediction: HM_CPU_PROBE_INTERVAL; no job submitted\n" +
+  "# effective per-job mem/GPU + planned node + container; best effort\n" +
+  "squeue -h -a -O 'JobID:64,tres-alloc:256,SchedNodes:128,Container:512'\n" +
+  "# pending jobs' true requested totals (squeue %m prints per-CPU memory)\n" +
+  "sacct -aX --state=PENDING -o JobID,ReqTRES -P -n\n" +
+  "# CPU prediction: HM_CPU_PROBE_INTERVAL; no job submitted.\n" +
+  "# -t = the walltime the submit plugin forces onto CPU salloc (TINY exempt)\n" +
   "for p in TINY DEF SINGLE SMALL LARGE XLARGE X2LARGE LONG LONG-L; do\n" +
-  "  sbatch --test-only -p \"$p\" --wrap=hostname\n" +
+  '  sbatch --test-only -p "$p" $([ "$p" = TINY ] || echo -t 2-00:00:00) --wrap=hostname\n' +
   "done\n" +
   "# static policy: HM_POLICY_INTERVAL\n" +
   "sacctmgr -n -P show qos format=Name,MaxTRES%200,MaxWall,GrpJobs,MaxJobsPU,MaxSubmitPU,MinTRES%200,Flags%100\n" +

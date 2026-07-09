@@ -6,9 +6,11 @@ current UI structure, visual language, and i18n model.
 ## 1. Data flow & normalization
 
 ```
-scontrol -o show nodes ─┐
-squeue -h -a -o <fmt> ──┼─▶ sources.py parse ─▶ normalize.py ─▶ latest snapshot ─▶ /api/snapshot
-squeue -O Container ────┘                                      │             └─▶ /api/stream
+scontrol -o show nodes ────────────┐
+squeue -h -a -o <fmt> ─────────────┼─▶ sources.py parse ─▶ normalize.py ─▶ latest snapshot ─▶ /api/snapshot
+squeue -O tres/SchedNodes/Container┤                            │                       └─▶ /api/stream
+sacct pending ReqTRES ─────────────┘                            │
+sbatch --test-only CPU probes ─▶ probe cache ──────────────────┤
 sacctmgr/scontrol partition ─▶ policy cache ───────────────────┤
 login-node /proc/df/iostat/ps ─▶ login sampler ────────────────┤
                                                                └─▶ store.py SQLite ─▶ history / usage APIs

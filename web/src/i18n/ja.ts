@@ -396,7 +396,7 @@ export const ja: Record<TranslationKey, string> = {
   "guide.project.cad.what": "内容",
   "guide.project.cad.every": "周期",
   "guide.project.cad.cost": "ログインノードへの負荷",
-  "guide.project.cad.snap.what": "クラスタスナップショット：ノード状態 + ジョブキュー + ジョブ毎の tres/コンテナ",
+  "guide.project.cad.snap.what": "クラスタスナップショット：ノード状態 + ジョブキュー + ジョブ毎の tres/予定ノード/コンテナ + 待機ジョブの実メモリ（sacct ReqTRES）",
   "guide.project.cad.snap.cost": "読み取り専用 SSH 1 往復、通常 2–5 秒",
   "guide.project.cad.probe.what": "CPU 待ち時間予測：9 つの CPU パーティションで sbatch --test-only（ジョブは提出しません）",
   "guide.project.cad.probe.cost": "スナップショットと同じ接続に相乗り、最大 +36 秒（各パーティション ≤4 秒）",

@@ -396,7 +396,7 @@ export const zh: Record<TranslationKey, string> = {
   "guide.project.cad.what": "内容",
   "guide.project.cad.every": "周期",
   "guide.project.cad.cost": "对登录节点的成本",
-  "guide.project.cad.snap.what": "集群快照：节点状态 + 作业队列 + 每作业 tres/容器",
+  "guide.project.cad.snap.what": "集群快照：节点状态 + 作业队列 + 每作业 tres/预定节点/容器 + 排队作业真实内存（sacct ReqTRES）",
   "guide.project.cad.snap.cost": "一条只读 SSH 往返，正常 2–5 秒",
   "guide.project.cad.probe.what": "CPU 排队预测：对 9 个 CPU 分区执行 sbatch --test-only（不提交任何作业）",
   "guide.project.cad.probe.cost": "搭集群快照的同一连接，最多 +36 秒（每分区 ≤4 秒）",

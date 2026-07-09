@@ -396,7 +396,7 @@ export const en = {
   "guide.project.cad.what": "What",
   "guide.project.cad.every": "Cadence",
   "guide.project.cad.cost": "Cost on the login node",
-  "guide.project.cad.snap.what": "Cluster snapshot: node states + job queue + per-job tres/container",
+  "guide.project.cad.snap.what": "Cluster snapshot: node states + job queue + per-job tres/planned node/container + pending jobs' true memory (sacct ReqTRES)",
   "guide.project.cad.snap.cost": "One read-only SSH round trip, typically 2–5 s",
   "guide.project.cad.probe.what": "CPU queue prediction: sbatch --test-only across 9 CPU partitions (submits nothing)",
   "guide.project.cad.probe.cost": "Piggybacks on the snapshot connection; up to +36 s (≤4 s per partition)",
