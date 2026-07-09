@@ -371,11 +371,17 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
   const queueFact = snap ? poolQueueFact(snap.jobs, snap.part_pool, pool.id, isGpu, pool, effectiveGpuFit?.schedulable ?? 0) : null;
   const limits = policyLimitRows(policy, groupRunning, t);
   const groupLimitReached = Boolean(policy.grpJobs && groupRunning >= policy.grpJobs);
-  const nodeCount = clampPositiveInt(nodes, cap.maxNodes);
-  const coreCount = clampPositiveInt(cores, cap.maxCores);
+  // A selection the new partition's cap can't hold reverts to Default — the
+  // select must never show "Default" while the command silently emits a
+  // clamped flag, and vice versa.
+  const nodeCount = withinCapInt(nodes, cap.maxNodes);
+  const coreCount = withinCapInt(cores, cap.maxCores);
+  // Same rule for -t vs the partition wall (mirrors --mem's memTooHigh).
+  const wallSec = parseWallMinutes(cap.wall) * 60;
+  const timeSel = time.trim() && (!wallSec || parseWalltimeSec(time) <= wallSec) ? time : "";
   const cpuRows = snap && !isGpu && pool.id === "cpu" ? cpuProbeRows(pool, snap) : [];
   const cpuProbeGeneratedAt = snap?.cpu_submit_probes_generated_at || snap?.generated_at || 0;
-  const hasAdvancedOverrides = Boolean(nodeCount || coreCount || memValue || time.trim());
+  const hasAdvancedOverrides = Boolean(nodeCount || coreCount || memValue || timeSel);
   const selectedCpuRow = !hasAdvancedOverrides ? cpuRows.find((row) => row.partition === partition) ?? null : null;
   // salloc can't take the -t deal (plugin forces the walltime); the displayed
   // command's effective walltime decides what a tip may promise. The pty
@@ -384,9 +390,9 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
   const forcedSec = mode === "interactive" && !ptyActive ? interactiveForcedSec(partition, isGpu) : null;
   // pty defaults to the 12h an interactive session would have had — pick a
   // shorter -t to slip into a gap
-  const ptyTime = time.trim() || "12:00:00";
+  const ptyTime = timeSel || "12:00:00";
   const requestSec = forcedSec
-    ?? (parseWalltimeSec(ptyActive ? ptyTime : time) || Number.POSITIVE_INFINITY);
+    ?? (parseWalltimeSec(ptyActive ? ptyTime : timeSel) || Number.POSITIVE_INFINITY);
   const nowMs = Date.now();
   // A full group cap blocks every new job in the partition — no --mem value
   // bypasses QOSGrpJobsLimit, so the tip would be a false promise there.
@@ -417,7 +423,7 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
   // is judged with its own plugin-forced walltime.
   const optionVerdictSec = mode === "interactive" && !ptyActive
     ? undefined
-    : (parseWalltimeSec(ptyActive ? ptyTime : time) || Number.POSITIVE_INFINITY);
+    : (parseWalltimeSec(ptyActive ? ptyTime : timeSel) || Number.POSITIVE_INFINITY);
   const optionLabel = (p: string): string => {
     if (cpuRows.length > 0) return cpuOptionLabel(p, cpuRows, cpuProbeGeneratedAt, t);
     const base = isMaterialsStudioPartition(p) ? `${p} · ${trMaybe(t, `policy.${p}`, p)}` : p;
@@ -449,7 +455,7 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
         gpuFit: effectiveGpuFit,
         pendingActive,
         // the plugin-forced walltime, not the -t field, is what Slurm sees
-        userTimeSec: forcedSec ?? parseWalltimeSec(ptyActive ? ptyTime : time),
+        userTimeSec: forcedSec ?? parseWalltimeSec(ptyActive ? ptyTime : timeSel),
         t,
       });
   const flags = [`-p ${partition}`, ...(base.requiredFlags ?? [])];
@@ -457,7 +463,7 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
   if (coreCount) flags.push(`-c ${coreCount}`);
   if (memValue) flags.push(`--mem=${memValue}`);
   // a -t on a forced-walltime salloc is silently ignored — don't emit one
-  if (!ptyActive && time.trim() && forcedSec === null) flags.push(`-t ${time.trim()}`);
+  if (!ptyActive && timeSel && forcedSec === null) flags.push(`-t ${timeSel}`);
   const script = scriptFile.trim() || "job.sh";
   // pty recipe (verified live): the wait loop redraws one status line while
   // the placeholder queues — srun errors with "Job is pending execution" if
@@ -479,7 +485,9 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
   const policyDesc = trMaybe(t, `policy.${partition}.desc`, "");
   const limitText = fmtPolicyLimit(cap, isGpu, t);
   const policyLimit = limitText ? `${t("part.policyLimit")} ${limitText}` : "";
-  const multiNodeCpuPolicy = !isGpu && (cap.maxNodes ?? 1) > 1;
+  // the scatter warning is about the implicit multi-node DEFAULT — once the
+  // user pins -N themselves it describes a state they already left
+  const multiNodeCpuPolicy = !isGpu && (cap.maxNodes ?? 1) > 1 && !nodeCount;
   const nodeOptions = numberOptions(cap.maxNodes, [1, 2, 3, 4, 8, 16, 32]);
   const coreOptions = numberOptions(cap.maxCores, [1, 2, 4, 8, 16, 26, 32, 52, 64, 96, 128, 208, 256, 512, 768, 1024, 2048, 4096, 8192]);
   const timeOptions = timeOptionsFor(cap.wall, t);
@@ -567,7 +575,7 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
             <div className="text-xs leading-relaxed text-muted-foreground">
               {mode === "script" && <>{t("pool.scriptPtyHint")}{" "}</>}
               {ptyActive && <>{t("pool.ptyNote")}{" "}</>}
-              {ptyActive && !time.trim() && <>{t("pool.ptyNoteDefaultTime")}{" "}</>}
+              {ptyActive && !timeSel && <>{t("pool.ptyNoteDefaultTime")}{" "}</>}
               {/* the backfill tip's "switch & apply" button IS this toggle
                   plus the right --mem/-t — don't offer the same jump twice */}
               {mode === "interactive" && (ptyActive || bfVariant !== "switch") && (
@@ -599,7 +607,9 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
               {policyLimit && <span className="font-mono text-xs text-muted-foreground">{policyLimit}</span>}
             </div>
             {policyDesc && <div className="mt-1 text-xs leading-relaxed text-muted-foreground">{policyDesc}</div>}
-            {queueHint?.detail && (!showGpuFitDetails || groupLimitReached || !gpuTip) && (
+            {/* say each fact once: the diagnostic block restates contention /
+                fit details, and group-full has its own dedicated sentence */}
+            {queueHint?.detail && !showGpuFitDetails && !groupLimitReached && (
               <div className="mt-1 text-xs leading-relaxed text-muted-foreground">{queueHint.detail}</div>
             )}
             {selectedCpuRow && <CpuProbeInline row={selectedCpuRow} generatedAt={cpuProbeGeneratedAt} t={t} />}
@@ -634,12 +644,12 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
                       // still in interactive mode — the advice (switch to
                       // script) hasn't been taken even if -t/--mem match
                       ? false
-                      : time === bfTip.t && (!bfTip.mem || memValue === bfTip.mem)
+                      : timeSel === bfTip.t && (!bfTip.mem || memValue === bfTip.mem)
                 }
                 onApply={() => {
                   const applied = bfVariant === "fits"
                     ? memValue === bfTip.mem
-                    : bfVariant !== "switch" && time === bfTip.t && (!bfTip.mem || memValue === bfTip.mem);
+                    : bfVariant !== "switch" && timeSel === bfTip.t && (!bfTip.mem || memValue === bfTip.mem);
                   if (applied) {
                     // undo: clear what apply filled and drop back to salloc
                     if (bfTip.mem) setMem("");
@@ -680,7 +690,7 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
             <div className="space-y-1.5">
               <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
                 <Field label={capSuffix(t("spec.nodes"), cap.maxNodes)}>
-                  <select value={nodes} onChange={(e) => setNodes(e.target.value)} className={fieldCls}>
+                  <select value={nodeCount ? nodes : ""} onChange={(e) => setNodes(e.target.value)} className={fieldCls}>
                     <option value="">{t("pool.default")}</option>
                     {nodeOptions.map((n) => (
                       <option key={n} value={String(n)}>{n}</option>
@@ -688,7 +698,7 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
                   </select>
                 </Field>
                 <Field label={capSuffix(t("unit.cores"), cap.maxCores)}>
-                  <select value={cores} onChange={(e) => setCores(e.target.value)} className={fieldCls}>
+                  <select value={coreCount ? cores : ""} onChange={(e) => setCores(e.target.value)} className={fieldCls}>
                     <option value="">{t("pool.default")}</option>
                     {coreOptions.map((n) => (
                       <option key={n} value={String(n)}>{n}</option>
@@ -711,10 +721,10 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
                       {t("pool.timeForcedInteractive", { t: forcedSec === 720 * 60 ? "12h" : "2d" })}
                     </div>
                   ) : (
-                    <select value={time} onChange={(e) => setTime(e.target.value)} className={fieldCls}>
+                    <select value={timeSel} onChange={(e) => setTime(e.target.value)} className={fieldCls}>
                       {/* backfill-tip suggestions aren't in the canonical list */}
-                      {time && !timeOptions.some((opt) => opt.value === time) && (
-                        <option value={time}>{time}</option>
+                      {timeSel && !timeOptions.some((opt) => opt.value === timeSel) && (
+                        <option value={timeSel}>{timeSel}</option>
                       )}
                       {timeOptions.map((opt) => (
                         <option key={opt.value || "default"} value={opt.value}>{opt.label}</option>
@@ -732,11 +742,13 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
   );
 }
 
-function clampPositiveInt(value: string, max?: number) {
+/** A stored selection that exceeds the (new) cap counts as "no selection" —
+ *  clamping it silently would emit a flag the UI no longer shows. */
+function withinCapInt(value: string, max?: number) {
   const parsed = Number(value);
   if (!Number.isFinite(parsed) || parsed <= 0) return 0;
   const n = Math.floor(parsed);
-  return max ? Math.min(n, max) : n;
+  return max && n > max ? 0 : n;
 }
 
 function normalizeMem(value: string) {
