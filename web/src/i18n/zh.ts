@@ -218,7 +218,7 @@ export const zh: Record<TranslationKey, string> = {
   "guide.pty.title": "用占位作业拿到交互 Shell（可插空档）",
   "guide.pty.lead": "GPU 分区的 salloc 被固定为 12 小时，永远塞不进短空档；而且 SSH 一断，会话就没了。下面两行同时解决这两个问题：先用脚本作业把资源占住，再\"住进去\"拿到真正的终端。",
   "guide.pty.step1.title": "① 提交一个只会睡觉的占位作业",
-  "guide.pty.step1.detail": "sbatch 在后台申请资源。--parsable 让命令只输出作业号（存进变量 JOB）；--wrap 'sleep infinity' 的意思是\"什么都不干，只把资源占住\"。-t 按真实需要设——时限够短才插得进空档。",
+  "guide.pty.step1.detail": "sbatch 在后台申请资源。--parsable 让命令只输出作业号（存进变量 JOB）；--wrap 'sleep infinity' 的意思是\"什么都不干，只把资源占住\"。<partition>/<mem>/<time> 按你的需求填——总览页\"快速申请\"生成的参数可以直接抄；时限够短才插得进空档。",
   "guide.pty.step2.title": "② 住进这份资源",
   "guide.pty.step2.detail": "srun --jobid 加入刚才的作业；--overlap 允许你的 shell 和睡觉进程共享这份资源；--pty bash 在计算节点上打开真正的终端。本地断网、合盖都不影响后台作业——重连集群后再跑一遍这一行，就能原样回到之前的现场。",
   "guide.pty.step3.title": "③ 用完立即释放",

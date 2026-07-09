@@ -66,7 +66,7 @@ const REFS: [string, string][] = [
 // The pseudo-interactive recipe: verified live on this cluster (see the
 // quick-request hint that links here as /slurm#pty).
 const PTY_STEPS: { key: "1" | "2" | "3"; command: string }[] = [
-  { key: "1", command: "JOB=$(sbatch --parsable -p GPU-S --mem=240G -t 3:45:00 --wrap 'sleep infinity')" },
+  { key: "1", command: "JOB=$(sbatch --parsable -p <partition> --mem=<mem> -t <time> --wrap 'sleep infinity')" },
   { key: "2", command: "srun --jobid $JOB --overlap --pty bash" },
   { key: "3", command: "scancel $JOB" },
 ];

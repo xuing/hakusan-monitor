@@ -218,7 +218,7 @@ export const ja: Record<TranslationKey, string> = {
   "guide.pty.title": "プレースホルダジョブで対話シェルを得る（隙間利用向け）",
   "guide.pty.lead": "GPU パーティションの salloc は 12 時間固定のため短い空きには入れず、SSH が切れるとセッションも消えます。次の 2 行でどちらも解決：バッチジョブで資源を確保し、その中に入って本物のシェルを使います。",
   "guide.pty.step1.title": "① 眠るだけのプレースホルダジョブを投入",
-  "guide.pty.step1.detail": "sbatch がバックグラウンドで資源を確保します。--parsable はジョブ ID のみを出力（変数 JOB に保存）。--wrap 'sleep infinity' は「何もせず確保し続ける」の意味。-t は実際に必要な長さに——短いほど空きに入り込めます。",
+  "guide.pty.step1.detail": "sbatch がバックグラウンドで資源を確保します。--parsable はジョブ ID のみを出力（変数 JOB に保存）。--wrap 'sleep infinity' は「何もせず確保し続ける」の意味。<partition>/<mem>/<time> は用途に合わせて——概要ページの「クイック申請」が生成するフラグをそのまま使えます。-t が短いほど空きに入り込めます。",
   "guide.pty.step2.title": "② その資源の中に入る",
   "guide.pty.step2.detail": "srun --jobid でそのジョブに参加。--overlap で sleep プロセスと資源を共有でき、--pty bash で計算ノード上の本物の端末が開きます。ローカルが切断されてもジョブは生き続け、再接続してこの行をもう一度実行すれば元の環境に戻れます。",
   "guide.pty.step3.title": "③ 使い終わったら即解放",

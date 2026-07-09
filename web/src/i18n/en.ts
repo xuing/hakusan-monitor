@@ -218,7 +218,7 @@ export const en = {
   "guide.pty.title": "Interactive shell via a placeholder job (backfill-friendly)",
   "guide.pty.lead": "On GPU partitions salloc is pinned to 12 h, so it can never fit a short idle gap — and a dropped SSH kills the session. These two lines fix both: a batch job holds the resources, and you step inside it for a real shell.",
   "guide.pty.step1.title": "1 · Submit a placeholder job that just sleeps",
-  "guide.pty.step1.detail": "sbatch requests the resources in the background. --parsable prints only the job ID (stored in JOB); --wrap 'sleep infinity' means \"do nothing, just hold the allocation\". Set -t to what you actually need — a short limit is what lets the job slip into an idle gap.",
+  "guide.pty.step1.detail": "sbatch requests the resources in the background. --parsable prints only the job ID (stored in JOB); --wrap 'sleep infinity' means \"do nothing, just hold the allocation\". Fill in <partition>/<mem>/<time> for your case — the Overview quick-request panel generates the right flags, and a short -t is what lets the job slip into an idle gap.",
   "guide.pty.step2.title": "2 · Step inside the allocation",
   "guide.pty.step2.detail": "srun --jobid joins that job; --overlap lets your shell share the resources with the sleeping process; --pty bash gives you a real terminal on the compute node. If your laptop disconnects, the job keeps running — reconnect and run this line again to land back exactly where you were.",
   "guide.pty.step3.title": "3 · Release it when done",
