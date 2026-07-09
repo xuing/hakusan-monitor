@@ -108,6 +108,15 @@
       font-size: 112.5%; /* 18px root → captions 13.5px, body 15.75px */
     }
   }
+  /* Wide 1x monitors (27" 1440p at 100% OS scaling ≈ 109 PPI): a CSS px is
+     physically ~12% smaller than at 96 DPI, so 12px glyphs drop under 3mm.
+     Size beats integer hinting there — lift the scale so captions land at
+     13.5px ≈ the physical height 12px has on a baseline 96 DPI screen. */
+  @media (max-resolution: 1.24dppx) and (min-width: 2400px) {
+    html {
+      font-size: 112.5%;
+    }
+  }
 
   * {
     @apply border-border;

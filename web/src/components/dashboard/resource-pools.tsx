@@ -18,9 +18,8 @@ import {
   policyLimitRows,
 } from "@/lib/policy-hints";
 import {
-  activePendingForPool,
   conservativeMemGb,
-  contested,
+  contendersForPool,
   fitHasClearSlot,
   gpuBackfillTipCommand,
   gpuFitSnapshot,
@@ -30,6 +29,7 @@ import {
   parseWalltimeSec,
   pendingForPool,
   schedulableGpuSlots,
+  slotBlocked,
   slotContention,
   withinBackfillWindow,
   type GpuBackfillTipData,
@@ -123,9 +123,11 @@ function PoolCard({ pool, snap, t }: { pool: Pool; snap: Snapshot; t: TFn }) {
   const samplePartition = SAMPLE[pool.id]?.partition ?? "";
   const gpuFit = isGpu ? gpuFitSnapshot(snap, pool, partitionCap(samplePartition, snap.policy), samplePartition) : null;
   const gpuSched = gpuFit?.schedulable ?? 0;
-  const pendingActive = isGpu ? activePendingForPool(snap.jobs, snap.part_pool, pool.id) : [];
-  // A schedulable slot only means "starts now" if no queued job can claim it first.
-  const gpuClear = !isGpu || !gpuFit || gpuSched <= 0 || fitHasClearSlot(gpuFit, pendingActive);
+  const pendingActive = isGpu ? contendersForPool(snap, pool.id) : [];
+  // A schedulable slot only means "starts now" if no queued job can claim it
+  // first — judged for the interactive default (GPU salloc is pinned to 12h).
+  const gpuClear = !isGpu || !gpuFit || gpuSched <= 0
+    || fitHasClearSlot(gpuFit, pendingActive, Date.now(), 720 * 60);
   const rawGpuFree = isGpu ? pool.gpu?.free ?? 0 : 0;
   const displayFree = isGpu ? rawGpuFree : pool.cores.free;
   const hasAvailable = (isGpu ? gpuSched > 0 && gpuClear : availableNodes > 0) && !maint;
@@ -360,7 +362,7 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
       : "";
   const memOverrideMb = memValue ? parsedMemMb : 0;
   const effectiveGpuFit = gpuFit && memOverrideMb > 0 ? gpuFitWithMemOverride(gpuFit, memOverrideMb) : gpuFit;
-  const pendingActive = snap && isGpu ? activePendingForPool(snap.jobs, snap.part_pool, pool.id) : [];
+  const pendingActive = snap && isGpu ? contendersForPool(snap, pool.id) : [];
   const queueFact = snap ? poolQueueFact(snap.jobs, snap.part_pool, pool.id, isGpu, pool, effectiveGpuFit?.schedulable ?? 0) : null;
   const limits = policyLimitRows(policy, groupRunning, t);
   const groupLimitReached = Boolean(policy.grpJobs && groupRunning >= policy.grpJobs);
@@ -370,21 +372,24 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
   const cpuProbeGeneratedAt = snap?.cpu_submit_probes_generated_at || snap?.generated_at || 0;
   const hasAdvancedOverrides = Boolean(nodeCount || coreCount || memValue || time.trim());
   const selectedCpuRow = !hasAdvancedOverrides ? cpuRows.find((row) => row.partition === partition) ?? null : null;
+  // salloc can't take the -t deal (plugin forces the walltime); the displayed
+  // command's effective walltime decides what a tip may promise.
+  const forcedSec = mode === "interactive" ? interactiveForcedSec(partition, isGpu) : null;
+  const requestSec = forcedSec ?? (parseWalltimeSec(time) || Number.POSITIVE_INFINITY);
+  const nowMs = Date.now();
   // A full group cap blocks every new job in the partition — no --mem value
   // bypasses QOSGrpJobsLimit, so the tip would be a false promise there.
   const gpuTip = isGpu && gpuFit && gpuFit.schedulable <= 0 && !groupLimitReached
-    ? gpuFitTipCommand(gpuFit, pool, pendingActive)
+    ? gpuFitTipCommand(gpuFit, pool, pendingActive, nowMs, requestSec)
     : null;
   // When the queue owns the slot (no --mem bypass possible), a reservation's
   // start time still bounds a backfill gap a short-walltime job can use.
   const bfTip = isGpu && gpuFit && !gpuTip && !groupLimitReached
-    ? gpuBackfillTipCommand(gpuFit, pool, pendingActive, Date.now())
+    ? gpuBackfillTipCommand(gpuFit, pool, pendingActive, nowMs, requestSec)
     : null;
-  // salloc can't take the -t deal (plugin forces the walltime): in interactive
-  // mode the tip must either say "switch to script mode" or, when the gap
-  // already holds the forced 12h, reduce to the --mem part. mem-less + gap ≥
-  // 12h needs no tip — the queue verdict below already flips to "can start".
-  const forcedSec = mode === "interactive" ? interactiveForcedSec(partition, isGpu) : null;
+  // Interactive mode: the tip must either say "switch to script mode" or,
+  // when the gap already holds the forced 12h, reduce to the --mem part.
+  // mem-less + gap ≥ 12h needs no tip — the verdict flips to "can start".
   const bfWindowSec = bfTip ? parseWalltimeSec(bfTip.t) : 0;
   const bfVariant: "script" | "switch" | "fits" | null = !bfTip
     ? null
@@ -747,9 +752,11 @@ function requestQueueHint({
     // Report the queue as the blocker when waiters can claim the free slot —
     // a memory-shortage message there would suggest a bypass that cannot work.
     const best = gpuFit.stranded.find((row) => row.freeGpu >= 1) ?? gpuFit.stranded[0];
-    const c = best ? slotContention(best, pendingActive) : null;
-    if (c && c.contenders > 0) return warn(t("pool.queueReasonContested", { n: c.contenders }));
-    if (c?.planned) return warn(t("pool.queueReasonPlanned"));
+    const c = best ? slotContention(best, pendingActive, Date.now()) : null;
+    if (c && slotBlocked(c, userTimeSec > 0 ? userTimeSec : Number.POSITIVE_INFINITY)) {
+      if (c.contenders > 0) return warn(t("pool.queueReasonContested", { n: c.contenders }));
+      return warn(t("pool.queueReasonPlanned"));
+    }
     return warn(gpuFitShortText(gpuFit, t));
   }
   if (isGpu && queueFact && queueFact.free <= 0 && (part.gpu?.free ?? 0) > 0) return warn(t("pool.queueReasonGpuFit"));
@@ -757,8 +764,10 @@ function requestQueueHint({
 
   if (queueFact && queueFact.pending > 0) {
     // The request fits a free slot AND no queued job can take that slot first
-    // (they're all too big for it) — backfill starts it despite the queue.
-    if (isGpu && gpuFit && gpuFit.schedulable > 0 && fitHasClearSlot(gpuFit, pendingActive)) {
+    // (too big for it, group-capped, or fenced out by a reservation) —
+    // backfill starts it despite the queue.
+    if (isGpu && gpuFit && gpuFit.schedulable > 0
+        && fitHasClearSlot(gpuFit, pendingActive, Date.now(), userTimeSec > 0 ? userTimeSec : Number.POSITIVE_INFINITY)) {
       return {
         tone: "ok" as const,
         label: t("pool.queueHintCanStart"),
@@ -861,11 +870,14 @@ function partitionRequestSummary(
   const groupRunning = partitionRunningJobs(snap.jobs, partition);
   const groupLimitReached = Boolean(policy.grpJobs && groupRunning >= policy.grpJobs);
   const gpuFit = isGpu ? gpuFitSnapshot(snap, pool, cap, partition) : null;
+  // the collapsed row previews the interactive command — judge with its
+  // plugin-forced walltime
+  const requestSec = interactiveForcedSec(partition, isGpu) ?? Number.POSITIVE_INFINITY;
   const gpuTip = isGpu && gpuFit && gpuFit.schedulable <= 0 && !groupLimitReached
-    ? gpuFitTipCommand(gpuFit, pool, pendingActive)
+    ? gpuFitTipCommand(gpuFit, pool, pendingActive, nowMs, requestSec)
     : null;
   const bfTip = isGpu && gpuFit && !gpuTip && !groupLimitReached
-    ? gpuBackfillTipCommand(gpuFit, pool, pendingActive, nowMs)
+    ? gpuBackfillTipCommand(gpuFit, pool, pendingActive, nowMs, requestSec)
     : null;
   const queueFact = poolQueueFact(snap.jobs, snap.part_pool, pool.id, isGpu, pool, gpuFit?.schedulable ?? 0);
   const hint = requestQueueHint({
@@ -879,7 +891,7 @@ function partitionRequestSummary(
     queueFact,
     gpuFit,
     pendingActive,
-    userTimeSec: 0,
+    userTimeSec: Number.isFinite(requestSec) ? requestSec : 0,
     t,
   });
   return { partition, hint, gpuTip, bfTip };
@@ -1083,10 +1095,16 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
   );
 }
 
+// The pool card previews the interactive default, which GPU salloc pins to
+// 12h — a slot (or its reservation gap) must hold that much to claim "free".
+const CARD_REQUEST_SEC = 720 * 60;
+
 function gpuAvailabilityText(isGpu: boolean, fit: GpuFitInfo | null, schedulable: number, rawFree: number, availableLabel: string, pendingActive: RawJob[], t: TFn) {
   if (!isGpu) return availableLabel;
   if (schedulable > 0) {
-    if (fit && !fitHasClearSlot(fit, pendingActive)) return t("pool.gpuStrandedContested", { n: rawFree });
+    if (fit && !fitHasClearSlot(fit, pendingActive, Date.now(), CARD_REQUEST_SEC)) {
+      return t("pool.gpuStrandedContested", { n: rawFree });
+    }
     return availableLabel;
   }
   if (rawFree > 0) return gpuStrandedText(fit, rawFree, pendingActive, t);
@@ -1101,9 +1119,10 @@ function gpuStrandedText(fit: GpuFitInfo | null, rawFree: number, pendingActive:
   if (cpu) return t("pool.gpuStrandedCpu", { n: rawFree });
   if (mem) {
     const best = strandedTipNode(fit);
-    // Queued jobs (or a PLANNED node) own the rescuable slot: never advertise
-    // the --mem bypass, and don't blame memory — the queue is the real reason.
-    if (best && contested(slotContention(best, pendingActive))) {
+    // Only queued jobs that can start HERE and NOW own the slot; a reservation
+    // whose idle gap still holds a 12h job does not (verified live: a test
+    // job started instantly on a PLANNED node while the card said "reserved").
+    if (best && slotBlocked(slotContention(best, pendingActive, Date.now()), CARD_REQUEST_SEC)) {
       return t("pool.gpuStrandedContested", { n: rawFree });
     }
     const tip = best ? `${conservativeMemGb(best.freeMemMb)}G` : "";
@@ -1123,17 +1142,17 @@ function GpuFitExplanation({ fit, pendingActive, t }: { fit: GpuFitInfo; pending
   if (rows.length === 0) return null;
   const more = Math.max(0, fit.stranded.length - rows.length);
   const best = strandedTipNode(fit) ?? fit.stranded[0];
-  const contention = best ? slotContention(best, pendingActive) : null;
+  const contention = best ? slotContention(best, pendingActive, Date.now()) : null;
   return (
     <div className="mt-2 rounded-md border border-warn/35 bg-warn-soft/45 px-2.5 py-2 text-xs leading-relaxed">
       <div className="flex flex-wrap items-center gap-1.5">
         <Tag tone="warn">{t("pool.fitBlocked")}</Tag>
         <span className="text-foreground">{t("pool.fitNeed", { partition: fit.need.partition, need: resourceText(fit.need, t) })}</span>
       </div>
-      {contested(contention) && (
+      {contention && slotBlocked(contention, CARD_REQUEST_SEC) && (
         <div className="mt-1 font-medium text-warn-fg">
-          {contention!.contenders > 0
-            ? t("pool.fitContestedNote", { n: contention!.contenders })
+          {contention.contenders > 0
+            ? t("pool.fitContestedNote", { n: contention.contenders })
             : t("pool.fitPlannedNote")}
         </div>
       )}

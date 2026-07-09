@@ -3,7 +3,7 @@
 // CPU/memory can't host it? Pure computation — no React, no i18n — so both the
 // Overview pool cards and the Partitions page share one verdict.
 import { expandHostlist } from "@/lib/derive";
-import type { PartitionCap } from "@/lib/slurm";
+import { partitionPolicy, type PartitionCap } from "@/lib/slurm";
 import type { Pool, RawJob, RawNode, Snapshot } from "@/types/snapshot";
 
 export interface GpuFitNeed {
@@ -178,12 +178,19 @@ export function parseTresMemoryMb(text: string) {
 // node as PLANNED — treat that as "spoken for" even if we count no contenders.
 
 export interface SlotContention {
+  /** active waiters that can take this slot RIGHT NOW — they fit its free
+   *  resources and, when the node is reserved, their own time limit fits the
+   *  idle gap (a 24h waiter cannot "own" an 11h gap) */
   contenders: number;
   planned: boolean;
+  /** idle seconds until the node's earliest known reservation, if any */
+  windowSec: number | null;
 }
 
-export function slotContention(row: GpuFitNode, pendingActive: RawJob[]): SlotContention {
+export function slotContention(row: GpuFitNode, pendingActive: RawJob[], nowMs = 0): SlotContention {
   const planned = row.node.state.some((s) => String(s).toUpperCase() === "PLANNED");
+  const win = planned && nowMs ? backfillWindow(row, pendingActive, nowMs) : null;
+  const windowSec = win ? Math.max(0, Math.floor((win.untilMs - nowMs) / 1000)) : null;
   let contenders = 0;
   for (const job of pendingActive) {
     // min_memory_mb / cpus / gpus are job totals; a multi-node job claims this
@@ -193,22 +200,37 @@ export function slotContention(row: GpuFitNode, pendingActive: RawJob[]): SlotCo
     const gpus = Math.ceil((job.gpus || 0) / nodes) || 1;
     const cpus = Math.ceil((job.cpus || 0) / nodes);
     const memMb = Math.ceil((job.min_memory_mb || 0) / nodes);
-    if (gpus <= row.freeGpu && cpus <= row.freeCores && memMb <= row.freeMemMb) contenders += 1;
+    if (gpus > row.freeGpu || cpus > row.freeCores || memMb > row.freeMemMb) continue;
+    if (windowSec !== null) {
+      // reservation fences the gap: only waiters whose walltime ends inside
+      // it can start here now (verified live: a 24h waiter sat pending while
+      // a 5-minute job started instantly on the "reserved" node)
+      const tl = parseWalltimeSec(job.time_limit || "");
+      if (tl <= 0 || tl > windowSec) continue;
+    }
+    contenders += 1;
   }
-  return { contenders, planned };
+  return { contenders, planned, windowSec };
 }
 
-export function contested(c: SlotContention | null | undefined): boolean {
-  return Boolean(c && (c.contenders > 0 || c.planned));
+/** Would a NEW request needing `requiredSec` of walltime fail to take this
+ *  slot right now? Blocked by a now-startable waiter, or by a reservation
+ *  whose idle gap is unknown or too short for the request. */
+export function slotBlocked(c: SlotContention | null | undefined, requiredSec: number): boolean {
+  if (!c) return false;
+  if (c.contenders > 0) return true;
+  if (!c.planned) return false;
+  if (c.windowSec === null) return true;
+  return requiredSec > c.windowSec;
 }
 
-export function fitHasClearSlot(fit: GpuFitInfo, pendingActive: RawJob[]): boolean {
-  return fit.fitNodes.some((row) => !contested(slotContention(row, pendingActive)));
+export function fitHasClearSlot(fit: GpuFitInfo, pendingActive: RawJob[], nowMs: number, requiredSec: number): boolean {
+  return fit.fitNodes.some((row) => !slotBlocked(slotContention(row, pendingActive, nowMs), requiredSec));
 }
 
-export function hasUncontestedGpuSlot(nodes: RawNode[], pendingActive: RawJob[], pool: Pool, cap: PartitionCap): boolean {
+export function hasUncontestedGpuSlot(nodes: RawNode[], pendingActive: RawJob[], pool: Pool, cap: PartitionCap, nowMs: number, requiredSec: number): boolean {
   const fit = gpuFitFromNodes(nodes, [], pool, cap, "");
-  return fit.schedulable > 0 && fitHasClearSlot(fit, pendingActive);
+  return fit.schedulable > 0 && fitHasClearSlot(fit, pendingActive, nowMs, requiredSec);
 }
 
 export function pendingForPool(jobs: RawJob[], partPool: Record<string, string>, poolId: string) {
@@ -239,6 +261,27 @@ export function isLimitBlocked(job: RawJob) {
  *  the "can start immediately" verdict. */
 export function activePendingForPool(jobs: RawJob[], partPool: Record<string, string>, poolId: string) {
   return pendingForPool(jobs, partPool, poolId).filter((j) => !isLimitBlocked(j));
+}
+
+/** activePendingForPool minus waiters whose every partition in this pool has
+ *  its group cap full. Slurm's Reason string lags — a GPU-1 job still says
+ *  "Priority" while GrpJobs 30/30 is what actually stops it (observed live:
+ *  five such phantom contenders while a fresh job started instantly). */
+export function contendersForPool(snap: Snapshot, poolId: string): RawJob[] {
+  const running = new Map<string, number>();
+  for (const job of snap.jobs) {
+    if (String(job.job_state || "").toUpperCase() !== "RUNNING") continue;
+    for (const p of String(job.partition || "").split(",")) {
+      running.set(p, (running.get(p) ?? 0) + 1);
+    }
+  }
+  const groupOpen = (p: string) => {
+    const pol = partitionPolicy(p, snap.policy);
+    return !(pol.grpJobs && (running.get(p) ?? 0) >= pol.grpJobs);
+  };
+  return activePendingForPool(snap.jobs, snap.part_pool, poolId).filter((j) =>
+    String(j.partition || "").split(",").some((p) => snap.part_pool[p] === poolId && groupOpen(p)),
+  );
 }
 
 // ---- backfill window ------------------------------------------------------
@@ -277,33 +320,38 @@ export interface GpuBackfillTipData {
   untilMs: number;
 }
 
-export function gpuBackfillTipCommand(fit: GpuFitInfo, pool: Pool, pendingActive: RawJob[], nowMs: number): GpuBackfillTipData | null {
+export function gpuBackfillTipCommand(fit: GpuFitInfo, pool: Pool, pendingActive: RawJob[], nowMs: number, requiredSec: number): GpuBackfillTipData | null {
   if (!pool.gpu) return null;
   if (fit.schedulable > 0) {
     // Slots exist but every one is spoken for — a short job can still sneak in.
-    if (fitHasClearSlot(fit, pendingActive)) return null;
+    if (fitHasClearSlot(fit, pendingActive, nowMs, requiredSec)) return null;
     for (const row of fit.fitNodes) {
       const win = backfillWindow(row, pendingActive, nowMs);
       if (win) return { node: row.node.name, mem: "", t: fmtWalltime(win.suggestSec), untilMs: win.untilMs };
     }
     return null;
   }
-  const best = fit.stranded.find((row) => row.freeGpu >= 1 && row.freeCores >= fit.need.cores && row.freeMemMb > 1024);
-  if (!best) return null;
-  const memGb = conservativeMemGb(best.freeMemMb);
-  if (memGb <= 0) return null;
-  const win = backfillWindow(best, pendingActive, nowMs);
-  if (!win) return null;
-  return { node: best.node.name, mem: `${memGb}G`, t: fmtWalltime(win.suggestSec), untilMs: win.untilMs };
+  // prefer the widest gap: a node with a 30-minute window must not hide a
+  // sibling whose reservation is half a day out
+  let bestTip: GpuBackfillTipData | null = null;
+  let bestSec = 0;
+  for (const row of strandedCandidates(fit)) {
+    const memGb = conservativeMemGb(row.freeMemMb);
+    if (memGb <= 0) continue;
+    const win = backfillWindow(row, pendingActive, nowMs);
+    if (!win || win.suggestSec <= bestSec) continue;
+    bestSec = win.suggestSec;
+    bestTip = { node: row.node.name, mem: `${memGb}G`, t: fmtWalltime(win.suggestSec), untilMs: win.untilMs };
+  }
+  return bestTip;
 }
 
-/** True when some contested-but-fitting node's backfill window still holds a
- *  job of `userTimeSec` — the basis for flipping "will queue" back to "can
- *  start" once the user picks a short enough -t. */
+/** True when some fitting node's backfill window still holds a job of
+ *  `userTimeSec` — the basis for flipping "will queue" back to "can start"
+ *  once the user picks a short enough -t. */
 export function withinBackfillWindow(fit: GpuFitInfo, pendingActive: RawJob[], nowMs: number, userTimeSec: number): boolean {
   if (userTimeSec <= 0) return false;
   return fit.fitNodes.some((row) => {
-    if (!contested(slotContention(row, pendingActive))) return false;
     const win = backfillWindow(row, pendingActive, nowMs);
     return win !== null && userTimeSec <= win.suggestSec;
   });
@@ -331,16 +379,21 @@ export function parseWalltimeSec(text: string): number {
   return 0;
 }
 
-export function gpuFitTipCommand(fit: GpuFitInfo, pool: Pool, pendingActive: RawJob[]): GpuFitTipData | null {
+function strandedCandidates(fit: GpuFitInfo): GpuFitNode[] {
+  return fit.stranded.filter((row) => row.freeGpu >= 1 && row.freeCores >= fit.need.cores && row.freeMemMb > 1024);
+}
+
+export function gpuFitTipCommand(fit: GpuFitInfo, pool: Pool, pendingActive: RawJob[], nowMs: number, requiredSec: number): GpuFitTipData | null {
   if (!pool.gpu || fit.schedulable > 0) return null;
-  const best = fit.stranded.find((row) => row.freeGpu >= 1 && row.freeCores >= fit.need.cores && row.freeMemMb > 1024);
-  if (!best) return null;
-  // The --mem trick only queue-jumps while no active waiter fits the slot;
-  // otherwise the queue verdict (not this tip) is the truthful message.
-  if (contested(slotContention(best, pendingActive))) return null;
-  const memGb = conservativeMemGb(best.freeMemMb);
-  if (memGb <= 0) return null;
-  return { mem: `${memGb}G`, node: best.node.name };
+  // The --mem trick only queue-jumps while no now-startable waiter fits the
+  // slot and any reservation's idle gap holds the request's walltime; a
+  // blocked node must not hide a clear sibling, so scan every candidate.
+  for (const best of strandedCandidates(fit)) {
+    if (slotBlocked(slotContention(best, pendingActive, nowMs), requiredSec)) continue;
+    const memGb = conservativeMemGb(best.freeMemMb);
+    if (memGb > 0) return { mem: `${memGb}G`, node: best.node.name };
+  }
+  return null;
 }
 
 export function conservativeMemGb(freeMemMb: number) {

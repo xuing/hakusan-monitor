@@ -9,7 +9,7 @@ import { poolLabel, useT, type TFn } from "@/i18n";
 import type { TranslationKey } from "@/i18n/en";
 import { poolCapacity, type PoolCapacity } from "@/lib/derive";
 import { clockOf, fmtMB, nf } from "@/lib/format";
-import { activePendingForPool, hasUncontestedGpuSlot, schedulableGpuSlots } from "@/lib/gpu-fit";
+import { contendersForPool, hasUncontestedGpuSlot, schedulableGpuSlots } from "@/lib/gpu-fit";
 import { cpuProbeForPartition, cpuProbeState, type CpuProbeRow } from "@/lib/cpu-probes";
 import {
   PolicyLimitChips,
@@ -162,7 +162,7 @@ export function PartitionPressure() {
             const isGpu = parts[0].kind === "gpu";
             const pool = poolById.get(group.poolKey);
             const pc = poolCapacity(snap, group.poolKey);
-            const pendingActive = isGpu ? activePendingForPool(snap.jobs, snap.part_pool, group.poolKey) : [];
+            const pendingActive = isGpu ? contendersForPool(snap, group.poolKey) : [];
             return (
               <div key={group.key}>
                 <PoolHeader pool={pool} label={poolLabel(t, group.poolKey)} spec={spec} isGpu={isGpu} pc={pc} t={t} />
@@ -179,7 +179,9 @@ export function PartitionPressure() {
                         isGpu && pool ? schedulableGpuSlots(snap.nodes, pool, partitionCap(p.name, snap.policy)) : null
                       }
                       gpuClearFor={(p) =>
-                        isGpu && pool ? hasUncontestedGpuSlot(snap.nodes, pendingActive, pool, partitionCap(p.name, snap.policy)) : null
+                        isGpu && pool
+                          ? hasUncontestedGpuSlot(snap.nodes, pendingActive, pool, partitionCap(p.name, snap.policy), Date.now(), 720 * 60)
+                          : null
                       }
                       generatedAt={snap.cpu_submit_probes_generated_at || snap.generated_at}
                       policy={snap.policy}
