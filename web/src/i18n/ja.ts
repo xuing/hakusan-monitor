@@ -210,6 +210,8 @@ export const ja: Record<TranslationKey, string> = {
   "pool.bfTipApplyTime": "-t {t} を適用",
   "pool.quickGpuBfHint": "sbatch で -t ≤ {t} なら即時開始可",
   "pool.queueBfOk": "バックフィル枠内 — 予約開始前に終了します",
+  "pool.optBypass": "回避可",
+  "pool.optGap": "隙間可",
   "pool.timeForcedInteractive": "{t}（システム固定・-t 無効）",
   "pool.scriptPtyHint": "対話シェルが必要な場合：ジョブ開始後に srun --jobid <ジョブID> --overlap --pty bash でノードに入れます（終了後は scancel）。",
   "pool.quickGpuMemHint": "--mem={mem} で待機を回避できます",

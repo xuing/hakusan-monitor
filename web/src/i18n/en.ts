@@ -210,6 +210,8 @@ export const en = {
   "pool.bfTipApplyTime": "Apply -t {t}",
   "pool.quickGpuBfHint": "sbatch with -t ≤ {t} backfills and starts now",
   "pool.queueBfOk": "fits the backfill window — ends before the reservation starts",
+  "pool.optBypass": "bypass works",
+  "pool.optGap": "gap fits",
   "pool.timeForcedInteractive": "{t} (cluster-pinned; -t ignored)",
   "pool.scriptPtyHint": "Need a shell? Once the job starts: srun --jobid <JOBID> --overlap --pty bash (scancel when done).",
   "pool.quickGpuMemHint": "Set --mem={mem} to bypass the queue",

@@ -210,6 +210,8 @@ export const zh: Record<TranslationKey, string> = {
   "pool.bfTipApplyTime": "应用 -t {t}",
   "pool.quickGpuBfHint": "sbatch 且 -t ≤ {t} 可插空立即开始",
   "pool.queueBfOk": "在空档时限内——会在排队作业开始前结束",
+  "pool.optBypass": "可绕过",
+  "pool.optGap": "可插空",
   "pool.timeForcedInteractive": "{t}（系统固定，-t 无效）",
   "pool.scriptPtyHint": "需要交互 shell？作业开始后执行 srun --jobid <作业号> --overlap --pty bash 进入节点（结束后 scancel）。",
   "pool.quickGpuMemHint": "设置 --mem={mem} 可绕过排队",

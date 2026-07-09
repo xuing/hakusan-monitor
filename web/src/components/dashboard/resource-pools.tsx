@@ -400,6 +400,28 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
         : "switch";
   const defaultGpuBlocked = Boolean(isGpu && gpuFit && gpuFit.rawFree > 0 && gpuFit.schedulable <= 0);
   const showGpuFitDetails = Boolean(defaultGpuBlocked && !memValue);
+  // Partition options carry their verdict so the dropdown reads like tabs:
+  // "GPU-S · 可绕过" beats opening each one to find out. CPU pools already
+  // label options with their probe result; in interactive mode each option
+  // is judged with its own plugin-forced walltime.
+  const optionVerdictSec = mode === "interactive" ? undefined : (parseWalltimeSec(time) || Number.POSITIVE_INFINITY);
+  const optionLabel = (p: string): string => {
+    if (cpuRows.length > 0) return cpuOptionLabel(p, cpuRows, cpuProbeGeneratedAt, t);
+    const base = isMaterialsStudioPartition(p) ? `${p} · ${trMaybe(t, `policy.${p}`, p)}` : p;
+    if (!snap) return base;
+    const s = partitionRequestSummary(pool, snap, p, isGpu, pendingActive, nowMs, t, optionVerdictSec);
+    if (!s) return base;
+    const verdict = s.hint?.tone === "ok"
+      ? t("pool.queueHintCanStart")
+      : s.gpuTip
+        ? t("pool.optBypass")
+        : s.bfTip
+          ? t("pool.optGap")
+          : s.hint
+            ? t("pool.queueHintWillQueue")
+            : "";
+    return verdict ? `${base} · ${verdict}` : base;
+  };
   const queueHint = selectedCpuRow
     ? null
     : requestQueueHint({
@@ -464,17 +486,13 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
                     group.label ? (
                       <optgroup key={group.key} label={group.label}>
                         {group.items.map((p) => (
-                          <option key={p} value={p}>
-                            {cpuOptionLabel(p, cpuRows, cpuProbeGeneratedAt, t)}
-                          </option>
+                          <option key={p} value={p}>{optionLabel(p)}</option>
                         ))}
                       </optgroup>
                     ) : (
                       <Fragment key={group.key}>
                         {group.items.map((p) => (
-                          <option key={p} value={p}>
-                            {cpuOptionLabel(p, cpuRows, cpuProbeGeneratedAt, t)}
-                          </option>
+                          <option key={p} value={p}>{optionLabel(p)}</option>
                         ))}
                       </Fragment>
                     )
@@ -862,6 +880,7 @@ function partitionRequestSummary(
   pendingActive: RawJob[],
   nowMs: number,
   t: TFn,
+  requestSecOverride?: number,
 ): PartitionRequestSummary | null {
   const part = snap.partitions.find((x) => x.name === partition);
   if (!part) return null;
@@ -870,9 +889,8 @@ function partitionRequestSummary(
   const groupRunning = partitionRunningJobs(snap.jobs, partition);
   const groupLimitReached = Boolean(policy.grpJobs && groupRunning >= policy.grpJobs);
   const gpuFit = isGpu ? gpuFitSnapshot(snap, pool, cap, partition) : null;
-  // the collapsed row previews the interactive command — judge with its
-  // plugin-forced walltime
-  const requestSec = interactiveForcedSec(partition, isGpu) ?? Number.POSITIVE_INFINITY;
+  // default: preview the interactive command with its plugin-forced walltime
+  const requestSec = requestSecOverride ?? interactiveForcedSec(partition, isGpu) ?? Number.POSITIVE_INFINITY;
   const gpuTip = isGpu && gpuFit && gpuFit.schedulable <= 0 && !groupLimitReached
     ? gpuFitTipCommand(gpuFit, pool, pendingActive, nowMs, requestSec)
     : null;
