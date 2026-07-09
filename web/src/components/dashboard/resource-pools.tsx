@@ -583,7 +583,7 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
                   <button
                     type="button"
                     onClick={() => setPtyOn(!ptyOn)}
-                    className="whitespace-nowrap text-info-fg hover:underline"
+                    className="whitespace-nowrap rounded border border-info/45 bg-background/80 px-1.5 py-0.5 font-medium text-info-fg transition-colors hover:bg-info-soft"
                   >
                     {ptyActive ? t("pool.ptyBack") : t("pool.ptyGo")}
                   </button>{" "}

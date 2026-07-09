@@ -218,7 +218,7 @@ export const ja: Record<TranslationKey, string> = {
   "pool.ptyNote": "ブロック全体を貼り付け：プレースホルダの開始を自動で待ち、シェル終了時に自動で scancel します。",
   "pool.ptyNoteDefaultTime": "時間未選択のため 12 時間で申請します。隙間に入れるには詳細設定で短い -t を。",
   "pool.ptyGo": "隙間シェル版コマンドに切替（隙間利用・切断に強い）",
-  "pool.ptyBack": "salloc に戻す",
+  "pool.ptyBack": "salloc コマンドに戻す",
   "guide.pty.title": "プレースホルダジョブで対話シェルを得る（隙間利用向け）",
   "guide.pty.lead": "GPU パーティションの salloc は 12 時間固定のため短い空きには入れず、SSH が切れるとセッションも消えます。この手順はその両方を解決します：バッチジョブで資源を確保し、その中に入って本物のシェルを使います。概要ページ「クイック申請」の隙間シェル切替で、進捗表示と自動 scancel 付きのブロック全体を生成できます。",
   "guide.pty.step1.title": "① 眠るだけのプレースホルダジョブを投入",

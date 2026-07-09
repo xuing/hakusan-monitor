@@ -218,7 +218,7 @@ export const zh: Record<TranslationKey, string> = {
   "pool.ptyNote": "整段粘贴即可：自动等占位作业开始，退出 shell 时自动 scancel 释放。",
   "pool.ptyNoteDefaultTime": "未选时限，将按 12 小时申请——想插空请在高级参数选更短。",
   "pool.ptyGo": "改用插空版命令（可插空档・断线不丢会话）",
-  "pool.ptyBack": "切回 salloc",
+  "pool.ptyBack": "还原为 salloc 命令",
   "guide.pty.title": "用占位作业拿到交互 Shell（可插空档）",
   "guide.pty.lead": "GPU 分区的 salloc 被固定为 12 小时，永远塞不进短空档；而且 SSH 一断，会话就没了。这套做法同时解决这两个问题：先用脚本作业把资源占住，再\"住进去\"拿到真正的终端。总览页\"快速申请\"的\"插空版命令\"开关可直接生成整段命令（带实时进度和自动 scancel）。",
   "guide.pty.step1.title": "① 提交一个只会睡觉的占位作业",

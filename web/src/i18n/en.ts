@@ -218,7 +218,7 @@ export const en = {
   "pool.ptyNote": "Paste the whole block: it waits for the placeholder to start and scancels automatically when you exit the shell.",
   "pool.ptyNoteDefaultTime": "No time picked — it will request 12 h; choose a shorter -t under Advanced to slip into a gap.",
   "pool.ptyGo": "Use the gap-shell command (backfillable · survives disconnects)",
-  "pool.ptyBack": "Back to salloc",
+  "pool.ptyBack": "Restore the salloc command",
   "guide.pty.title": "Interactive shell via a placeholder job (backfill-friendly)",
   "guide.pty.lead": "On GPU partitions salloc is pinned to 12 h, so it can never fit a short idle gap — and a dropped SSH kills the session. This recipe fixes both: a batch job holds the resources, and you step inside it for a real shell. The quick-request panel generates the whole block (with live progress and automatic scancel) via its \"gap-shell\" toggle.",
   "guide.pty.step1.title": "1 · Submit a placeholder job that just sleeps",
