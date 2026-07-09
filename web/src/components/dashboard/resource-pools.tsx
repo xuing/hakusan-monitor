@@ -559,9 +559,10 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
             <CopyButton text={cmd} label className="text-zinc-400 hover:bg-white/10 hover:text-zinc-100" />
           </div>
           {/* interactive keeps one command line with a small switch between
-              plain salloc and the pty recipe; depth lives in the guide. When
-              the backfill tip is the (sole) entry to the recipe, the guide
-              link rides inside the tip instead — no orphan line here. */}
+              plain salloc and the pty recipe. Explanations only appear once
+              they're relevant: the guide link shows AFTER switching (or in
+              script mode where the hint references the recipe) — before
+              that, the entry button alone is enough. */}
           {isGpu && (mode === "script" || ptyActive || bfVariant !== "switch") && (
             <div className="text-xs leading-relaxed text-muted-foreground">
               {mode === "script" && <>{t("pool.scriptPtyHint")}{" "}</>}
@@ -580,9 +581,11 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
                   </button>{" "}
                 </>
               )}
-              <Link to="/slurm#pty" className="whitespace-nowrap text-info-fg hover:underline">
-                {t("pool.scriptPtyMore")}
-              </Link>
+              {(mode === "script" || ptyActive) && (
+                <Link to="/slurm#pty" className="whitespace-nowrap text-info-fg hover:underline">
+                  {t("pool.scriptPtyMore")}
+                </Link>
+              )}
             </div>
           )}
 
@@ -1113,13 +1116,6 @@ function GpuBackfillQuickTip({
         >
           {applied ? t("pool.fitTipApplied") : applyLabel}
         </button>
-        {variant === "switch" && (
-          // this tip is the only visible door to the pty recipe — carry the
-          // guide link with it (the line under the command hides itself)
-          <Link to="/slurm#pty" className="whitespace-nowrap text-info-fg hover:underline">
-            {t("pool.scriptPtyMore")}
-          </Link>
-        )}
       </div>
     </div>
   );
