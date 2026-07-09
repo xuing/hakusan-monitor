@@ -334,7 +334,9 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
   const base = SAMPLE[pool.id];
   const [open, setOpen] = useState(false);
   const [partChoice, setPartChoice] = useState("");
-  const [mode, setMode] = useState<"interactive" | "script">("interactive");
+  // pty: interactive intent delivered through a batch placeholder — the only
+  // way to get a shell with a short (backfillable) walltime on GPU partitions
+  const [mode, setMode] = useState<"interactive" | "script" | "pty">("interactive");
   const [scriptFile, setScriptFile] = useState("job.sh");
   const [advanced, setAdvanced] = useState(false);
   const [nodes, setNodes] = useState("");
@@ -376,7 +378,11 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
   // salloc can't take the -t deal (plugin forces the walltime); the displayed
   // command's effective walltime decides what a tip may promise.
   const forcedSec = mode === "interactive" ? interactiveForcedSec(partition, isGpu) : null;
-  const requestSec = forcedSec ?? (parseWalltimeSec(time) || Number.POSITIVE_INFINITY);
+  // pty defaults to the 12h an interactive session would have had — pick a
+  // shorter -t to slip into a gap
+  const ptyTime = time.trim() || "12:00:00";
+  const requestSec = forcedSec
+    ?? (parseWalltimeSec(mode === "pty" ? ptyTime : time) || Number.POSITIVE_INFINITY);
   const nowMs = Date.now();
   // A full group cap blocks every new job in the partition — no --mem value
   // bypasses QOSGrpJobsLimit, so the tip would be a false promise there.
@@ -437,7 +443,7 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
         gpuFit: effectiveGpuFit,
         pendingActive,
         // the plugin-forced walltime, not the -t field, is what Slurm sees
-        userTimeSec: forcedSec ?? parseWalltimeSec(time),
+        userTimeSec: forcedSec ?? parseWalltimeSec(mode === "pty" ? ptyTime : time),
         t,
       });
   const flags = [`-p ${partition}`, ...(base.requiredFlags ?? [])];
@@ -445,9 +451,19 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
   if (coreCount) flags.push(`-c ${coreCount}`);
   if (memValue) flags.push(`--mem=${memValue}`);
   // a -t on a forced-walltime salloc is silently ignored — don't emit one
-  if (time.trim() && forcedSec === null) flags.push(`-t ${time.trim()}`);
+  if (mode !== "pty" && time.trim() && forcedSec === null) flags.push(`-t ${time.trim()}`);
   const script = scriptFile.trim() || "job.sh";
-  const cmd = mode === "interactive" ? `salloc ${flags.join(" ")}` : `sbatch ${flags.join(" ")} ${script}`;
+  const cmd = mode === "interactive"
+    ? `salloc ${flags.join(" ")}`
+    : mode === "script"
+      ? `sbatch ${flags.join(" ")} ${script}`
+      // paste all three lines: when the shell exits, scancel frees the
+      // placeholder automatically — no idling to the time limit
+      : [
+          `JOB=$(sbatch --parsable ${[...flags, `-t ${ptyTime}`].join(" ")} --wrap 'sleep infinity')`,
+          "srun --jobid $JOB --overlap --pty bash",
+          "scancel $JOB",
+        ].join("\n");
   const policyName = trMaybe(t, `policy.${partition}`, partition);
   const policyDesc = trMaybe(t, `policy.${partition}.desc`, "");
   const limitText = fmtPolicyLimit(cap, isGpu, t);
@@ -503,7 +519,7 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
             )}
             <Field label={t("pool.mode")}>
               <div className="flex h-7 rounded-md border border-border p-0.5">
-                {(["interactive", "script"] as const).map((m) => (
+                {((isGpu ? ["interactive", "pty", "script"] : ["interactive", "script"]) as ("interactive" | "pty" | "script")[]).map((m) => (
                   <button
                     key={m}
                     type="button"
@@ -513,7 +529,7 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
                       mode === m ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground",
                     )}
                   >
-                    {t(m === "interactive" ? "pool.modeInteractive" : "pool.modeScript")}
+                    {t(m === "interactive" ? "pool.modeInteractive" : m === "pty" ? "pool.modePty" : "pool.modeScript")}
                   </button>
                 ))}
               </div>
@@ -526,16 +542,15 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
           </div>
           {/* terminal-styled on purpose (dark in both themes + $ prompt): with no
               caption around it, the surface itself has to say "run this in a shell" */}
-          <div className="flex items-center gap-2 rounded-md border border-zinc-800 bg-zinc-950 px-2.5 py-1.5">
+          <div className="flex items-start gap-2 rounded-md border border-zinc-800 bg-zinc-950 px-2.5 py-1.5">
             <span aria-hidden className="select-none font-mono text-xs text-zinc-500">$</span>
-            <code className="flex-1 overflow-x-auto whitespace-nowrap font-mono text-xs text-zinc-100">{cmd}</code>
+            <code className={cn("flex-1 overflow-x-auto font-mono text-xs text-zinc-100", mode === "pty" ? "whitespace-pre" : "whitespace-nowrap")}>{cmd}</code>
             <CopyButton text={cmd} label className="text-zinc-400 hover:bg-white/10 hover:text-zinc-100" />
           </div>
-          {/* script mode is the only route to a short walltime on GPU
-              partitions — one-line pointer here, full recipe in the guide */}
-          {mode === "script" && isGpu && (
+          {/* one-line pointer here, full recipe in the guide */}
+          {isGpu && mode !== "interactive" && (
             <div className="text-xs leading-relaxed text-muted-foreground">
-              {t("pool.scriptPtyHint")}{" "}
+              {mode === "script" ? t("pool.scriptPtyHint") : t("pool.ptyNote", { t: ptyTime })}{" "}
               <Link to="/slurm#pty" className="whitespace-nowrap text-info-fg hover:underline">
                 {t("pool.scriptPtyMore")}
               </Link>
@@ -588,7 +603,9 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
                   if (bfTip.mem) setMem(bfTip.mem);
                   if (bfVariant !== "fits") {
                     setTime(bfTip.t);
-                    if (bfVariant === "switch") setMode("script");
+                    // the user wanted interactive — hand them the pty recipe,
+                    // not a batch script
+                    if (bfVariant === "switch") setMode("pty");
                   }
                   setAdvanced(true);
                 }}
