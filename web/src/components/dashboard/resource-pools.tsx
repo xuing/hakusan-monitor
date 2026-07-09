@@ -605,6 +605,11 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
                 tip={gpuTip}
                 applied={memValue === gpuTip.mem}
                 onApply={() => {
+                  // applied → clicking again reverts what apply set
+                  if (memValue === gpuTip.mem) {
+                    setMem("");
+                    return;
+                  }
                   setMem(gpuTip.mem);
                   setAdvanced(true);
                 }}
@@ -625,6 +630,16 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
                       : time === bfTip.t && (!bfTip.mem || memValue === bfTip.mem)
                 }
                 onApply={() => {
+                  const applied = bfVariant === "fits"
+                    ? memValue === bfTip.mem
+                    : bfVariant !== "switch" && time === bfTip.t && (!bfTip.mem || memValue === bfTip.mem);
+                  if (applied) {
+                    // undo: clear what apply filled and drop back to salloc
+                    if (bfTip.mem) setMem("");
+                    if (bfVariant !== "fits") setTime("");
+                    setPtyOn(false);
+                    return;
+                  }
                   if (bfTip.mem) setMem(bfTip.mem);
                   if (bfVariant !== "fits") {
                     setTime(bfTip.t);

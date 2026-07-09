@@ -93,8 +93,14 @@ This was a hard requirement: **do not burden the Hakusan login node.**
   **~16.8 MB → ~45 KB** (370×), `scontrol` nodes from 604 KB → 164 KB. Far less
   to serialize and to push through the login node's sshd.
 - **One round trip per realtime sample** for nodes and queue, over a **reused SSH
-  connection** (`ControlMaster`/`ControlPersist`) — no repeated handshakes. CPU
-  start probes (`sbatch --test-only`) and Slurm policy reads (`sacctmgr` /
+  connection** (`ControlMaster`/`ControlPersist`) — no repeated handshakes. The
+  same trip also reads pending jobs' true request totals (`sacct -aX
+  --state=PENDING -o JobID,ReqTRES`, ~0.7 s — `squeue %m` prints per-CPU memory
+  indistinguishably from totals) and the backfill scheduler's planned
+  placements (`SchedNodes` + start estimates), which power the queue-contention
+  and idle-gap verdicts. CPU start probes (`sbatch --test-only`, carrying the
+  same walltime the submit plugin forces onto CPU `salloc`, so "starts now"
+  describes the command users actually run) and Slurm policy reads (`sacctmgr` /
   `scontrol show partition`) are cached on longer intervals. `singularity
   --version` is cached after the first successful sample and retried after a
   backend restart.
