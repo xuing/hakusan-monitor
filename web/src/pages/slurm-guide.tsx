@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { Check, Copy, ExternalLink } from "lucide-react";
 import { useCopied } from "@/components/common/copy-button";
 import { SectionCard } from "@/components/common/section-card";
@@ -62,8 +63,21 @@ const REFS: [string, string][] = [
   ["GRES / GPUs", "https://slurm.schedmd.com/gres.html"],
 ];
 
+// The pseudo-interactive recipe: verified live on this cluster (see the
+// quick-request hint that links here as /slurm#pty).
+const PTY_STEPS: { key: "1" | "2" | "3"; command: string }[] = [
+  { key: "1", command: "JOB=$(sbatch --parsable -p GPU-S --mem=240G -t 3:45:00 --wrap 'sleep infinity')" },
+  { key: "2", command: "srun --jobid $JOB --overlap --pty bash" },
+  { key: "3", command: "scancel $JOB" },
+];
+
 export default function SlurmGuidePage() {
   const t = useT();
+  // react-router doesn't scroll to #anchors on navigation
+  useEffect(() => {
+    const id = window.location.hash.slice(1);
+    if (id) document.getElementById(id)?.scrollIntoView({ block: "start" });
+  }, []);
 
   return (
     <div className="space-y-4">
@@ -106,6 +120,20 @@ export default function SlurmGuidePage() {
         </div>
       </SectionCard>
 
+      <div id="pty" className="scroll-mt-16">
+        <SectionCard title={t("guide.pty.title")}>
+          <p className="max-w-4xl text-sm text-muted-foreground">{t("guide.pty.lead")}</p>
+          <div className="mt-3 space-y-3">
+            {PTY_STEPS.map((step) => (
+              <PtyStep key={step.key} step={step} t={t} />
+            ))}
+          </div>
+          <div className="mt-3 max-w-4xl rounded-lg border border-warn/40 bg-warn-soft/45 px-3 py-2 text-sm leading-relaxed text-warn-fg">
+            {t("guide.pty.etiquette")}
+          </div>
+        </SectionCard>
+      </div>
+
       <div className="grid items-start gap-4 lg:grid-cols-2">
         <SectionCard title={t("guide.etiquetteTitle")}>
           <ul className="space-y-2 text-sm text-muted-foreground">
@@ -131,6 +159,24 @@ export default function SlurmGuidePage() {
             ))}
           </div>
         </SectionCard>
+      </div>
+    </div>
+  );
+}
+
+function PtyStep({ step, t }: { step: { key: "1" | "2" | "3"; command: string }; t: TFn }) {
+  const [copied, copy] = useCopied();
+  return (
+    <div className="max-w-4xl rounded-lg border border-border bg-muted/20 p-3">
+      <div className="text-sm font-semibold">{t(`guide.pty.step${step.key}.title` as TranslationKey)}</div>
+      <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
+        {t(`guide.pty.step${step.key}.detail` as TranslationKey)}
+      </p>
+      <div className="mt-2 flex items-center gap-2 rounded-md bg-background p-2.5">
+        <code className="flex-1 overflow-x-auto whitespace-nowrap font-mono text-xs text-foreground/90">{step.command}</code>
+        <Button variant="outline" size="sm" className="h-7 gap-1.5 px-2" onClick={() => void copy(step.command)}>
+          {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+        </Button>
       </div>
     </div>
   );

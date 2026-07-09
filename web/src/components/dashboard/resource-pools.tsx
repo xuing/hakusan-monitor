@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useState, type ReactNode } from "react";
+import { Link } from "react-router-dom";
 import { ChevronRight } from "lucide-react";
 import { Bar } from "@/components/common/bar";
 import { CopyButton } from "@/components/common/copy-button";
@@ -531,9 +532,14 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
             <CopyButton text={cmd} label className="text-zinc-400 hover:bg-white/10 hover:text-zinc-100" />
           </div>
           {/* script mode is the only route to a short walltime on GPU
-              partitions — offer the verified way to still get a shell */}
+              partitions — one-line pointer here, full recipe in the guide */}
           {mode === "script" && isGpu && (
-            <div className="text-xs leading-relaxed text-muted-foreground">{t("pool.scriptPtyHint")}</div>
+            <div className="text-xs leading-relaxed text-muted-foreground">
+              {t("pool.scriptPtyHint")}{" "}
+              <Link to="/slurm#pty" className="whitespace-nowrap text-info-fg hover:underline">
+                {t("pool.scriptPtyMore")}
+              </Link>
+            </div>
           )}
 
           {/* why / limits — explanation reads after the deliverable, not before it */}
