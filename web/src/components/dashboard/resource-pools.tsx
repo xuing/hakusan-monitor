@@ -459,15 +459,18 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
   // a -t on a forced-walltime salloc is silently ignored — don't emit one
   if (!ptyActive && time.trim() && forcedSec === null) flags.push(`-t ${time.trim()}`);
   const script = scriptFile.trim() || "job.sh";
-  // pty recipe (verified live): line 2 waits out the queue — srun errors with
-  // "Job is pending execution" if attached too early — and pasting the whole
-  // block makes scancel fire when the shell exits, freeing the placeholder.
+  // pty recipe (verified live): the wait loop redraws one status line while
+  // the placeholder queues — srun errors with "Job is pending execution" if
+  // attached too early — and pasting the whole block makes scancel fire when
+  // the shell exits, so the placeholder never idles to its limit.
   const cmd = ptyActive
     ? [
         `JOB=$(sbatch --parsable ${[...flags, `-t ${ptyTime}`].join(" ")} --wrap 'sleep infinity')`,
-        "while squeue -h -j $JOB -o %T | grep -qE 'PENDING|CONFIGURING'; do sleep 5; done",
-        "srun --jobid $JOB --overlap --pty bash",
-        "scancel $JOB",
+        'echo "job $JOB submitted"',
+        'while :; do S=$(squeue -h -j "$JOB" -o \'%T %r\'); case "$S" in RUNNING*|"") break;; esac; printf \'\\r%s waiting — %s   \' "$(date +%T)" "$S"; sleep 5; done',
+        'printf \'\\rjob %s started — opening shell (exit releases it)\\n\' "$JOB"',
+        'srun --jobid "$JOB" --overlap --pty bash',
+        'scancel "$JOB" 2>/dev/null; echo "job $JOB released"',
       ].join("\n")
     : mode === "interactive"
       ? `salloc ${flags.join(" ")}`
