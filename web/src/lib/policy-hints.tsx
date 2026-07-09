@@ -100,7 +100,7 @@ export function fmtPolicyLimit(cap: PartitionCap, isGpu: boolean, t: TFn, partit
     // showing "7d" alone reads as a promise interactive can't keep
     const forced = partition ? interactiveForcedLabel(partition, isGpu) : null;
     parts.push(forced && forced !== cap.wall
-      ? `${t("pool.modeScript")} ${cap.wall} · ${t("pool.modeInteractive")} ${forced}`
+      ? t("pool.wallSplit", { wall: cap.wall, forced })
       : cap.wall);
   }
   return parts.join(" / ");

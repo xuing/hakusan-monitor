@@ -174,6 +174,7 @@ export const zh: Record<TranslationKey, string> = {
   "pool.queueReasonPlanned": "空闲节点已被调度器预定（PLANNED）给排队中的作业",
   "pool.queueContentionClear": "排队中的 {n} 个作业放不进当前空闲节点，与本请求不冲突",
   "pool.queueReasonCores": "核数不足",
+  "pool.wallSplit": "脚本 ≤{wall} · 交互固定 {forced}",
   "pool.limitGroup": "全组同时运行 {n}/{max}",
   "pool.limitUserBoth": "每人最多同时跑 {running} 个；排队+运行合计 {submitted} 个",
   "pool.limitUserRunning": "每人最多同时跑 {max} 个",

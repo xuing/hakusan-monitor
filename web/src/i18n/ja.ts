@@ -174,6 +174,7 @@ export const ja: Record<TranslationKey, string> = {
   "pool.queueReasonPlanned": "空きノードはスケジューラにより待機ジョブへ予約済み（PLANNED）です",
   "pool.queueContentionClear": "待機中の {n} 件は空きノードに収まらないため、このリクエストと競合しません",
   "pool.queueReasonCores": "コア不足",
+  "pool.wallSplit": "スクリプト ≤{wall}・対話 {forced} 固定",
   "pool.limitGroup": "グループ全体で実行 {n}/{max}",
   "pool.limitUserBoth": "1人あたり同時実行 {running} 件・キュー合計 {submitted} 件まで",
   "pool.limitUserRunning": "1人あたり同時実行 {max} 件まで",

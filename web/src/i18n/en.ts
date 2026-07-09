@@ -174,6 +174,7 @@ export const en = {
   "pool.queueReasonPlanned": "the idle node is already reserved (PLANNED) for queued jobs",
   "pool.queueContentionClear": "none of the {n} queued jobs fit the free node, so they do not compete with this request",
   "pool.queueReasonCores": "not enough cores",
+  "pool.wallSplit": "script ≤{wall} · interactive fixed {forced}",
   "pool.limitGroup": "group-wide running {n}/{max}",
   "pool.limitUserBoth": "per user: {running} running at once, {submitted} total in queue",
   "pool.limitUserRunning": "per-user concurrent runs ≤ {max}",
