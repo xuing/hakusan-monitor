@@ -32,11 +32,23 @@ export function cpuProbeForPartition(snap: Snapshot, partition: string): CpuProb
   return probe ? cpuProbeRow(partition, probe) : null;
 }
 
-export function cpuProbeState(probe: CpuSubmitProbe | null, generatedAt: number): CpuProbeState {
+export function cpuProbeState(
+  probe: CpuSubmitProbe | null,
+  probedAt: number,
+  observedAt = probedAt,
+  maxAge = 20 * 60,
+): CpuProbeState {
   if (!probe) return "unknown";
+  if (!probedAt || observedAt - probedAt > maxAge || observedAt < probedAt - 120) return "unknown";
   if (!probe.ok) return "failed";
   if (!probe.start_epoch) return "queued";
-  return probe.start_epoch <= generatedAt + 120 ? "now" : "queued";
+  // Judge the scheduler prediction at the instant it was tested. A queued
+  // result must never turn green merely because later snapshots advance time.
+  return probe.start_epoch <= probedAt + 120 ? "now" : "queued";
+}
+
+export function cpuProbeMaxAge(snap: Snapshot) {
+  return (snap.cpu_submit_probe_interval ?? 900) + 300;
 }
 
 export function cleanCpuProbeRaw(raw: string) {

@@ -1,8 +1,8 @@
 import { SectionCard } from "@/components/common/section-card";
 import { Tag } from "@/components/common/tag";
 import { AllocCell, StateBadges } from "@/components/data/cells";
-import { useLive } from "@/hooks/use-live";
-import { useResourceFilter } from "@/hooks/use-resource-filter";
+import { useLive } from "@/hooks/live-context";
+import { useResourceFilter } from "@/hooks/resource-filter-context";
 import { useT } from "@/i18n";
 import type { TranslationKey } from "@/i18n/en";
 import { nodesForPool } from "@/lib/derive";

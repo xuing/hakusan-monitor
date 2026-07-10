@@ -1,8 +1,8 @@
 import { Bar } from "@/components/common/bar";
 import { Empty } from "@/components/common/empty";
 import { SectionCard } from "@/components/common/section-card";
-import { useLive } from "@/hooks/use-live";
-import { useResourceFilter } from "@/hooks/use-resource-filter";
+import { useLive } from "@/hooks/live-context";
+import { useResourceFilter } from "@/hooks/resource-filter-context";
 import { useT } from "@/i18n";
 import type { Tone } from "@/lib/slurm";
 import { cn } from "@/lib/utils";

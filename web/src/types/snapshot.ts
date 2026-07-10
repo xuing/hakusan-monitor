@@ -20,9 +20,10 @@ export interface Totals {
     total: number;
     used: number;
     down: number;
+    reserved?: number;
     free: number;
     util: number;
-    by_type: Record<string, { total: number; used: number; down: number; free: number }>;
+    by_type: Record<string, { total: number; used: number; down: number; reserved?: number; free: number }>;
   };
 }
 
@@ -47,6 +48,7 @@ export interface PoolGpu {
   total: number;
   used: number;
   down: number;
+  reserved?: number;
   free: number;
   maint: boolean;
   util: number;
@@ -79,7 +81,7 @@ export interface Partition {
   gpu_type: string | null;
   pool: string | null;
   cpus: { total: number; alloc: number; free: number; util: number };
-  gpu: { total: number; used: number; down: number; free: number; util: number } | null;
+  gpu: { total: number; used: number; down: number; reserved?: number; free: number; util: number } | null;
   jobs: { running: number; pending: number };
   pending_reasons: Record<string, number>;
   pressure: number;
@@ -95,6 +97,8 @@ export interface Partition {
 export interface NextFree {
   at: string;
   left: string;
+  /** GPUs released at this earliest end time (additive for legacy snapshots). */
+  gpus?: number;
 }
 
 export interface GpuType {
@@ -104,6 +108,7 @@ export interface GpuType {
   total: number;
   used: number;
   down: number;
+  reserved?: number;
   free: number;
   util: number;
   maint: boolean;
@@ -199,6 +204,7 @@ export interface TopUser {
 }
 
 export interface Snapshot {
+  schema_version: 1;
   cluster: string;
   slurm_version: string;
   totals: Totals;
@@ -208,6 +214,7 @@ export interface Snapshot {
   queue: QueueData;
   cpu_submit_probes?: CpuSubmitProbe[];
   cpu_submit_probes_generated_at?: number;
+  cpu_submit_probe_interval?: number;
   policy?: PolicySnapshot;
   nodes_down: DownNode[];
   top_users: TopUser[];
@@ -215,6 +222,7 @@ export interface Snapshot {
   nodes: RawNode[];
   jobs: RawJob[];
   part_pool: Record<string, string>;
+  diagnostics?: { duplicate_nodes: string[] };
   generated_at: number;
   age_s: number;
   source: string;
@@ -254,6 +262,9 @@ export interface Meta {
     samples: number;
     hours: number;
     retain_days: number;
+    login_retain_days?: number;
+    visit_retain_days?: number;
+    schema_version?: number;
     first_ts: number | null;
     last_ts: number | null;
   };
@@ -262,6 +273,8 @@ export interface Meta {
 export interface RawNode {
   name: string;
   pool: string; // hardware pool id, tagged by the backend (see normalize.node_pool)
+  state_bucket: string;
+  schedulable: boolean;
   state: string[];
   partitions: string[];
   cpus: number;
@@ -451,6 +464,7 @@ export interface LoginNodesResponse {
   interval: number;
   configured: boolean;
   stale: boolean;
+  warming_up?: boolean;
   error?: string;
   nodes: LoginNode[];
   top_users: LoginUser[];

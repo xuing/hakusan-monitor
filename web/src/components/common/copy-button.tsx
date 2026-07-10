@@ -1,20 +1,7 @@
-import { useState } from "react";
 import { Check, Copy } from "lucide-react";
 import { useT } from "@/i18n";
-import { copyText } from "@/lib/clipboard";
+import { useCopied } from "@/hooks/use-copied";
 import { cn } from "@/lib/utils";
-
-/** copied-state with the standard 1.2s reset. */
-export function useCopied(): [boolean, (text: string) => Promise<void>] {
-  const [copied, setCopied] = useState(false);
-  const copy = async (text: string) => {
-    if (await copyText(text)) {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1200);
-    }
-  };
-  return [copied, copy];
-}
 
 /** The one copy affordance: icon-only by default, `label` adds the text. */
 export function CopyButton({ text, label, className }: { text: string; label?: boolean; className?: string }) {

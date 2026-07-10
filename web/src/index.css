@@ -50,6 +50,12 @@
     --input: 214 24% 86%;
     --ring: 204 100% 40%;
     --radius: 0.6rem;
+    /* Keep status text in the original vivid Radix families. The tiny light-
+       theme adjustments preserve their hue while clearing 4.5:1 on cards. */
+    --status-ok-fg: #207f55;
+    --status-warn-fg: #a86100;
+    --status-bad-fg: var(--red-11);
+    --status-info-fg: #0c72ca;
   }
 
   html:lang(zh) {
@@ -84,6 +90,10 @@
     --border: 220 7% 17%;
     --input: 220 7% 20%;
     --ring: 206 100% 50%;
+    --status-ok-fg: var(--green-11);
+    --status-warn-fg: var(--amber-11);
+    --status-bad-fg: var(--red-11);
+    --status-info-fg: var(--blue-11);
   }
 
   /* Type scales with the device; 12px stays the floor, not the target.

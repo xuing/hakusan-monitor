@@ -10,14 +10,15 @@ import type {
   VisitStats,
 } from "@/types/snapshot";
 
-async function get<T>(path: string): Promise<T> {
+async function get<T>(path: string, validate?: (value: unknown) => T): Promise<T> {
   const res = await fetch(path, { headers: { Accept: "application/json" } });
   if (!res.ok) throw new Error(`${path} → ${res.status}`);
-  return (await res.json()) as T;
+  const value: unknown = await res.json();
+  return validate ? validate(value) : value as T;
 }
 
 export const api = {
-  snapshot: () => get<Snapshot>("/api/snapshot"),
+  snapshot: () => get<Snapshot>("/api/snapshot", validateSnapshot),
   meta: () => get<Meta>("/api/meta"),
   history: (hours = 24) =>
     get<{ since: number; until: number; points: HistoryPoint[] }>(`/api/history?hours=${hours}`),
@@ -29,3 +30,25 @@ export const api = {
       `/api/login-nodes/history?hours=${hours}`,
     ),
 };
+
+export function validateSnapshot(value: unknown): Snapshot {
+  // Rolling deployments write the static frontend before systemd restarts the
+  // backend. The immediately preceding snapshot shape had no explicit version
+  // marker, but is otherwise v1-compatible; accepting that one legacy shape
+  // prevents a transient blank dashboard during the hand-off.
+  if (!isRecord(value)
+      || (value.schema_version !== undefined && value.schema_version !== 1)
+      || !isRecord(value.totals)
+      || !Array.isArray(value.pools)
+      || !Array.isArray(value.partitions)
+      || !Array.isArray(value.nodes)
+      || !Array.isArray(value.jobs)
+      || typeof value.generated_at !== "number") {
+    throw new Error("/api/snapshot → unsupported or malformed schema");
+  }
+  return { ...value, schema_version: 1 } as unknown as Snapshot;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}

@@ -145,13 +145,13 @@ Two requirements landed mid-build and shaped the final design:
   queries (`squeue` 16.8 MB → 45 KB; `scontrol` 604 KB → 164 KB), folded
   nodes + queue + singularity into **one SSH round trip** over a **reused
   `ControlMaster` connection**, and made the single sampler TTL-paced (default
-  45 s). The controller (`lcpcc-adm1`) does the query work; the login node only
+  300 s). The controller (`lcpcc-adm1`) does the query work; the login node only
   runs brief read-only clients. See README → *Login-node load*.
 
 ## 10. v2 — frontend rewrite (React)
 
 The build-less SPA was rewritten as a proper React app (`web/`) on a deliberate
-design-system stack: **shadcn/ui** (owned Radix primitives) + **Tremor** (charts)
+design-system stack: **shadcn/ui** (owned Radix primitives) + owned SVG charts
 on **Tailwind** with a **Radix Colors** dark palette. The Python backend is
 unchanged except for two additions to expose *all* raw data — `GET /api/nodes`
 and `GET /api/jobs` (full per-node / per-job fields). New structure: five routed

@@ -3,15 +3,16 @@ import { Link } from "react-router-dom";
 import { ChevronRight } from "lucide-react";
 import { Bar } from "@/components/common/bar";
 import { CopyButton } from "@/components/common/copy-button";
+import { GpuReleaseHint } from "@/components/common/gpu-release-hint";
+import { PolicyLimitChips } from "@/components/common/policy-limit-chips";
 import { Tag } from "@/components/common/tag";
 import { Card, CardContent } from "@/components/ui/card";
-import { useLive } from "@/hooks/use-live";
-import { useResourceFilter } from "@/hooks/use-resource-filter";
+import { useLive } from "@/hooks/live-context";
+import { useResourceFilter } from "@/hooks/resource-filter-context";
 import { poolLabel, reasonLabel, useT, type TFn, type TranslationKey } from "@/i18n";
 import { occupantsForPool, poolCapacity } from "@/lib/derive";
-import { clockOf, fmtCountdown, fmtDur, fmtMB, nf, parseDur } from "@/lib/format";
+import { fmtCountdown, fmtDur, fmtMB, nf, parseDur } from "@/lib/format";
 import {
-  PolicyLimitChips,
   cpuProbeDetail,
   cpuProbeLabel,
   cpuProbeTone,
@@ -41,7 +42,9 @@ import {
 } from "@/lib/gpu-fit";
 import { interactiveForcedSec, isMaterialsStudioPartition, matchPool, partitionCap, partitionPolicy, type PartitionPolicy, type Tone } from "@/lib/slurm";
 import { cn } from "@/lib/utils";
-import { cpuProbeRows, cpuProbeState, type CpuProbeRow } from "@/lib/cpu-probes";
+import { cpuProbeMaxAge, cpuProbeRows, cpuProbeState, type CpuProbeRow } from "@/lib/cpu-probes";
+import { buildRequestCommand, shouldShowGapShell } from "@/lib/request-command";
+import { gpuPartitionAdvice, partitionRunningJobs } from "@/lib/gpu-advice";
 import type { Occupant, Partition, Pool, PoolGpu, RawJob, Snapshot } from "@/types/snapshot";
 
 
@@ -119,9 +122,10 @@ function PoolCard({ pool, snap, t }: { pool: Pool; snap: Snapshot; t: TFn }) {
   const gpuClear = !isGpu || !gpuFit || gpuSched <= 0
     || fitHasClearSlot(gpuFit, pendingActive, Date.now(), 720 * 60);
   const rawGpuFree = isGpu ? pool.gpu?.free ?? 0 : 0;
+  const reservedGpu = isGpu ? pool.gpu?.reserved ?? 0 : 0;
   const displayFree = isGpu ? rawGpuFree : pool.cores.free;
   const hasAvailable = (isGpu ? gpuSched > 0 && gpuClear : availableNodes > 0) && !maint;
-  const hasStrandedGpu = isGpu && rawGpuFree > 0 && !(gpuSched > 0 && gpuClear) && !maint;
+  const hasStrandedGpu = isGpu && (rawGpuFree > 0 || reservedGpu > 0) && !(gpuSched > 0 && gpuClear) && !maint;
   const availableNodesLabel = isGpu
     ? t("pool.gpuFreePhysical", { n: rawGpuFree })
     : t("pool.availableNodes", { n: availableNodes });
@@ -146,7 +150,7 @@ function PoolCard({ pool, snap, t }: { pool: Pool; snap: Snapshot; t: TFn }) {
       className={cn(
         "transition-colors",
         maint
-          ? "border-dashed border-muted-foreground/30 opacity-60"
+          ? "border-dashed border-muted-foreground/30 bg-muted/10"
           : hasAvailable
             ? "border-ok/40"
             : hasStrandedGpu
@@ -199,10 +203,20 @@ function PoolCard({ pool, snap, t }: { pool: Pool; snap: Snapshot; t: TFn }) {
               </div>
             )}
             <div className="text-xs text-muted-foreground">
-              {maint ? null : gpuAvailabilityText(isGpu, gpuFit, gpuSched, rawGpuFree, availableNodesLabel, pendingActive, t)}
+              {maint ? null : gpuAvailabilityText(
+                isGpu,
+                gpuFit,
+                gpuSched,
+                rawGpuFree,
+                pool.gpu?.down ?? 0,
+                pool.gpu?.reserved ?? 0,
+                availableNodesLabel,
+                pendingActive,
+                t,
+              )}
             </div>
           </div>
-          <ReleaseHint pool={pool} generatedAt={snap.generated_at} />
+          <GpuReleaseHint next={isGpu ? pool.gpu?.next_free : null} generatedAt={snap.generated_at} />
         </div>
 
         {isGpu && pool.gpu ? (
@@ -291,31 +305,6 @@ function DisclosureRow({
   );
 }
 
-function ReleaseHint({ pool, generatedAt }: { pool: Pool; generatedAt: number }) {
-  const next = pool.kind === "gpu" ? pool.gpu?.next_free : null;
-  const releasingNodes = pool.queue.releasing.nodes;
-  const [now, setNow] = useState(() => Date.now() / 1000);
-  useEffect(() => {
-    if (!next) return;
-    setNow(Date.now() / 1000);
-    const id = setInterval(() => setNow(Date.now() / 1000), 30_000);
-    return () => clearInterval(id);
-  }, [next, generatedAt]);
-
-  if (!next && releasingNodes <= 0) return null;
-  const remaining = next ? Math.max(0, parseDur(next.left) - (now - generatedAt)) : 0;
-  return (
-    <div className="flex flex-col items-end gap-1 text-right text-xs">
-      {next && (
-        <span className="text-info-fg">
-          ~ {clockOf(next.at)} <span className="text-muted-foreground">({fmtDur(remaining)})</span>
-        </span>
-      )}
-      {releasingNodes > 0 && <Tag tone="info">↑{releasingNodes}</Tag>}
-    </div>
-  );
-}
-
 /** Collapsible, editable starter request for this pool. Collapsed by default;
  *  starts from the selected policy and lets Slurm apply partition defaults. */
 function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
@@ -370,6 +359,8 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
   const timeSel = time.trim() && (!wallSec || parseWalltimeSec(time) <= wallSec) ? time : "";
   const cpuRows = snap && !isGpu && pool.id === "cpu" ? cpuProbeRows(pool, snap) : [];
   const cpuProbeGeneratedAt = snap?.cpu_submit_probes_generated_at || snap?.generated_at || 0;
+  const cpuProbeObservedAt = snap?.generated_at || 0;
+  const cpuProbeMaxAgeS = snap ? cpuProbeMaxAge(snap) : 20 * 60;
   const hasAdvancedOverrides = Boolean(nodeCount || coreCount || memValue || timeSel);
   const selectedCpuRow = !hasAdvancedOverrides ? cpuRows.find((row) => row.partition === partition) ?? null : null;
   // salloc can't take the -t deal (plugin forces the walltime); the displayed
@@ -414,7 +405,9 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
     ? undefined
     : (parseWalltimeSec(ptyActive ? ptyTime : timeSel) || Number.POSITIVE_INFINITY);
   const optionLabel = (p: string): string => {
-    if (cpuRows.length > 0) return cpuOptionLabel(p, cpuRows, cpuProbeGeneratedAt, t);
+    if (cpuRows.length > 0) {
+      return cpuOptionLabel(p, cpuRows, cpuProbeGeneratedAt, cpuProbeObservedAt, cpuProbeMaxAgeS, t);
+    }
     const base = isMaterialsStudioPartition(p) ? `${p} · ${trMaybe(t, `policy.${p}`, p)}` : p;
     if (!snap) return base;
     const s = partitionRequestSummary(pool, snap, p, isGpu, pendingActive, nowMs, t, optionVerdictSec);
@@ -447,29 +440,24 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
         userTimeSec: forcedSec ?? parseWalltimeSec(ptyActive ? ptyTime : timeSel),
         t,
       });
-  const flags = [`-p ${partition}`, ...(base.requiredFlags ?? [])];
-  if (nodeCount) flags.push(`-N ${nodeCount}`);
-  if (coreCount) flags.push(`-c ${coreCount}`);
-  if (memValue) flags.push(`--mem=${memValue}`);
-  // a -t on a forced-walltime salloc is silently ignored — don't emit one
-  if (!ptyActive && timeSel && forcedSec === null) flags.push(`-t ${timeSel}`);
   const script = scriptFile.trim() || "job.sh";
   // pty recipe (verified live): the wait loop redraws one status line while
   // the placeholder queues — srun errors with "Job is pending execution" if
   // attached too early — and pasting the whole block makes scancel fire when
   // the shell exits, so the placeholder never idles to its limit.
-  const cmd = ptyActive
-    ? [
-        `JOB=$(sbatch --parsable ${[...flags, `-t ${ptyTime}`].join(" ")} --wrap 'sleep infinity')`,
-        'echo "job $JOB submitted"',
-        'while :; do S=$(squeue -h -j "$JOB" -o \'%T %r\'); case "$S" in RUNNING*|"") break;; esac; printf \'\\r%s waiting — %s   \' "$(date +%T)" "$S"; sleep 5; done',
-        'printf \'\\rjob %s started — opening shell (exit releases it)\\n\' "$JOB"',
-        'srun --jobid "$JOB" --overlap --pty bash',
-        'scancel "$JOB" 2>/dev/null; echo "job $JOB released"',
-      ].join("\n")
-    : mode === "interactive"
-      ? `salloc ${flags.join(" ")}`
-      : `sbatch ${flags.join(" ")} ${script}`;
+  const cmd = buildRequestCommand({
+    partition,
+    requiredFlags: base.requiredFlags,
+    nodeCount,
+    coreCount,
+    memValue,
+    timeValue: timeSel,
+    forcedInteractiveSeconds: forcedSec,
+    mode,
+    pty: ptyActive,
+    ptyTime,
+    scriptFile: script,
+  });
   const policyName = trMaybe(t, `policy.${partition}`, partition);
   const policyDesc = trMaybe(t, `policy.${partition}.desc`, "");
   const limitText = fmtPolicyLimit(cap, isGpu, t, partition);
@@ -532,6 +520,7 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
                     key={m}
                     type="button"
                     onClick={() => setMode(m)}
+                    aria-pressed={mode === m}
                     className={cn(
                       "flex-1 rounded-[4px] px-2 text-xs transition-colors",
                       mode === m ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground",
@@ -579,7 +568,15 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
             {queueHint?.detail && !showGpuFitDetails && !groupLimitReached && (
               <div className="mt-1 text-xs leading-relaxed text-muted-foreground">{queueHint.detail}</div>
             )}
-            {selectedCpuRow && <CpuProbeInline row={selectedCpuRow} generatedAt={cpuProbeGeneratedAt} t={t} />}
+            {selectedCpuRow && (
+              <CpuProbeInline
+                row={selectedCpuRow}
+                probedAt={cpuProbeGeneratedAt}
+                observedAt={cpuProbeObservedAt}
+                maxAge={cpuProbeMaxAgeS}
+                t={t}
+              />
+            )}
             {hasAdvancedOverrides && cpuRows.length > 0 && (
               <div className="mt-1 text-xs leading-relaxed text-muted-foreground">{t("pool.cpuProbeDefaultOnly")}</div>
             )}
@@ -639,8 +636,14 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
             {/* the pty entry shares the tip-box language and appears only while
                 queuing is on the table (and never beside the bf "switch"
                 button, which is the same jump with parameters filled) */}
-            {isGpu && mode === "interactive"
-              && (ptyActive || (bfVariant !== "switch" && queueHint?.tone === "warn")) && (
+            {shouldShowGapShell({
+              isGpu,
+              mode,
+              ptyActive,
+              backfillAvailable: Boolean(bfTip),
+              backfillVariant: bfVariant,
+              queueWarn: queueHint?.tone === "warn",
+            }) && (
               <div className="mt-2 rounded-md border border-info/40 bg-info-soft/45 px-2 py-1.5 text-xs leading-relaxed">
                 <div className="flex flex-wrap items-center gap-1.5">
                   <Tag tone="info">{t("pool.ptyTag")}</Tag>
@@ -930,11 +933,11 @@ function bestPartitionPick(
   // CPU pool: sbatch --test-only probes already hold a per-partition verdict.
   if (!isGpu && cpuRows.length > 0) {
     const rank = (row: CpuProbeRow) => {
-      const s = cpuProbeState(row.probe, cpuProbeGeneratedAt);
+      const s = cpuProbeState(row.probe, cpuProbeGeneratedAt, snap.generated_at, cpuProbeMaxAge(snap));
       return s === "now" ? 0 : s === "queued" ? 2 : 3;
     };
     const best = [...cpuRows].sort((a, b) => rank(a) - rank(b))[0];
-    const state = cpuProbeState(best.probe, cpuProbeGeneratedAt);
+    const state = cpuProbeState(best.probe, cpuProbeGeneratedAt, snap.generated_at, cpuProbeMaxAge(snap));
     return { tone: cpuProbeTone(state), label: cpuProbeLabel(state, t), text: `-p ${best.partition}` };
   }
   const nowMs = Date.now();
@@ -972,19 +975,14 @@ function partitionRequestSummary(
 ): PartitionRequestSummary | null {
   const part = snap.partitions.find((x) => x.name === partition);
   if (!part) return null;
-  const cap = partitionCap(partition, snap.policy);
   const policy = partitionPolicy(partition, snap.policy);
-  const groupRunning = partitionRunningJobs(snap.jobs, partition);
-  const groupLimitReached = Boolean(policy.grpJobs && groupRunning >= policy.grpJobs);
-  const gpuFit = isGpu ? gpuFitSnapshot(snap, pool, cap, partition) : null;
   // default: preview the interactive command with its plugin-forced walltime
   const requestSec = requestSecOverride ?? interactiveForcedSec(partition, isGpu) ?? Number.POSITIVE_INFINITY;
-  const gpuTip = isGpu && gpuFit && gpuFit.schedulable <= 0 && !groupLimitReached
-    ? gpuFitTipCommand(gpuFit, pool, pendingActive, nowMs, requestSec)
-    : null;
-  const bfTip = isGpu && gpuFit && !gpuTip && !groupLimitReached
-    ? gpuBackfillTipCommand(gpuFit, pool, pendingActive, nowMs, requestSec)
-    : null;
+  const advice = isGpu ? gpuPartitionAdvice(snap, pool, partition, pendingActive, nowMs, requestSec) : null;
+  const groupRunning = advice?.groupRunning ?? partitionRunningJobs(snap.jobs, partition);
+  const gpuFit = advice?.fit ?? null;
+  const gpuTip = advice?.gpuTip ?? null;
+  const bfTip = advice?.backfillTip ?? null;
   const queueFact = poolQueueFact(snap.jobs, snap.part_pool, pool.id, isGpu, pool, gpuFit?.schedulable ?? 0);
   const hint = requestQueueHint({
     part,
@@ -1038,17 +1036,6 @@ function queueFactText(fact: QueueFact, t: TFn) {
   const priority = fact.priority > 0 ? ` · ${t("pool.queueFactPriority", { n: fact.priority })}` : "";
   const limited = fact.limited > 0 ? ` · ${t("pool.queueFactLimited", { n: fact.limited })}` : "";
   return `${free} · ${t("pool.queueFactPool", { n: fact.pending })}${priority}${limited} · ${largest}`;
-}
-
-function partitionRunningJobs(jobs: RawJob[], partition: string) {
-  let groupRunning = 0;
-  for (const job of jobs) {
-    const parts = String(job.partition || "").split(",");
-    if (!parts.includes(partition)) continue;
-    const state = String(job.job_state || "").toUpperCase();
-    if (state === "RUNNING") groupRunning += 1;
-  }
-  return groupRunning;
 }
 
 function GpuFitQuickTip({
@@ -1163,17 +1150,36 @@ function partitionOptionGroups(partitions: string[], t: TFn) {
   return groups;
 }
 
-function cpuOptionLabel(partition: string, rows: CpuProbeRow[], generatedAt: number, t: TFn) {
+function cpuOptionLabel(
+  partition: string,
+  rows: CpuProbeRow[],
+  probedAt: number,
+  observedAt: number,
+  maxAge: number,
+  t: TFn,
+) {
   const row = rows.find((item) => item.partition === partition);
   const base = isMaterialsStudioPartition(partition)
     ? `${partition} · ${trMaybe(t, `policy.${partition}`, partition)}`
     : partition;
   if (!row) return base;
-  return `${base} · ${cpuProbeLabel(cpuProbeState(row.probe, generatedAt), t)}`;
+  return `${base} · ${cpuProbeLabel(cpuProbeState(row.probe, probedAt, observedAt, maxAge), t)}`;
 }
 
-function CpuProbeInline({ row, generatedAt, t }: { row: CpuProbeRow; generatedAt: number; t: TFn }) {
-  const state = cpuProbeState(row.probe, generatedAt);
+function CpuProbeInline({
+  row,
+  probedAt,
+  observedAt,
+  maxAge,
+  t,
+}: {
+  row: CpuProbeRow;
+  probedAt: number;
+  observedAt: number;
+  maxAge: number;
+  t: TFn;
+}) {
+  const state = cpuProbeState(row.probe, probedAt, observedAt, maxAge);
   const detail = cpuProbeDetail(row, state, t);
   return (
     <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs">
@@ -1205,7 +1211,17 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
 // 12h — a slot (or its reservation gap) must hold that much to claim "free".
 const CARD_REQUEST_SEC = 720 * 60;
 
-function gpuAvailabilityText(isGpu: boolean, fit: GpuFitInfo | null, schedulable: number, rawFree: number, availableLabel: string, pendingActive: RawJob[], t: TFn) {
+function gpuAvailabilityText(
+  isGpu: boolean,
+  fit: GpuFitInfo | null,
+  schedulable: number,
+  rawFree: number,
+  down: number,
+  reserved: number,
+  availableLabel: string,
+  pendingActive: RawJob[],
+  t: TFn,
+) {
   if (!isGpu) return availableLabel;
   if (schedulable > 0) {
     if (fit && !fitHasClearSlot(fit, pendingActive, Date.now(), CARD_REQUEST_SEC)) {
@@ -1214,7 +1230,11 @@ function gpuAvailabilityText(isGpu: boolean, fit: GpuFitInfo | null, schedulable
     return availableLabel;
   }
   if (rawFree > 0) return gpuStrandedText(fit, rawFree, pendingActive, t);
-  return t("gpu.full");
+  const unavailable = [
+    reserved > 0 ? t("pool.reserved", { n: reserved }) : "",
+    down > 0 ? t("pool.offline", { n: down }) : "",
+  ].filter(Boolean);
+  return unavailable.length > 0 ? `${t("gpu.full")} · ${unavailable.join(" · ")}` : t("gpu.full");
 }
 
 function gpuStrandedText(fit: GpuFitInfo | null, rawFree: number, pendingActive: RawJob[], t: TFn) {
@@ -1354,7 +1374,8 @@ function fmtMemRaw(mb: number) {
   return `${nf(Math.max(0, Math.round(mb)))}M`;
 }
 
-/** One block per physical GPU — free (green) first, then used (red), then down (grey). */
+/** One block per physical GPU — free (green), stranded/reserved (amber),
+ * used (red), then genuinely offline (lighter red with an inset border). */
 function GpuBlocks({ gpu, schedulableFree, className }: { gpu: PoolGpu; schedulableFree?: number; className?: string }) {
   const ready = Math.max(0, Math.min(gpu.free, schedulableFree ?? gpu.free));
   const stranded = Math.max(0, gpu.free - ready);
@@ -1363,11 +1384,12 @@ function GpuBlocks({ gpu, schedulableFree, className }: { gpu: PoolGpu; schedula
       <span key={key + i} className={cn("h-2.5 min-w-0 flex-1 rounded-sm", cls)} />
     ));
   return (
-    <div className={cn("flex gap-0.5", className)} title={`${ready} schedulable · ${stranded} stranded · ${gpu.used} used${gpu.down ? ` · ${gpu.down} down` : ""}`}>
+    <div className={cn("flex gap-0.5", className)} title={`${ready} schedulable · ${stranded} stranded · ${gpu.used} used${gpu.reserved ? ` · ${gpu.reserved} reserved` : ""}${gpu.down ? ` · ${gpu.down} down` : ""}`}>
       {seg(ready, "bg-ok", "f")}
       {seg(stranded, "bg-warn", "s")}
       {seg(gpu.used, "bg-bad", "u")}
-      {seg(gpu.down, "bg-muted-foreground/40", "d")}
+      {seg(gpu.reserved ?? 0, "bg-warn/70 ring-1 ring-inset ring-warn", "r")}
+      {seg(gpu.down, "bg-bad/35 ring-1 ring-inset ring-bad/65", "d")}
     </div>
   );
 }

@@ -1,4 +1,4 @@
-import { BarChart } from "@tremor/react";
+import { BarChart } from "@/components/charts/simple-charts";
 import { ExternalLink } from "lucide-react";
 import { ChartPlaceholder } from "@/components/common/chart-placeholder";
 import { Empty } from "@/components/common/empty";
@@ -46,6 +46,7 @@ const LOGIN_POLL_COMMAND =
   "grep '^cpu ' /proc/stat  # before iostat\n" +
   "cat /proc/meminfo\n" +
   "df -P -B1 -x tmpfs -x devtmpfs\n" +
+  "df -Pi -x tmpfs -x devtmpfs\n" +
   "if command -v iostat >/dev/null 2>&1; then iostat -x -y 1 1; fi\n" +
   "grep '^cpu ' /proc/stat  # after iostat\n" +
   "ps -eo pid=,user=,stat=,pcpu=,pmem=,rss=,etimes=,comm=";

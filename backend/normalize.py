@@ -62,20 +62,53 @@ def state_list(node):
 
 
 def bucket_state(states):
+    # Slurm ships composite states ("IDLE+PLANNED", "MIXED+DRAIN"), so flag
+    # checks must run before base states or they are dead branches. Order:
+    # outage flags, then maintenance/drain, then busy base states (a node
+    # running jobs is "busy" even under a future reservation), then scheduler
+    # holds — an idle node under RESERVED/PLANNED/FUTURE is NOT free capacity
+    # and must never land in the "idle" bucket that feeds free_nodes.
     s = set(states)
-    if s & {"DOWN", "NOT_RESPONDING"}:
+    if s & {"DOWN", "NOT_RESPONDING", "FAIL", "FAILING", "POWERED_DOWN"}:
         return "down"
-    if "DRAIN" in s and not (s & {"ALLOCATED", "MIXED"}):
+    if s & {"DRAIN", "DRAINING", "MAINT"}:
         return "drain"
     if "ALLOCATED" in s:
         return "allocated"
     if "MIXED" in s:
         return "mixed"
+    if s & {"RESERVED", "PLANNED", "FUTURE"}:
+        return "reserved"
     if "IDLE" in s:
         return "idle"
-    if "RESERVED" in s:
-        return "reserved"
     return "other"
+
+
+# A node can accept ordinary user work only in an IDLE/MIXED base state and
+# without a Slurm flag that removes it from scheduling. Keep this rule here as
+# the single source of truth; the raw snapshot ships the result to the client.
+_BLOCKING_STATES = {
+    "DOWN", "NOT_RESPONDING", "DRAIN", "DRAINING", "FAIL", "FAILING",
+    "RESERVED", "PLANNED", "MAINT", "FUTURE", "UNKNOWN",
+    "POWER_DOWN", "POWERING_DOWN", "POWERED_DOWN", "POWERING_UP",
+    "REBOOT_ISSUED", "REBOOT_REQUESTED",
+}
+
+
+def is_schedulable(states):
+    s = {str(state).upper() for state in states}
+    return bool(s & {"IDLE", "MIXED"}) and not bool(s & _BLOCKING_STATES)
+
+
+def needs_attention(states):
+    s = {str(state).upper() for state in states}
+    return bool(s & {
+        "DOWN", "NOT_RESPONDING", "DRAIN", "DRAINING", "FAIL", "FAILING",
+        "MAINT", "POWER_DOWN", "POWERING_DOWN", "POWERED_DOWN",
+        # a rebooting node is an outage in progress, not a scheduler hold —
+        # keep this in sync with the frontend's backfill-candidate exclusions
+        "REBOOT_ISSUED", "REBOOT_REQUESTED",
+    })
 
 
 def node_pool(name):
@@ -141,6 +174,20 @@ def normalize(nodes_json, squeue_json, *, cluster="hakusan", slurm_version="",
     nodes = (nodes_json or {}).get("nodes", []) or []
     jobs = (squeue_json or {}).get("jobs", []) or []
 
+    # The compact scontrol source normally emits one row per node, but name is
+    # the physical identity and therefore the normalization invariant. Last row
+    # wins so a later, fresher observation replaces an earlier duplicate.
+    by_name = {}
+    duplicate_nodes = []
+    for nd in nodes:
+        name = nd.get("name", "")
+        if not name:
+            continue
+        if name in by_name and name not in duplicate_nodes:
+            duplicate_nodes.append(name)
+        by_name[name] = nd
+    nodes = list(by_name.values())
+
     # ---- per-node pass -------------------------------------------------------
     tot_cpu = alloc_cpu = 0
     other_cpu = 0          # cores on down/drained nodes — present but NOT runnable
@@ -150,7 +197,8 @@ def normalize(nodes_json, squeue_json, *, cluster="hakusan", slurm_version="",
     cpu_nodes_total = cpu_nodes_free = 0   # CPU nodes / with free cores
     gpu_total = Counter()
     gpu_used = Counter()
-    gpu_down = Counter()   # GPUs on down/drained nodes (present but unusable)
+    gpu_down = Counter()       # idle GPUs on nodes needing operator attention
+    gpu_reserved = Counter()   # idle GPUs blocked/reserved by the scheduler
     pools = {}            # id -> accumulator
     part_nodes = defaultdict(list)
     nodes_down = []
@@ -178,15 +226,11 @@ def normalize(nodes_json, squeue_json, *, cluster="hakusan", slurm_version="",
             gpu_total[k] += v
         for k, v in g_use.items():
             gpu_used[k] += v
-        if b in ("down", "drain"):
+        node_up = is_schedulable(states)
+        if not node_up:
+            unavailable = gpu_down if needs_attention(states) else gpu_reserved
             for k, v in g_tot.items():
-                gpu_down[k] += v
-
-        # node-level availability: a node takes new work only if it is up AND not
-        # draining — Slurm stops scheduling onto DRAIN* nodes even while they
-        # still run jobs (MIXED+DRAIN buckets as "mixed" above, so check the flag).
-        draining = "DRAIN" in set(states)
-        node_up = b not in ("down", "drain") and not draining
+                unavailable[k] += max(v - g_use.get(k, 0), 0)
         if g_tot:
             gpu_nodes_total += 1
             if node_up and (sum(g_tot.values()) - sum(g_use.values())) > 0:
@@ -201,7 +245,9 @@ def normalize(nodes_json, squeue_json, *, cluster="hakusan", slurm_version="",
                                         nodes=0, cpus_total=0, cpus_alloc=0, other_cores=0,
                                         mem_per_node=0, states=Counter(),
                                         gpu_total=Counter(), gpu_used=Counter(),
-                                        gpu_down=Counter(), available_nodes=0,
+                                        gpu_down=Counter(), gpu_reserved=Counter(),
+                                        available_nodes=0,
+                                        down_nodes=0,
                                         parts=set()))
         pa["nodes"] += 1
         pa["cpus_total"] += cpus
@@ -215,25 +261,30 @@ def normalize(nodes_json, squeue_json, *, cluster="hakusan", slurm_version="",
                 pa["available_nodes"] += 1
             elif not g_tot and (cpus - acpu) > 0:
                 pa["available_nodes"] += 1
-        if b in ("down", "drain"):
-            pa["gpu_down"] += g_tot
+        if not node_up:
+            gpu_bucket = pa["gpu_down"] if needs_attention(states) else pa["gpu_reserved"]
+            gpu_bucket += Counter({k: max(v - g_use.get(k, 0), 0)
+                                   for k, v in g_tot.items()})
             pa["other_cores"] += cpus - acpu
             other_cpu += cpus - acpu
+        if needs_attention(states):
+            pa["down_nodes"] += 1
 
         for p in (nd.get("partitions") or []):
             part_nodes[p].append((nd, b, cpus, acpu, g_tot, g_use))
             pa["parts"].add(p)
 
-        if b in ("idle", "mixed") and not draining:
+        if node_up:
             sched_avail += 1
 
-        if b in ("down", "drain") or draining:
+        if needs_attention(states):
             nodes_down.append({"name": name, "state": states,
                                "pool": pid, "reason": nd.get("reason") or ""})
 
     gpu_total_n = sum(gpu_total.values())
     gpu_used_n = sum(gpu_used.values())
     gpu_down_n = sum(gpu_down.values())
+    gpu_reserved_n = sum(gpu_reserved.values())
 
     # partition -> dominant GPU type (GPU jobs report only a count, not a type)
     # partition -> hardware pool (its nodes' pool)
@@ -260,7 +311,7 @@ def normalize(nodes_json, squeue_json, *, cluster="hakusan", slurm_version="",
     pending_jobs = []
     longest_pending_by_part = {}
     releases = []                # running jobs that will free resources, by end time
-    next_free = {}               # gpu type -> soonest {at, left} a card frees
+    next_free = {}               # gpu type -> soonest {at, left, gpus} release
     releasing = defaultdict(lambda: {"jobs": 0, "nodes": 0})  # per-partition, within 2h
     pool_run = Counter()
     pool_pend = Counter()
@@ -298,7 +349,7 @@ def normalize(nodes_json, squeue_json, *, cluster="hakusan", slurm_version="",
             ur["gpus"] += gpus_req
             end = j.get("end_time") or ""
             if end:
-                gp = j.get("gpus", 0)
+                gp = num(j.get("gpus")) or 0
                 gtype = part_gpu_type.get(parts[0]) if (gp and parts) else None
                 releases.append({
                     "job_id": num(j.get("job_id")),
@@ -310,8 +361,12 @@ def normalize(nodes_json, squeue_json, *, cluster="hakusan", slurm_version="",
                     "gpu": gpu_label(gtype, gp) if gp else "",
                     "cpus": num(j.get("cpus")) or 0,
                 })
-                if gp and gtype and (gtype not in next_free or end < next_free[gtype]["at"]):
-                    next_free[gtype] = {"at": end, "left": left}
+                if gp and gtype:
+                    current = next_free.get(gtype)
+                    if current is None or end < current["at"]:
+                        next_free[gtype] = {"at": end, "left": left, "gpus": gp}
+                    elif end == current["at"]:
+                        current["gpus"] += gp
         elif st == "PENDING":
             pending += 1
             reason = j.get("state_reason") or "None"
@@ -352,7 +407,16 @@ def normalize(nodes_json, squeue_json, *, cluster="hakusan", slurm_version="",
         gt = sum(sum(m[4].values()) for m in members)
         gu = sum(sum(m[5].values()) for m in members)
         kind = "gpu" if gt > 0 else "cpu"
-        gpu_down_part = sum(sum(m[4].values()) for m in members if m[1] in ("down", "drain"))
+        gpu_down_part = sum(
+            max(sum(g_tot.values()) - sum(g_use.values()), 0)
+            for nd_m, _b, _cpus, _acpu, g_tot, g_use in members
+            if not is_schedulable(state_list(nd_m)) and needs_attention(state_list(nd_m))
+        )
+        gpu_reserved_part = sum(
+            max(sum(g_tot.values()) - sum(g_use.values()), 0)
+            for nd_m, _b, _cpus, _acpu, g_tot, g_use in members
+            if not is_schedulable(state_list(nd_m)) and not needs_attention(state_list(nd_m))
+        )
         cpu_util = (ca / ct) if ct else 0.0
         gpu_util = (gu / gt) if gt else 0.0
         util = gpu_util if kind == "gpu" else cpu_util
@@ -361,10 +425,13 @@ def normalize(nodes_json, squeue_json, *, cluster="hakusan", slurm_version="",
         queue_ratio = min(pd / (r + 1), 1.0)
         pressure = round(0.6 * util + 0.4 * queue_ratio, 3)
         states = Counter(m[1] for m in members)              # bucketed node states
-        other_c = sum(m[2] - m[3] for m in members if m[1] in ("down", "drain"))
+        other_c = sum(
+            cpus - acpu for nd_m, _b, cpus, acpu, _g_tot, _g_use in members
+            if not is_schedulable(state_list(nd_m))
+        )
         available_nodes = sum(
             1 for nd_m, b, cpus, acpu, g_tot, g_use in members
-            if b not in ("down", "drain") and "DRAIN" not in set(state_list(nd_m)) and (
+            if is_schedulable(state_list(nd_m)) and (
                 (sum(g_tot.values()) - sum(g_use.values())) > 0 if kind == "gpu" else (cpus - acpu) > 0
             )
         )
@@ -374,7 +441,8 @@ def normalize(nodes_json, squeue_json, *, cluster="hakusan", slurm_version="",
             "cpus": {"total": ct, "alloc": ca, "free": max(ct - ca - other_c, 0),
                      "util": round(cpu_util, 3)},
             "gpu": ({"total": gt, "used": gu, "down": gpu_down_part,
-                     "free": max(gt - gu - gpu_down_part, 0),
+                     "reserved": gpu_reserved_part,
+                     "free": max(gt - gu - gpu_down_part - gpu_reserved_part, 0),
                      "util": round(gpu_util, 3)} if gt else None),
             "pool": part_pool.get(p),
             "jobs": {"running": r, "pending": pd},
@@ -383,7 +451,7 @@ def normalize(nodes_json, squeue_json, *, cluster="hakusan", slurm_version="",
             # per-node spec (nodes in a partition are homogeneous) + live availability
             "spec": {
                 "cores_per_node": max((m[2] for m in members), default=0),
-                "mem_per_node": max((m[0].get("real_memory", 0) for m in members), default=0),
+                "mem_per_node": max((num(m[0].get("real_memory")) or 0 for m in members), default=0),
                 "gpu_per_node": max((sum(m[4].values()) for m in members), default=0),
             },
             "nodes_state": dict(states),
@@ -403,6 +471,7 @@ def normalize(nodes_json, squeue_json, *, cluster="hakusan", slurm_version="",
         gt = sum(pa["gpu_total"].values())
         gu = sum(pa["gpu_used"].values())
         gd = sum(pa["gpu_down"].values())
+        gr = sum(pa["gpu_reserved"].values())
         st = pa["states"]
         ctot, calloc = pa["cpus_total"], pa["cpus_alloc"]
         is_gpu = pa["kind"] == "gpu"
@@ -410,9 +479,10 @@ def normalize(nodes_json, squeue_json, *, cluster="hakusan", slurm_version="",
         if gt:
             gtype = pa["gpu_total"].most_common(1)[0][0]
             cat = GPU_CATALOG.get(gtype, {"label": gtype, "mem_gb": None})
-            free_g = max(gt - gu - gd, 0)
+            free_g = max(gt - gu - gd - gr, 0)
             gpu = {"type": gtype, "label": cat["label"], "mem_gb": cat["mem_gb"],
-                   "total": gt, "used": gu, "down": gd, "free": free_g,
+                   "total": gt, "used": gu, "down": gd, "reserved": gr,
+                   "free": free_g,
                    "maint": gd >= gt, "util": round(gu / gt, 3),
                    "next_free": next_free.get(gtype) if gd < gt else None}
         free_cores = max(ctot - calloc - pa["other_cores"], 0)   # idle, runnable cores
@@ -424,7 +494,7 @@ def normalize(nodes_json, squeue_json, *, cluster="hakusan", slurm_version="",
             "nodes_state": dict(st),
             "idle_nodes": st.get("idle", 0),
             "available_nodes": pa["available_nodes"],
-            "down_nodes": st.get("down", 0) + st.get("drain", 0),
+            "down_nodes": pa["down_nodes"],
             "cpus_total": ctot, "cpus_alloc": calloc,
             "cores": {"total": ctot, "alloc": calloc, "free": free_cores,
                       "util": round(calloc / ctot, 3) if ctot else 0.0},
@@ -444,9 +514,10 @@ def normalize(nodes_json, squeue_json, *, cluster="hakusan", slurm_version="",
         if gpu_total.get(t):
             cat = GPU_CATALOG.get(t, {"label": t, "mem_gb": None})
             tt, uu, dd = gpu_total[t], gpu_used.get(t, 0), gpu_down.get(t, 0)
+            rr = gpu_reserved.get(t, 0)
             gpus.append({"type": t, "label": cat["label"], "mem_gb": cat["mem_gb"],
-                         "total": tt, "used": uu, "down": dd,
-                         "free": max(tt - uu - dd, 0),     # usable & idle right now
+                         "total": tt, "used": uu, "down": dd, "reserved": rr,
+                         "free": max(tt - uu - dd - rr, 0),  # usable & idle right now
                          "util": round(uu / tt, 3) if tt else 0.0,
                          "maint": dd >= tt,                # whole type is offline
                          "next_free": next_free.get(t) if dd < tt else None})
@@ -463,9 +534,10 @@ def normalize(nodes_json, squeue_json, *, cluster="hakusan", slurm_version="",
     top_releases = releases[:14]
 
     avail = sched_avail
-    down = by_state.get("down", 0) + by_state.get("drain", 0)
+    down = len(nodes_down)
 
     return {
+        "schema_version": 1,
         "cluster": cluster,
         "slurm_version": slurm_version,
         "totals": {
@@ -479,13 +551,16 @@ def normalize(nodes_json, squeue_json, *, cluster="hakusan", slurm_version="",
             "memory": {"total_mb": tot_mem, "alloc_mb": alloc_mem,
                        "util": round(alloc_mem / tot_mem, 3) if tot_mem else 0.0},
             "gpus": {"total": gpu_total_n, "used": gpu_used_n,
-                     "down": gpu_down_n,
-                     "free": max(gpu_total_n - gpu_used_n - gpu_down_n, 0),
+                     "down": gpu_down_n, "reserved": gpu_reserved_n,
+                     "free": max(gpu_total_n - gpu_used_n - gpu_down_n - gpu_reserved_n, 0),
                      "util": round(gpu_used_n / gpu_total_n, 3) if gpu_total_n else 0.0,
                      "by_type": {k: {"total": gpu_total[k],
                                       "used": gpu_used.get(k, 0),
                                       "down": gpu_down.get(k, 0),
-                                      "free": max(gpu_total[k] - gpu_used.get(k, 0) - gpu_down.get(k, 0), 0)}
+                                      "reserved": gpu_reserved.get(k, 0),
+                                      "free": max(gpu_total[k] - gpu_used.get(k, 0)
+                                                  - gpu_down.get(k, 0)
+                                                  - gpu_reserved.get(k, 0), 0)}
                                  for k in gpu_total}},
         },
         "pools": pool_out,
@@ -505,6 +580,7 @@ def normalize(nodes_json, squeue_json, *, cluster="hakusan", slurm_version="",
         "nodes_down": nodes_down,
         "top_users": top_users,
         "part_pool": part_pool,    # partition -> pool id (lets the client group raw jobs)
+        "diagnostics": {"duplicate_nodes": duplicate_nodes},
     }
 
 

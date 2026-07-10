@@ -3,7 +3,7 @@ import { Menu } from "lucide-react";
 import { useLocation } from "react-router-dom";
 import { Badge } from "@/components/ui/badge";
 import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
-import { useLive } from "@/hooks/use-live";
+import { useLive } from "@/hooks/live-context";
 import { useT } from "@/i18n";
 import { FILTERED_PATHS, NAV } from "@/lib/nav";
 import { LangSwitcher } from "./lang-switcher";

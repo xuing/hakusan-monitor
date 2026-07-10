@@ -10,6 +10,7 @@ import json
 import os
 import shlex
 import subprocess
+import threading
 import time
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -142,6 +143,29 @@ def _df(text):
             "mount": p[5],
         })
     return rows
+
+
+def _df_inodes(text):
+    rows = []
+    for line in text.splitlines()[1:]:
+        p = line.split()
+        if len(p) < 6:
+            continue
+        rows.append({
+            "filesystem": p[0],
+            "inodes_total": _int(p[1]),
+            "inodes_used": _int(p[2]),
+            "inodes_free": _int(p[3]),
+            "inode_use_pct": _int(p[4].rstrip("%")),
+            "mount": p[5],
+        })
+    return rows
+
+
+def _merge_disk_stats(byte_rows, inode_rows):
+    inodes = {(r.get("filesystem"), r.get("mount")): r for r in inode_rows}
+    return [{**row, **inodes.get((row.get("filesystem"), row.get("mount")), {})}
+            for row in byte_rows]
 
 
 def _is_health_disk(row):
@@ -321,22 +345,26 @@ class LoginNodeCollector:
         self.latest = None
         self.error = None
         self._fails = {}   # node id -> consecutive failed samples
+        self._fetch_lock = threading.Lock()
 
     def fetch(self, now=None):
         now = int(now or time.time())
-        if self.latest and now - self.latest.get("generated_at", 0) < self.interval:
-            return self.latest, False
-        try:
-            payload = self._collect(now)
-            self.latest = payload
-            self.error = None
-            return payload, True
-        except Exception as e:
-            self.error = str(e)
-            if self.latest:
-                self.latest = {**self.latest, "stale": True, "error": str(e)}
+        with self._fetch_lock:
+            # Re-check after acquiring the single-flight lock: concurrent callers
+            # reuse the sample produced by the first one instead of multiplying SSH.
+            if self.latest and now - self.latest.get("generated_at", 0) < self.interval:
                 return self.latest, False
-            raise
+            try:
+                payload = self._collect(now)
+                self.latest = payload
+                self.error = None
+                return payload, True
+            except Exception as e:
+                self.error = str(e)
+                if self.latest:
+                    self.latest = {**self.latest, "stale": True, "error": str(e)}
+                    return self.latest, False
+                raise
 
     def _collect(self, now):
         if self.mode == "mock":
@@ -406,6 +434,7 @@ echo "{MARK} nproc"; nproc
 echo "{MARK} stat_before"; grep '^cpu ' /proc/stat
 echo "{MARK} meminfo"; cat /proc/meminfo
 echo "{MARK} df"; df -P -B1 -x tmpfs -x devtmpfs 2>/dev/null
+echo "{MARK} df_inodes"; df -Pi -x tmpfs -x devtmpfs 2>/dev/null
 echo "{MARK} iostat"; if command -v iostat >/dev/null 2>&1; then iostat -x -y 1 1 2>/dev/null || true; fi
 echo "{MARK} stat_after"; grep '^cpu ' /proc/stat
 echo "{MARK} ps"; ps -eo {ps_fields}
@@ -423,7 +452,9 @@ echo "{MARK} ps"; ps -eo {ps_fields}
             for p in all_procs:
                 u = p.get("user", "")
                 p["user"] = (u[:2] + "***") if len(u) > 2 else "***"
-        disks = [d for d in _df(sec.get("df", "")) if _is_health_disk(d)]
+        disks = [d for d in _merge_disk_stats(
+            _df(sec.get("df", "")), _df_inodes(sec.get("df_inodes", "")))
+                 if _is_health_disk(d)]
         io = _iostat(sec.get("iostat", ""))
         node = {
             "id": name,

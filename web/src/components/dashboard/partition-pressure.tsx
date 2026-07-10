@@ -1,18 +1,21 @@
 import { CopyButton } from "@/components/common/copy-button";
 import { Empty } from "@/components/common/empty";
 import { HoverHint } from "@/components/common/hover-hint";
+import { GpuReleaseHint } from "@/components/common/gpu-release-hint";
 import { SectionCard } from "@/components/common/section-card";
+import { LivePending } from "@/components/common/live-pending";
+import { PolicyLimitChips } from "@/components/common/policy-limit-chips";
 import { Tag } from "@/components/common/tag";
-import { useLive } from "@/hooks/use-live";
-import { useResourceFilter } from "@/hooks/use-resource-filter";
+import { useLive } from "@/hooks/live-context";
+import { useResourceFilter } from "@/hooks/resource-filter-context";
 import { poolLabel, useT, type TFn } from "@/i18n";
 import type { TranslationKey } from "@/i18n/en";
 import { poolCapacity, type PoolCapacity } from "@/lib/derive";
 import { clockOf, fmtMB, nf } from "@/lib/format";
-import { contendersForPool, gpuFitSnapshot, gpuStrandedCount, hasUncontestedGpuSlot, schedulableGpuSlots } from "@/lib/gpu-fit";
-import { cpuProbeForPartition, cpuProbeState, type CpuProbeRow } from "@/lib/cpu-probes";
+import { contendersForPool, fitHasClearSlot, gpuStrandedCount } from "@/lib/gpu-fit";
+import { gpuPartitionAdvice, type GpuPartitionAdvice } from "@/lib/gpu-advice";
+import { cpuProbeForPartition, cpuProbeMaxAge, cpuProbeState, type CpuProbeRow } from "@/lib/cpu-probes";
 import {
-  PolicyLimitChips,
   cpuProbeDetail,
   cpuProbeLabel,
   cpuProbeTone,
@@ -21,6 +24,7 @@ import {
 } from "@/lib/policy-hints";
 import {
   isMaterialsStudioPartition,
+  interactiveForcedSec,
   matchPartition,
   partitionCap,
   partitionPolicy as slurmPartitionPolicy,
@@ -75,7 +79,7 @@ function availableNodes(p: Partition) {
 // multi-node CPU jobs by free *whole* nodes (they need contiguous nodes to start).
 type Hero = { n: number; unit: "cores" | "gpu" | "nodes"; capped: boolean };
 
-function requestableNow(p: Partition, cap: PartitionCap, isGpu: boolean, pc: PoolCapacity, gpuSchedulable: number | null): Hero {
+function requestableNow(p: Partition, cap: PartitionCap, isGpu: boolean, pc: PoolCapacity, gpuSchedulable: number | null, probeCores?: number): Hero {
   if (isGpu) {
     const free = p.gpu?.free ?? 0;
     // agree with the Overview verdict: a free GPU stranded on a node whose
@@ -83,8 +87,20 @@ function requestableNow(p: Partition, cap: PartitionCap, isGpu: boolean, pc: Poo
     const sched = Math.min(gpuSchedulable ?? free, free);
     return { n: Math.min(cap.maxGpus ?? sched, sched), unit: "gpu", capped: false };
   }
+  // A real `sbatch --test-only` probe already reports the exact core count
+  // Slurm will hand out — trust it over a derived "N idle whole nodes"
+  // guess. These partitions carry no --exclusive requirement, so a
+  // multi-node default request happily scatters across nodes that are
+  // already mostly full, as long as SOME cores are free on each (verified
+  // live: SMALL/LONG-L default requests landed on nodes already ~85-95%
+  // loaded by unrelated jobs) — "N 台整空节点" promises exclusivity the
+  // scheduler never guaranteed.
+  if (probeCores) {
+    return { n: probeCores, unit: "cores", capped: cap.maxCores !== undefined && probeCores < cap.maxCores };
+  }
   if ((cap.maxNodes ?? 1) > 1) {
-    // never advertise more nodes than the partition's policy allows per job
+    // no probe data yet (e.g. backend just restarted) — fall back to the
+    // coarser idle-node estimate
     return { n: Math.min(cap.maxNodes ?? pc.idleNodes, pc.idleNodes), unit: "nodes", capped: false };
   }
   const limit = cap.maxCores ?? pc.emptiestNodeFree;
@@ -105,13 +121,13 @@ export function PartitionPressure() {
   const t = useT();
   if (!snap) {
     return (
-      <SectionCard bodyClassName="pt-4">
+      <LivePending fallback={<SectionCard bodyClassName="pt-4">
         <div className="space-y-3">
           {Array.from({ length: 4 }, (_, i) => (
             <div key={i} className="h-16 animate-pulse rounded-lg bg-muted/40" />
           ))}
         </div>
-      </SectionCard>
+      </SectionCard>} />
     );
   }
 
@@ -144,7 +160,12 @@ export function PartitionPressure() {
               if (runtimePolicy.grpJobs && p.jobs.running >= runtimePolicy.grpJobs) return 1;
               const row = cpuProbeForPartition(snap, p.name);
               if (!row) return 0;
-              const state = cpuProbeState(row.probe, snap.cpu_submit_probes_generated_at || snap.generated_at);
+              const state = cpuProbeState(
+                row.probe,
+                snap.cpu_submit_probes_generated_at || snap.generated_at,
+                snap.generated_at,
+                cpuProbeMaxAge(snap),
+              );
               if (state === "now") return 0;
               if (state === "queued") return 2;
               if (state === "unknown") return 3;
@@ -163,15 +184,40 @@ export function PartitionPressure() {
             const pool = poolById.get(group.poolKey);
             const pc = poolCapacity(snap, group.poolKey);
             const pendingActive = isGpu ? contendersForPool(snap, group.poolKey) : [];
+            const nowMs = Date.now();
+            const gpuAdviceByPartition = new Map(
+              isGpu && pool
+                ? parts.map((p) => [
+                    p.name,
+                    gpuPartitionAdvice(
+                      snap,
+                      pool,
+                      p.name,
+                      pendingActive,
+                      nowMs,
+                      interactiveForcedSec(p.name, true) ?? Number.POSITIVE_INFINITY,
+                    ),
+                  ] as const)
+                : [],
+            );
             // "green" for the pool bar = the best any single sibling policy could
             // actually grant right now — matches the per-row rule: one partition
             // able to default-request it is enough to count it as available.
             const gpuSchedulableMax = isGpu && pool
-              ? Math.max(0, ...parts.map((sp) => schedulableGpuSlots(snap.nodes, pool, partitionCap(sp.name, snap.policy))))
+              ? Math.max(0, ...parts.map((sp) => gpuAdviceByPartition.get(sp.name)?.fit.schedulable ?? 0))
               : undefined;
             return (
               <div key={group.key}>
-                <PoolHeader pool={pool} label={poolLabel(t, group.poolKey)} spec={spec} isGpu={isGpu} pc={pc} gpuSchedulable={gpuSchedulableMax} t={t} />
+                <PoolHeader
+                  pool={pool}
+                  label={poolLabel(t, group.poolKey)}
+                  spec={spec}
+                  isGpu={isGpu}
+                  pc={pc}
+                  gpuSchedulable={gpuSchedulableMax}
+                  generatedAt={snap.generated_at}
+                  t={t}
+                />
                 {parts.length > 1 && <p className="mb-1.5 text-xs text-muted-foreground/80">{t("part.shared")}</p>}
                 <div className="space-y-2">
                   {generalParts.length > 0 && (
@@ -182,17 +228,21 @@ export function PartitionPressure() {
                       pc={pc}
                       cpuProbeFor={(p) => (!isGpu ? cpuProbeForPartition(snap, p.name) : null)}
                       gpuSlotsFor={(p) =>
-                        isGpu && pool ? schedulableGpuSlots(snap.nodes, pool, partitionCap(p.name, snap.policy)) : null
+                        gpuAdviceByPartition.get(p.name)?.fit.schedulable ?? null
                       }
                       gpuClearFor={(p) =>
-                        isGpu && pool
-                          ? hasUncontestedGpuSlot(snap.nodes, pendingActive, pool, partitionCap(p.name, snap.policy), Date.now(), 720 * 60)
+                        gpuAdviceByPartition.has(p.name)
+                          ? fitHasClearSlot(gpuAdviceByPartition.get(p.name)!.fit, pendingActive, nowMs, 720 * 60)
                           : null
                       }
-                      gpuStrandedFor={(p) =>
-                        isGpu && pool ? gpuStrandedCount(gpuFitSnapshot(snap, pool, partitionCap(p.name, snap.policy), p.name)) : 0
-                      }
-                      generatedAt={snap.cpu_submit_probes_generated_at || snap.generated_at}
+                      gpuStrandedFor={(p) => {
+                        const advice = gpuAdviceByPartition.get(p.name);
+                        return advice ? gpuStrandedCount(advice.fit) : 0;
+                      }}
+                      gpuAdviceFor={(p) => gpuAdviceByPartition.get(p.name) ?? null}
+                      probeGeneratedAt={snap.cpu_submit_probes_generated_at || snap.generated_at}
+                      observedAt={snap.generated_at}
+                      probeMaxAge={cpuProbeMaxAge(snap)}
                       policy={snap.policy}
                       t={t}
                     />
@@ -208,7 +258,10 @@ export function PartitionPressure() {
                       gpuSlotsFor={() => null}
                       gpuClearFor={() => null}
                       gpuStrandedFor={() => 0}
-                      generatedAt={snap.cpu_submit_probes_generated_at || snap.generated_at}
+                      gpuAdviceFor={() => null}
+                      probeGeneratedAt={snap.cpu_submit_probes_generated_at || snap.generated_at}
+                      observedAt={snap.generated_at}
+                      probeMaxAge={cpuProbeMaxAge(snap)}
                       policy={snap.policy}
                       t={t}
                     />
@@ -239,7 +292,10 @@ function PartitionRows({
   gpuSlotsFor,
   gpuClearFor,
   gpuStrandedFor,
-  generatedAt,
+  gpuAdviceFor,
+  probeGeneratedAt,
+  observedAt,
+  probeMaxAge,
   policy,
   t,
 }: {
@@ -252,7 +308,10 @@ function PartitionRows({
   gpuSlotsFor: (p: Partition) => number | null;
   gpuClearFor: (p: Partition) => boolean | null;
   gpuStrandedFor: (p: Partition) => number;
-  generatedAt: number;
+  gpuAdviceFor: (p: Partition) => GpuPartitionAdvice | null;
+  probeGeneratedAt: number;
+  observedAt: number;
+  probeMaxAge: number;
   policy?: PolicySnapshot;
   t: TFn;
 }) {
@@ -275,7 +334,10 @@ function PartitionRows({
             gpuSchedulable={gpuSlotsFor(p)}
             gpuClear={gpuClearFor(p)}
             gpuStranded={gpuStrandedFor(p)}
-            generatedAt={generatedAt}
+            gpuAdvice={gpuAdviceFor(p)}
+            probeGeneratedAt={probeGeneratedAt}
+            observedAt={observedAt}
+            probeMaxAge={probeMaxAge}
             policy={policy}
             t={t}
           />
@@ -292,6 +354,7 @@ function PoolHeader({
   isGpu,
   pc,
   gpuSchedulable,
+  generatedAt,
   t,
 }: {
   pool?: Pool;
@@ -300,6 +363,7 @@ function PoolHeader({
   isGpu: boolean;
   pc: PoolCapacity;
   gpuSchedulable?: number;
+  generatedAt: number;
   t: TFn;
 }) {
   const maint = isGpu && !!pool?.gpu?.maint;
@@ -316,6 +380,7 @@ function PoolHeader({
     ? {
         free: pool?.gpu?.free ?? 0,
         used: pool?.gpu?.used ?? 0,
+        reserved: pool?.gpu?.reserved ?? 0,
         down: pool?.gpu?.down ?? 0,
         total: pool?.gpu?.total ?? 0,
         unit: t("unit.gpu"),
@@ -323,19 +388,23 @@ function PoolHeader({
     : {
         free: availableNodeCount,
         used: busyNodes,
+        reserved: 0,
         down: downNodes,
         total: pool?.nodes ?? 0,
         unit: t("spec.nodes"),
       };
   return (
     <div className="mb-1.5 border-b border-border pb-1.5">
-      <div className="flex flex-wrap items-baseline gap-x-2">
-        <span className="text-sm font-semibold">{label}</span>
-        <span className="font-mono text-xs text-muted-foreground">
-          {nf(pool?.nodes ?? 0)} {t("spec.nodes")} · {t("spec.perNode")}{" "}
-          {spec.gpu_per_node > 0 && `${spec.gpu_per_node} GPU · `}
-          {spec.cores_per_node}c · {fmtMB(spec.mem_per_node)}
-        </span>
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex flex-wrap items-baseline gap-x-2">
+          <span className="text-sm font-semibold">{label}</span>
+          <span className="font-mono text-xs text-muted-foreground">
+            {nf(pool?.nodes ?? 0)} {t("spec.nodes")} · {t("spec.perNode")}{" "}
+            {spec.gpu_per_node > 0 && `${spec.gpu_per_node} GPU · `}
+            {spec.cores_per_node}c · {fmtMB(spec.mem_per_node)}
+          </span>
+        </div>
+        {isGpu && <GpuReleaseHint next={pool?.gpu?.next_free} generatedAt={generatedAt} />}
       </div>
       <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
         <UnitBlocks {...blocks} schedulable={isGpu ? gpuSchedulable : undefined} />
@@ -367,6 +436,14 @@ function PoolHeader({
                 {pc.freeCores > 0 && <span className="text-muted-foreground"> {t("pool.scatteredNote")}</span>}
               </span>
             )}
+            {isGpu && (pool?.gpu?.reserved ?? 0) > 0 && (
+              <>
+                <span>·</span>
+                <span className="font-mono text-warn-fg">
+                  {t("pool.reserved", { n: nf(pool?.gpu?.reserved ?? 0) })}
+                </span>
+              </>
+            )}
           </>
         )}
       </div>
@@ -377,6 +454,7 @@ function PoolHeader({
 function UnitBlocks({
   free,
   used,
+  reserved,
   down,
   total,
   unit,
@@ -384,6 +462,7 @@ function UnitBlocks({
 }: {
   free: number;
   used: number;
+  reserved: number;
   down: number;
   total: number;
   unit: string;
@@ -395,7 +474,10 @@ function UnitBlocks({
   if (total <= 0) return null;
   const stranded = schedulable !== undefined ? Math.max(0, free - schedulable) : 0;
   const okFree = schedulable !== undefined ? Math.min(schedulable, free) : free;
-  const [okCells, strandedCells, usedCells, downCells] = scaleCells([okFree, stranded, used, down], total);
+  const [okCells, strandedCells, usedCells, reservedCells, downCells] = scaleCells(
+    [okFree, stranded, used, reserved, down],
+    total,
+  );
   const cell = (n: number, cls: string, key: string) =>
     Array.from({ length: n }, (_, i) => (
       <span key={`${key}-${i}`} className={cn("h-2.5 min-w-0 flex-1 rounded-sm", cls)} />
@@ -403,12 +485,13 @@ function UnitBlocks({
   return (
     <div
       className="flex h-2.5 w-36 shrink-0 gap-px"
-      title={`${nf(free)} ${unit} ${unit === "GPU" ? "free" : "available"}${stranded ? ` (${nf(stranded)} unused by any policy)` : ""} · ${nf(used)} used${down ? ` · ${nf(down)} down` : ""}`}
+      title={`${nf(free)} ${unit} ${unit === "GPU" ? "free" : "available"}${stranded ? ` (${nf(stranded)} unused by any policy)` : ""} · ${nf(used)} used${reserved ? ` · ${nf(reserved)} reserved` : ""}${down ? ` · ${nf(down)} down` : ""}`}
     >
       {cell(okCells, "bg-ok", "ok")}
       {cell(strandedCells, "bg-warn", "stranded")}
       {cell(usedCells, "bg-bad", "used")}
-      {cell(downCells, "bg-muted-foreground/40", "down")}
+      {cell(reservedCells, "bg-warn/70 ring-1 ring-inset ring-warn", "reserved")}
+      {cell(downCells, "bg-bad/35 ring-1 ring-inset ring-bad/65", "down")}
     </div>
   );
 }
@@ -439,7 +522,10 @@ function PartitionRow({
   gpuSchedulable,
   gpuClear,
   gpuStranded,
-  generatedAt,
+  gpuAdvice,
+  probeGeneratedAt,
+  observedAt,
+  probeMaxAge,
   policy,
   t,
 }: {
@@ -450,7 +536,10 @@ function PartitionRow({
   gpuSchedulable: number | null;
   gpuClear: boolean | null;
   gpuStranded: number;
-  generatedAt: number;
+  gpuAdvice: GpuPartitionAdvice | null;
+  probeGeneratedAt: number;
+  observedAt: number;
+  probeMaxAge: number;
   policy?: PolicySnapshot;
   t: TFn;
 }) {
@@ -460,9 +549,16 @@ function PartitionRow({
   const groupRunning = p.jobs.running;
   const limitRows = policyLimitRows(runtimePolicy, groupRunning, t);
   const groupLimitReached = Boolean(runtimePolicy.grpJobs && groupRunning >= runtimePolicy.grpJobs);
+  const gpuTip = gpuAdvice?.gpuTip ?? null;
+  const backfillTip = gpuAdvice?.backfillTip ?? null;
   const cap = partitionCap(p.name, policy);
-  const hero = requestableNow(p, cap, isGpu, pc, gpuSchedulable);
-  const probeState = cpuProbe ? cpuProbeState(cpuProbe.probe, generatedAt) : null;
+  const probeState = cpuProbe
+    ? cpuProbeState(cpuProbe.probe, probeGeneratedAt, observedAt, probeMaxAge)
+    : null;
+  const hero = requestableNow(
+    p, cap, isGpu, pc, gpuSchedulable,
+    probeState === "now" ? cpuProbe?.cores : undefined,
+  );
   // gpuClear === false means every free GPU slot is claimed by queued jobs
   // (or the node is PLANNED) — "can allocate" would be a false promise.
   const canRun = !maint && !groupLimitReached && (probeState ? probeState === "now" : hero.n > 0 && gpuClear !== false);
@@ -497,7 +593,7 @@ function PartitionRow({
   const showTestedCommand = Boolean(cpuProbe?.probe && !maint && (probeState === "now" || probeState === "queued"));
 
   return (
-    <div className={maint ? "py-2 opacity-55" : "py-2"}>
+    <div className={maint ? "rounded-md border border-dashed border-border bg-muted/20 px-2 py-2" : "py-2"}>
       <div className="grid gap-x-3 gap-y-1 sm:grid-cols-[9rem_minmax(0,1fr)_auto] sm:items-center">
         <div className="min-w-0">
           <div className="truncate text-sm font-medium">{p.name}</div>
@@ -529,6 +625,16 @@ function PartitionRow({
             </span>
           </div>
           <div className="mt-0.5 truncate text-xs text-muted-foreground/80">{t(labelPolicy.desc)}</div>
+          {gpuTip && (
+            <div className="mt-0.5 text-xs text-warn-fg">
+              {t("pool.quickGpuMemHint", { mem: gpuTip.mem })} · {gpuTip.node}
+            </div>
+          )}
+          {backfillTip && (
+            <div className="mt-0.5 text-xs text-info-fg">
+              {t("pool.quickGpuBfHint", { t: backfillTip.t })} · {backfillTip.node}
+            </div>
+          )}
           <PolicyLimitChips rows={limitRows} />
           {cpuProbe && !maint && (
             <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs">
@@ -554,6 +660,10 @@ function PartitionRow({
             <Tag tone="warn">{t("part.willQueue")}</Tag>
           ) : probeState ? (
             <Tag tone={cpuProbeTone(probeState)}>{cpuProbeLabel(probeState, t)}</Tag>
+          ) : gpuTip ? (
+            <Tag tone="warn">{t("pool.optBypass")}</Tag>
+          ) : backfillTip ? (
+            <Tag tone="info">{t("pool.optGap")}</Tag>
           ) : canRun ? (
             <Tag tone="ok">{t("part.canAllocate")}</Tag>
           ) : (
@@ -564,4 +674,3 @@ function PartitionRow({
     </div>
   );
 }
-

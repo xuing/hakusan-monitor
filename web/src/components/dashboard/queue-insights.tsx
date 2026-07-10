@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { Empty } from "@/components/common/empty";
 import { SectionCard } from "@/components/common/section-card";
-import { useLive } from "@/hooks/use-live";
+import { useLive } from "@/hooks/live-context";
 import { reasonLabel, useT } from "@/i18n";
 import { fmtAt, fmtEpoch } from "@/lib/format";
 import { partitionDisplayRank, toneClass, type Tone } from "@/lib/slurm";

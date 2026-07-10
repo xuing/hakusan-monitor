@@ -53,6 +53,7 @@ Backend serves the SPA (static) **and** JSON endpoints. All localizable values a
 
 ```jsonc
 {
+  "schema_version": 1,
   "generated_at": 1779800000, "cluster": "hakusan", "slurm_version": "25.05.5",
   "source": "ssh", "stale": false, "age_s": 3,
   "totals": {
@@ -60,8 +61,9 @@ Backend serves the SPA (static) **and** JSON endpoints. All localizable values a
                "by_state": { "allocated": 88, "mixed": 66, "idle": 47, "down": 17, "drain": 1 } },
     "cpus":   { "total": 35064, "alloc": 28693, "free": 6371, "util": 0.818 },
     "memory": { "total_mb": 0, "alloc_mb": 0, "util": 0.0 },
-    "gpus":   { "total": 80, "used": 60, "free": 20, "util": 0.75,
-                "by_type": { "nvidia_a40": {"total":40,"used":36}, "...": {} } }
+    "gpus":   { "total": 80, "used": 60, "reserved": 2, "down": 0,
+                "free": 18, "util": 0.75,
+                "by_type": { "nvidia_a40": {"total":40,"used":36,"reserved":2}, "...": {} } }
   },
   "pools": [ { "id":"a40","kind":"gpu","nodes":20,"cpus_total":1040,"cpus_alloc":620,
                "util":0.6,"gpu":{"total":40,"used":36,"free":4} } ],
@@ -105,8 +107,8 @@ The React app is route-based rather than one giant dashboard:
   muted `#8a97a8`. Accent `#4cc2ff` (Hakusan blue). Load ramp green→amber→red:
   `#3fb950 / #d29922 / #f85149`; "full/critical" pulses subtly.
 - Type: system UI stack + `ui-monospace` for numbers/IDs. Big tabular-nums for KPIs.
-- Charts use Tremor/Recharts where appropriate; compact inline bars and status
-  dots are hand-built in React/Tailwind.
+- Charts use small owned SVG components; compact inline bars and status dots are
+  hand-built in React/Tailwind. This keeps the production bundle predictable.
 - Accessibility: levels carry text labels + ARIA, not color alone; ≥4.5:1 contrast.
 
 ## 5. i18n keys (excerpt)
@@ -145,29 +147,32 @@ stays language-neutral.
   `/api/health`.
 - **GPU board carries `down`/`maint`** so a type whose nodes are offline (e.g.
   H100-MIG) shows *maintenance*, never a misleading "free".
+- **Scheduler reservations are not outages.** Idle GPUs on `PLANNED` or other
+  scheduler-blocked nodes are reported as `reserved`; only GPUs on nodes that
+  need operator attention contribute to `down`.
 
-## 7. v2 — React frontend (shadcn/ui + Tremor)
+## 7. v2 — React frontend (shadcn/ui + owned SVG charts)
 
 The frontend was rebuilt as a React + TypeScript app (`web/`) — the backend API
 is the stable contract, so nothing server-side changed except the new raw-data
 endpoints.
 
 - **Stack:** Vite · Tailwind v3 · **shadcn/ui** (owned, copy-in Radix primitives)
-  · **Tremor** (AreaCharts) · **Radix Colors** dark scales ·
-  TanStack Table · react-router. One unified dark theme: shadcn HSL tokens and
-  Tremor's `dark-tremor-*` tokens both map onto the Radix slate/blue palette
-  (`web/src/index.css` + `tailwind.config.js`).
+  · owned responsive SVG charts · **Radix Colors** dark scales · TanStack Table
+  · react-router. One unified dark theme maps semantic status tokens onto the
+  high-contrast Radix palette (`web/src/index.css` + `tailwind.config.js`).
 - **Subsystems (one folder each):** `layout/` (sidebar + topbar shell, language
   switcher, live indicator, resource filter), `dashboard/` (all the live widgets),
   `data/` (reusable TanStack `DataTable` + node/job column defs), `analytics/`
-  (usage heatmap + Tremor trends), `common/` + `ui/` (shared + shadcn primitives).
+  (usage heatmap + SVG trends), `charts/` (owned chart primitives), `common/` +
+  `ui/` (shared + shadcn primitives).
 - **Data flow:** a single SSE connection in a `LiveProvider` context feeds every
   widget (`useLive`); table/history/usage views fetch via `useApi`; a
   `ResourceFilterProvider` holds the All/CPU/GPU-type lens.
 - **i18n:** `en.ts` is the source of truth for the key set; `ja.ts`/`zh.ts` are
   `Record<TranslationKey, string>` so a missing key fails the type-check.
-- **Routing & bundle:** pages are `React.lazy`-split so the Tremor/Recharts
-  vendor chunk loads around them.
+- **Routing & bundle:** pages are `React.lazy`-split; removing the general chart
+  vendor avoids loading a large dependency for two compact charts.
 
 ## 8. v3 — pools-first model (correctness + user value)
 

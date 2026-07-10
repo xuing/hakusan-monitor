@@ -1,16 +1,17 @@
 // Live snapshot stream: Server-Sent Events with a polling fallback.
 import type { Snapshot } from "@/types/snapshot";
-import { api } from "./api";
+import { api, validateSnapshot } from "./api";
 
 export type LiveStatus = "live" | "polling" | "reconnecting" | "offline";
 
 interface LiveHandlers {
   onSnapshot: (s: Snapshot) => void;
   onStatus: (s: LiveStatus) => void;
+  onError?: (error: Error | null) => void;
 }
 
 /** Subscribe to live snapshots. Returns an unsubscribe function. */
-export function connectLive({ onSnapshot, onStatus }: LiveHandlers): () => void {
+export function connectLive({ onSnapshot, onStatus, onError }: LiveHandlers): () => void {
   let closed = false;
   let es: EventSource | null = null;
   let pollTimer: ReturnType<typeof setInterval> | null = null;
@@ -31,10 +32,14 @@ export function connectLive({ onSnapshot, onStatus }: LiveHandlers): () => void 
       try {
         const snap = await api.snapshot();
         if (closed) return;
+        onError?.(null);
         onStatus("polling");
         onSnapshot(snap);
-      } catch {
-        if (!closed) onStatus("offline");
+      } catch (error) {
+        if (!closed) {
+          onError?.(error instanceof Error ? error : new Error("Snapshot request failed"));
+          onStatus("offline");
+        }
       }
     };
     void tick();
@@ -48,14 +53,18 @@ export function connectLive({ onSnapshot, onStatus }: LiveHandlers): () => void 
     es = new EventSource("/api/stream");
     es.onmessage = (e) => {
       if (closed) return;
-      gotData = true;
       lastBeat = Date.now();
-      stopPolling(); // SSE is back — drop the safety-net poller
-      onStatus("live");
       try {
-        onSnapshot(JSON.parse(e.data) as Snapshot);
-      } catch {
-        /* ignore malformed frame */
+        const snap = validateSnapshot(JSON.parse(e.data));
+        gotData = true;
+        onError?.(null);
+        stopPolling(); // SSE is back — drop the safety-net poller
+        onStatus("live");
+        onSnapshot(snap);
+      } catch (error) {
+        onError?.(error instanceof Error ? error : new Error("Malformed live frame"));
+        onStatus(gotData ? "reconnecting" : "offline");
+        startPolling();
       }
     };
     // Server heartbeat (15 s). Snapshots only arrive on new samples (minutes
@@ -65,6 +74,7 @@ export function connectLive({ onSnapshot, onStatus }: LiveHandlers): () => void 
     });
     es.onerror = () => {
       if (closed) return;
+      onError?.(new Error("Live stream unavailable"));
       onStatus(gotData ? "reconnecting" : "offline");
       // Poll regardless: EventSource never recovers from non-200 responses
       // (e.g. the server's SSE connection cap), so without this the page would

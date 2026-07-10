@@ -26,10 +26,18 @@ export function nodesForPool(snap: Snapshot, poolId: string): RawNode[] {
   return snap.nodes.filter((n) => n.pool === poolId);
 }
 
-const DOWN_STATES = new Set(["DOWN", "DRAIN", "NOT_RESPONDING"]);
-/** A node is schedulable now if it isn't down/drained. */
-function nodeUp(n: RawNode): boolean {
-  return !n.state.some((s) => DOWN_STATES.has(s.toUpperCase()));
+const BLOCKING_STATES = new Set([
+  "DOWN", "NOT_RESPONDING", "DRAIN", "DRAINING", "FAIL", "FAILING",
+  "RESERVED", "PLANNED", "MAINT", "FUTURE", "UNKNOWN", "POWER_DOWN",
+  "POWERING_DOWN", "POWERED_DOWN", "POWERING_UP", "REBOOT_ISSUED", "REBOOT_REQUESTED",
+]);
+
+/** Backend-owned scheduling verdict, with a strict fallback for older snapshots. */
+export function nodeIsSchedulable(n: RawNode): boolean {
+  if (typeof n.schedulable === "boolean") return n.schedulable;
+  const states = new Set(n.state.map((s) => s.toUpperCase()));
+  return [...states].some((s) => s === "IDLE" || s === "MIXED")
+    && ![...states].some((s) => BLOCKING_STATES.has(s));
 }
 
 export interface PoolCapacity {
@@ -44,7 +52,7 @@ export function poolCapacity(snap: Snapshot, poolId: string): PoolCapacity {
   let emptiestNodeFree = 0;
   let idleNodes = 0;
   for (const n of nodesForPool(snap, poolId)) {
-    if (!nodeUp(n)) continue;
+    if (!nodeIsSchedulable(n)) continue;
     const free = Math.max(0, n.cpus - n.alloc_cpus);
     freeCores += free;
     if (free > emptiestNodeFree) emptiestNodeFree = free;

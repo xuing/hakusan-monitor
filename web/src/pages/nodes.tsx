@@ -3,7 +3,8 @@ import { Clock } from "lucide-react";
 import { NODE_HIDDEN, nodeColumns } from "@/components/data/columns-nodes";
 import { DataTable, type DataFacet } from "@/components/data/data-table";
 import { TableSkeleton } from "@/components/common/table-skeleton";
-import { useLive } from "@/hooks/use-live";
+import { LivePending } from "@/components/common/live-pending";
+import { useLive } from "@/hooks/live-context";
 import { poolLabel, useT, type TFn } from "@/i18n";
 import { poolKindGroups } from "@/components/data/table-filters";
 import { jobsOnNode } from "@/lib/derive";
@@ -23,7 +24,7 @@ export default function NodesPage() {
   const { snap } = useLive();
   const columns = useMemo(() => nodeColumns(t), [t]);
 
-  if (!snap) return <TableSkeleton />;
+  if (!snap) return <LivePending fallback={<TableSkeleton />} />;
   const nodes = snap.nodes.slice().sort((a, b) => nodeWeight(a) - nodeWeight(b) || a.name.localeCompare(b.name));
   const facets: DataFacet<RawNode>[] = [
     { columnId: "pool", label: t("jobs.filter.resource"), valueLabel: (v) => poolLabel(t, v), groups: poolKindGroups(snap, t) },

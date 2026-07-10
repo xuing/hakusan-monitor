@@ -17,12 +17,17 @@ export function useApi<T>(fetcher: () => Promise<T>, depKey: unknown = null, pol
 
   useEffect(() => {
     let alive = true;
+    let busy = false;
     const load = async () => {
+      if (busy) return;
+      busy = true;
       try {
         const data = await fetcherRef.current();
         if (alive) setState({ data, error: null, loading: false });
       } catch (e) {
         if (alive) setState((s) => ({ ...s, error: e as Error, loading: false }));
+      } finally {
+        busy = false;
       }
     };
     void load();

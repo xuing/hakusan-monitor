@@ -1,0 +1,43 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Python tests
+        run: python3 -m unittest discover -s tests -v
+      - name: Python syntax
+        run: python3 -m compileall -q backend scripts tests
+      - name: Install frontend
+        working-directory: web
+        run: npm ci
+      - name: Frontend lint
+        working-directory: web
+        run: npm run lint
+      - name: Frontend tests
+        working-directory: web
+        run: npm test
+      - name: Frontend build
+        working-directory: web
+        run: npm run build
+      - name: Dependency audit
+        working-directory: web
+        run: npm audit --audit-level=high
+      - name: Docker build
+        run: docker build -t hakusan-monitor:ci .

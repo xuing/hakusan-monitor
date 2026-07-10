@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
-import { useLive } from "@/hooks/use-live";
-import { useResourceFilter } from "@/hooks/use-resource-filter";
+import { useLive } from "@/hooks/live-context";
+import { useResourceFilter } from "@/hooks/resource-filter-context";
 import { poolLabel, useT } from "@/i18n";
 import { poolCapacity } from "@/lib/derive";
 import { schedulableGpuSlots } from "@/lib/gpu-fit";
@@ -26,6 +26,7 @@ export function ResourceFilterChips() {
       <button
         type="button"
         onClick={() => setFilter("all")}
+        aria-pressed={filter === "all"}
         className={cn(
           "inline-flex h-8 items-center rounded-md border px-3 text-xs shadow-sm transition-colors",
           filter === "all"
@@ -100,7 +101,10 @@ function FilterButton({
     : pool.kind === "gpu"
       ? (gpuSchedulable ?? 0) > 0
         ? "bg-ok"
-        : (pool.gpu?.free ?? 0) > 0
+        : (pool.gpu?.free ?? 0) > 0 || (pool.gpu?.reserved ?? 0) > 0
+          // scheduler-reserved idle cards are still reachable via the
+          // backfill window — "nothing here" (red) would contradict the
+          // gap-shell tip shown two clicks away
           ? "bg-warn"
           : "bg-bad"
       : (pool.idle_nodes ?? 0) > 0
@@ -112,17 +116,18 @@ function FilterButton({
     <button
       type="button"
       onClick={onClick}
+      aria-pressed={active}
       title={label}
       className={cn(
         "inline-flex h-7 items-center gap-1.5 rounded-md border px-2.5 text-xs shadow-sm transition-colors",
         active
           ? "border-primary bg-primary/15 font-medium text-foreground"
           : maint
-            ? "border-border border-dashed bg-background/40 text-muted-foreground/60 hover:bg-background/70 hover:text-muted-foreground"
+            ? "border-border border-dashed bg-background/60 text-muted-foreground hover:bg-background hover:text-foreground"
             : "border-border bg-background text-muted-foreground hover:border-primary/60 hover:bg-accent hover:text-foreground",
       )}
     >
-      <span className={cn("h-2 w-2 rounded-full", dot)} />
+      <span className={cn("h-2 w-2 rounded-full", dot)} aria-hidden />
       {label}
     </button>
   );

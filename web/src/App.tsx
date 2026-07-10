@@ -1,6 +1,7 @@
 import { lazy, Suspense } from "react";
 import { BrowserRouter, Route, Routes } from "react-router-dom";
 import { AppShell } from "@/components/layout/app-shell";
+import { AppErrorBoundary } from "@/components/common/app-error-boundary";
 import { Skeleton } from "@/components/ui/skeleton";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { LiveProvider } from "@/hooks/use-live";
@@ -29,6 +30,7 @@ export default function App() {
         <ResourceFilterProvider>
         <TooltipProvider delayDuration={0}>
           <BrowserRouter>
+            <AppErrorBoundary>
             <Routes>
               <Route element={<AppShell />}>
                 <Route
@@ -106,6 +108,7 @@ export default function App() {
                 <Route path="*" element={<Suspense fallback={<PageFallback />}><OverviewPage /></Suspense>} />
               </Route>
             </Routes>
+            </AppErrorBoundary>
           </BrowserRouter>
         </TooltipProvider>
         </ResourceFilterProvider>

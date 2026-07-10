@@ -2,7 +2,7 @@
 // start right now, or are the free GPUs stranded on nodes whose leftover
 // CPU/memory can't host it? Pure computation — no React, no i18n — so both the
 // Overview pool cards and the Partitions page share one verdict.
-import { expandHostlist } from "@/lib/derive";
+import { expandHostlist, nodeIsSchedulable } from "@/lib/derive";
 import { partitionPolicy, type PartitionCap } from "@/lib/slurm";
 import type { Pool, RawJob, RawNode, Snapshot } from "@/types/snapshot";
 
@@ -31,6 +31,9 @@ export interface GpuFitInfo {
   schedulable: number;
   stranded: GpuFitNode[];
   fitNodes: GpuFitNode[];
+  /** Physically idle GPUs on PLANNED nodes. They are not ordinary free
+   * capacity, but may accept a short job before the future reservation. */
+  reservedNodes: GpuFitNode[];
 }
 
 export interface GpuFitTipData {
@@ -51,16 +54,19 @@ export function gpuFitFromNodes(nodes: RawNode[], jobs: RawJob[], pool: Pool, ca
   const byNode = jobs.length ? runningJobsByNode(jobs) : new Map<string, RawJob[]>();
   const stranded: GpuFitNode[] = [];
   const fitNodes: GpuFitNode[] = [];
-  if (!pool.gpu) return { need, rawFree: 0, schedulable: 0, stranded, fitNodes };
+  const reservedNodes: GpuFitNode[] = [];
+  if (!pool.gpu) return { need, rawFree: 0, schedulable: 0, stranded, fitNodes, reservedNodes };
   const perGpuCores = need.cores;
   const perGpuMemMb = need.memMb;
   let rawFree = 0;
   let slots = 0;
   for (const node of nodes) {
-    if (node.pool !== pool.id || !nodeUp(node)) continue;
+    if (node.pool !== pool.id) continue;
+    const normallySchedulable = nodeIsSchedulable(node);
+    const backfillCandidate = nodeIsBackfillCandidate(node);
+    if (!normallySchedulable && !backfillCandidate) continue;
     const freeGpu = Math.max(0, parseGpuCount(node.gres, pool.gpu.type) - parseGpuCount(node.gres_used, pool.gpu.type));
     if (freeGpu <= 0) continue;
-    rawFree += freeGpu;
     const freeCores = Math.max(0, node.cpus - node.alloc_cpus);
     const freeMem = Math.max(0, node.real_memory - node.alloc_memory);
     const nodeSlots = Math.min(
@@ -68,7 +74,6 @@ export function gpuFitFromNodes(nodes: RawNode[], jobs: RawJob[], pool: Pool, ca
       Math.floor(freeCores / perGpuCores),
       perGpuMemMb ? Math.floor(freeMem / perGpuMemMb) : freeGpu,
     );
-    slots += nodeSlots;
     const row: GpuFitNode = {
       node,
       freeGpu,
@@ -80,17 +85,24 @@ export function gpuFitFromNodes(nodes: RawNode[], jobs: RawJob[], pool: Pool, ca
       missingMemMb: perGpuMemMb ? Math.max(0, perGpuMemMb - freeMem) : 0,
       occupants: byNode.get(node.name) ?? [],
     };
-    if (nodeSlots > 0) fitNodes.push(row);
-    else stranded.push(row);
+    if (backfillCandidate && !normallySchedulable) {
+      reservedNodes.push(row);
+    } else {
+      rawFree += freeGpu;
+      slots += nodeSlots;
+      if (nodeSlots > 0) fitNodes.push(row);
+      else stranded.push(row);
+    }
   }
   stranded.sort((a, b) => shortageScore(a) - shortageScore(b) || a.node.name.localeCompare(b.node.name));
   fitNodes.sort((a, b) => b.freeGpu - a.freeGpu || b.freeCores - a.freeCores || b.freeMemMb - a.freeMemMb);
-  return { need, rawFree, schedulable: slots, stranded, fitNodes };
+  reservedNodes.sort((a, b) => b.freeGpu - a.freeGpu || b.freeCores - a.freeCores || b.freeMemMb - a.freeMemMb);
+  return { need, rawFree, schedulable: slots, stranded, fitNodes, reservedNodes };
 }
 
 export function gpuFitWithMemOverride(fit: GpuFitInfo, memMb: number): GpuFitInfo {
   if (memMb <= 0) return fit;
-  const rows = [...fit.fitNodes, ...fit.stranded].map((row) => {
+  const withSlots = (row: GpuFitNode) => {
     const nodeSlots = Math.min(
       row.freeGpu,
       Math.floor(row.freeCores / fit.need.cores),
@@ -103,9 +115,12 @@ export function gpuFitWithMemOverride(fit: GpuFitInfo, memMb: number): GpuFitInf
       missingGpu: Math.max(0, fit.need.gpus - row.freeGpu),
       nodeSlots,
     };
-  });
+  };
+  const rows = [...fit.fitNodes, ...fit.stranded].map(withSlots);
+  const reservedRows = fit.reservedNodes.map(withSlots);
   const fitNodes = rows.filter((row) => row.nodeSlots > 0).map(({ nodeSlots: _nodeSlots, ...row }) => row);
   const stranded = rows.filter((row) => row.nodeSlots <= 0).map(({ nodeSlots: _nodeSlots, ...row }) => row);
+  const reservedNodes = reservedRows.map(({ nodeSlots: _nodeSlots, ...row }) => row);
   stranded.sort((a, b) => shortageScore(a) - shortageScore(b) || a.node.name.localeCompare(b.node.name));
   fitNodes.sort((a, b) => b.freeGpu - a.freeGpu || b.freeCores - a.freeCores || b.freeMemMb - a.freeMemMb);
   return {
@@ -114,7 +129,19 @@ export function gpuFitWithMemOverride(fit: GpuFitInfo, memMb: number): GpuFitInf
     schedulable: rows.reduce((sum, row) => sum + Math.max(0, row.nodeSlots), 0),
     fitNodes,
     stranded,
+    reservedNodes,
   };
+}
+
+/** PLANNED is a future scheduler reservation, not an outage. Such a node must
+ * stay out of ordinary free totals, but Slurm may backfill its idle resources
+ * when the request is guaranteed to finish before the reservation starts. */
+function nodeIsBackfillCandidate(node: RawNode) {
+  const states = new Set(node.state.map((state) => String(state).toUpperCase()));
+  if (!states.has("PLANNED")) return false;
+  return !["DOWN", "NOT_RESPONDING", "DRAIN", "DRAINING", "FAIL", "FAILING", "MAINT",
+    "POWER_DOWN", "POWERING_DOWN", "POWERED_DOWN", "REBOOT_ISSUED", "REBOOT_REQUESTED"]
+    .some((state) => states.has(state));
 }
 
 function gpuFitNeed(nodes: RawNode[], pool: Pool, cap: PartitionCap, partition: string): GpuFitNeed {
@@ -332,23 +359,23 @@ export function gpuBackfillTipCommand(fit: GpuFitInfo, pool: Pool, pendingActive
   if (fit.schedulable > 0) {
     // Slots exist but every one is spoken for — a short job can still sneak in.
     if (fitHasClearSlot(fit, pendingActive, nowMs, requiredSec)) return null;
-    for (const row of fit.fitNodes) {
-      const win = backfillWindow(row, pendingActive, nowMs);
-      if (win) return { node: row.node.name, mem: "", t: fmtWalltime(win.suggestSec), untilMs: win.untilMs };
-    }
-    return null;
   }
-  // prefer the widest gap: a node with a 30-minute window must not hide a
-  // sibling whose reservation is half a day out
+  // Prefer the widest real scheduler window. PLANNED rows live in
+  // reservedNodes (and remain excluded from ordinary free/schedulable totals).
   let bestTip: GpuBackfillTipData | null = null;
   let bestSec = 0;
-  for (const row of strandedCandidates(fit)) {
-    const memGb = conservativeMemGb(row.freeMemMb);
-    if (memGb <= 0) continue;
+  for (const row of [...fit.reservedNodes, ...fit.fitNodes, ...strandedCandidates(fit)]) {
+    if (row.freeGpu < fit.need.gpus || row.freeCores < fit.need.cores) continue;
+    let mem = "";
+    if (fit.need.memMb > 0 && row.freeMemMb < fit.need.memMb) {
+      const memGb = conservativeMemGb(row.freeMemMb);
+      if (memGb <= 0) continue;
+      mem = `${memGb}G`;
+    }
     const win = backfillWindow(row, pendingActive, nowMs);
     if (!win || win.suggestSec <= bestSec) continue;
     bestSec = win.suggestSec;
-    bestTip = { node: row.node.name, mem: `${memGb}G`, t: fmtWalltime(win.suggestSec), untilMs: win.untilMs };
+    bestTip = { node: row.node.name, mem, t: fmtWalltime(win.suggestSec), untilMs: win.untilMs };
   }
   return bestTip;
 }
@@ -358,7 +385,7 @@ export function gpuBackfillTipCommand(fit: GpuFitInfo, pool: Pool, pendingActive
  *  once the user picks a short enough -t. */
 export function withinBackfillWindow(fit: GpuFitInfo, pendingActive: RawJob[], nowMs: number, userTimeSec: number): boolean {
   if (userTimeSec <= 0) return false;
-  return fit.fitNodes.some((row) => {
+  return [...fit.fitNodes, ...fit.reservedNodes].some((row) => {
     const win = backfillWindow(row, pendingActive, nowMs);
     return win !== null && userTimeSec <= win.suggestSec;
   });
@@ -417,8 +444,4 @@ export function parseGpuCount(text: string, type: string) {
   const m = text.match(typed) ?? text.match(/gpu:[A-Za-z0-9_-]+:?(\d+)|gres\/gpu:[A-Za-z0-9_-]+=(\d+)|gpu:(\d+)/);
   if (!m) return 0;
   return Number(m[1] ?? m[2] ?? m[3] ?? 0);
-}
-
-export function nodeUp(node: RawNode) {
-  return !node.state.some((s) => ["DOWN", "DRAIN", "NOT_RESPONDING"].includes(String(s).toUpperCase()));
 }

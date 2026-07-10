@@ -68,6 +68,7 @@ export function UsagePanel() {
                   key={item}
                   type="button"
                   onClick={() => setMetric(item)}
+                  aria-pressed={metric === item}
                   className={cn(
                     "rounded-[4px] px-2.5 py-1 text-xs transition-colors",
                     metric === item

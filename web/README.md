@@ -1,7 +1,7 @@
 # Hakusan Monitor — web
 
 The frontend: a **React + TypeScript** SPA built with **Vite, Tailwind CSS,
-shadcn/ui, Tremor and Radix Colors**. It consumes the Python backend's JSON API
+shadcn/ui, lightweight local SVG charts and Radix Colors**. It consumes the Python backend's JSON API
 and is served (as a static build in `web/dist`) by that same backend.
 
 ## Develop
@@ -11,11 +11,12 @@ npm install
 npm run dev      # http://localhost:5173 — proxies /api → :8787 (run the backend too)
 ```
 
-## Build / lint
+## Build / lint / test
 
 ```bash
 npm run build    # → web/dist (the backend serves this)
 npm run lint     # oxlint
+npm test         # Vitest unit tests
 ```
 
 ## Structure
@@ -36,5 +37,5 @@ src/
   types/         snapshot + raw API types
 ```
 
-The dark theme is built on **Radix Colors** scales (`src/index.css`); shadcn and
-Tremor tokens both map onto it in `tailwind.config.js`.
+The dark theme is built on **Radix Colors** scales (`src/index.css`); semantic
+status tokens map to the accessible high-contrast steps in `tailwind.config.js`.

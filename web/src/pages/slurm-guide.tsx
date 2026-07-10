@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import { Check, Copy, ExternalLink } from "lucide-react";
-import { useCopied } from "@/components/common/copy-button";
+import { useCopied } from "@/hooks/use-copied";
 import { SectionCard } from "@/components/common/section-card";
 import { Tag } from "@/components/common/tag";
 import { Button } from "@/components/ui/button";

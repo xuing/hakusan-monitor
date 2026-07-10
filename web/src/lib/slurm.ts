@@ -6,15 +6,6 @@ export type Tone = "ok" | "warn" | "bad" | "info" | "neutral";
 /** Utilization 0..1 -> a status tone. */
 export const utilTone = (u: number): Tone => (u >= 0.85 ? "bad" : u >= 0.6 ? "warn" : "ok");
 
-/** tone -> Tremor chart color name. */
-export const toneTremor: Record<Tone, string> = {
-  ok: "emerald",
-  warn: "amber",
-  bad: "rose",
-  info: "blue",
-  neutral: "slate",
-};
-
 /** tone -> tailwind classes (defined via Radix scales in tailwind.config.js). */
 export const toneClass: Record<Tone, { text: string; bg: string; dot: string }> = {
   ok: { text: "text-ok-fg", bg: "bg-ok-soft", dot: "bg-ok" },

@@ -3,7 +3,8 @@ import type { ColumnDef } from "@tanstack/react-table";
 import { JOB_HIDDEN, jobColumns } from "@/components/data/columns-jobs";
 import { DataTable, type DataFacet } from "@/components/data/data-table";
 import { TableSkeleton } from "@/components/common/table-skeleton";
-import { useLive } from "@/hooks/use-live";
+import { LivePending } from "@/components/common/live-pending";
+import { useLive } from "@/hooks/live-context";
 import { poolLabel, useT, type TFn } from "@/i18n";
 import type { TranslationKey } from "@/i18n/en";
 import type { RawJob, Snapshot } from "@/types/snapshot";
@@ -36,7 +37,7 @@ export default function JobsPage() {
     },
   ], [snap, t]);
 
-  if (!snap) return <TableSkeleton />;
+  if (!snap) return <LivePending fallback={<TableSkeleton />} />;
   const jobs: JobTableRow[] = snap.jobs.map((j) => ({ ...j, resource_pool: jobResourcePool(j, snap) }));
   const facets: DataFacet<JobTableRow>[] = [
     {

@@ -35,6 +35,23 @@ journalctl --user -u hakusan-monitor -f   # logs
 
 Open `http://localhost:8787` (or the box's IP / Tailscale address).
 
+### Updating an existing systemd deployment
+
+Build the static frontend first, then restart the backend so the API and the
+browser bundle switch versions together:
+
+```bash
+cd ~/temp/hakusan-monitor
+(cd web && npm ci && npm run build)
+systemctl --user restart hakusan-monitor
+curl -fsS http://127.0.0.1:8787/api/health
+```
+
+Do not treat a successful frontend build as a completed deployment: the
+long-running Python process must also be restarted. The frontend accepts the
+immediately preceding unversioned snapshot during this short hand-off, but a
+restart is still required to activate backend fixes.
+
 ## Option B — Docker Compose
 
 ```bash
@@ -44,6 +61,8 @@ docker logs -f hakusan-monitor
 ```
 
 `data/` (the SQLite history) is bind-mounted so it survives container rebuilds.
+The Docker base images are digest-pinned; Dependabot proposes reviewed digest
+and frontend dependency updates weekly.
 
 ## SSH auth — the thing that actually matters for "always on"
 
@@ -73,11 +92,16 @@ service account. (Ask and I'll wire this up.)
 - The service is read-only and login-node-friendly: one compact query every
   `HM_SAMPLE_INTERVAL` seconds (default 300 = 5 min) over a reused SSH connection.
 - Login-node health sampling is also read-only and TTL-paced by
-  `HM_LOGIN_INTERVAL` (default 300 s), collecting `/proc`, `df`, and compact `ps`
+  `HM_LOGIN_INTERVAL` (default 300 s), collecting `/proc`, byte/inode `df`, and compact `ps`
   summaries for the Login nodes page.
 - Set `TZ=Asia/Tokyo` (both unit and compose already do) so *Usage patterns*
   hour-of-day is in cluster time.
 - Change the port with `HM_PORT`; usernames are shown by default. Set
   `HM_MASK_USERS=1` to anonymize them.
+- Cluster, login-node, and anonymous visit retention are independently
+  configurable with `HM_RETAIN_DAYS`, `HM_LOGIN_RETAIN_DAYS`, and
+  `HM_VISIT_RETAIN_DAYS`.
+- Leave `HM_TRUST_PROXY=0` unless a trusted reverse proxy overwrites
+  `X-Forwarded-For`; set `HM_ACCESS_LOG=1` only when request logging is useful.
 - For public or off-campus access, put it behind a reverse proxy with TLS and
   access control, and enable `HM_MASK_USERS=1` at minimum.

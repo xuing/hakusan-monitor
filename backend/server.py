@@ -15,7 +15,7 @@ decoupled from requests (true real-time push + durable history for peak/trough).
 Run:  python3 backend/server.py     (see env vars below)
 """
 from __future__ import annotations
-import hashlib, json, math, os, sys, time, queue, threading
+import gzip, json, math, os, queue, re, secrets, sys, threading, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
@@ -95,7 +95,11 @@ CFG = {
     "mock_dir":   env("HM_MOCK_DIR", os.path.join(ROOT, "mock")),
     "db":         env("HM_DB", os.path.join(ROOT, "data", "hakusan.sqlite")),
     "retain_days": int(env("HM_RETAIN_DAYS", "60")),
+    "login_retain_days": int(env("HM_LOGIN_RETAIN_DAYS", env("HM_RETAIN_DAYS", "60"))),
+    "visit_retain_days": int(env("HM_VISIT_RETAIN_DAYS", "365")),
     "max_sse":    int(env("HM_MAX_SSE", "64")),   # cap concurrent SSE connections
+    "trust_proxy": env("HM_TRUST_PROXY", "0") in ("1", "true", "yes"),
+    "access_log": env("HM_ACCESS_LOG", "0") in ("1", "true", "yes"),
     "login_nodes": env("HM_LOGIN_NODES", ""),
     "login_interval": float(env("HM_LOGIN_INTERVAL", env("HM_SAMPLE_INTERVAL", "300"))),
     "login_top_n": int(env("HM_LOGIN_TOP_N", "12")),
@@ -130,7 +134,11 @@ class Engine:
             mock_dir=cfg["mock_dir"], interval=cfg["login_interval"],
             timeout=cfg["login_timeout"], top_n=cfg["login_top_n"],
             show_args=cfg["login_show_args"], mask_users=cfg["mask_users"])
-        self.store = Store(cfg["db"], retain_days=cfg["retain_days"])
+        self.store = Store(
+            cfg["db"], retain_days=cfg["retain_days"],
+            login_retain_days=cfg["login_retain_days"],
+            visit_retain_days=cfg["visit_retain_days"],
+        )
         self.max_sse = cfg["max_sse"]
         self.latest = None
         self.error = None
@@ -155,10 +163,20 @@ class Engine:
             nodes, squeue = self.src.fetch()
             self.sing_version = self.src.singularity   # captured in the same round trip
             raw_nodes = nodes.get("nodes", [])
+            # same last-wins dedupe as normalize(): the per-node array the
+            # client iterates must never disagree with the aggregates
+            by_name = {}
+            for nd in raw_nodes:
+                by_name[nd.get("name") or id(nd)] = nd
+            raw_nodes = list(by_name.values())
             # Tag each raw node with its hardware pool here — single source of truth;
-            # the client reads node.pool instead of re-deriving the name→pool mapping.
+            # the client also receives the normalized scheduling verdict instead
+            # of re-deriving Slurm state semantics in multiple TypeScript modules.
             for nd in raw_nodes:
                 nd["pool"] = nz.node_pool(nd.get("name", ""))
+                states = nz.state_list(nd)
+                nd["state_bucket"] = nz.bucket_state(states)
+                nd["schedulable"] = nz.is_schedulable(states)
             jobs = squeue.get("jobs", [])
             if self.cfg["mask_users"]:   # honour the privacy flag in raw data too
                 jobs = [{**j, "user_name": nz.mask_user(j.get("user_name", ""), True)} for j in jobs]
@@ -169,6 +187,7 @@ class Engine:
                         source=self.cfg["source"], stale=False)
             snap["cpu_submit_probes"] = squeue.get("cpu_submit_probes", [])
             snap["cpu_submit_probes_generated_at"] = squeue.get("cpu_submit_probes_generated_at", 0)
+            snap["cpu_submit_probe_interval"] = self.cfg["cpu_probe_interval"]
             if self.src.policy_snapshot:
                 snap["policy"] = self.src.policy_snapshot
             # ship the raw data in the same payload — one pull feeds tables,
@@ -256,7 +275,13 @@ class Engine:
             try:
                 q.put_nowait(snap)
             except queue.Full:
-                pass
+                # Slow subscribers need the newest truth, not four increasingly
+                # stale snapshots. Drop the oldest frame and enqueue latest.
+                try:
+                    q.get_nowait()
+                    q.put_nowait(snap)
+                except (queue.Empty, queue.Full):
+                    pass
 
     def meta(self):
         snap = self.latest or {}
@@ -278,14 +303,19 @@ class Engine:
 
     def health(self):
         ok = self.latest is not None and not self.error
+        age = round(time.time() - self.latest["generated_at"], 1) if self.latest else None
         return {"ok": ok, "source": self.cfg["source"], "error": self.error,
-                "age_s": round(time.time() - self.latest["generated_at"], 1)
-                if self.latest else None}
+                "stale": bool(self.latest and self.latest.get("stale")), "age_s": age}
 
     def login_snapshot(self):
         if self.login_nodes is None:
-            payload, _ = self.login.fetch(time.time())
-            self.login_nodes = {**payload, "top_users": summarize_users(payload.get("nodes", []))}
+            # Never multiply SSH work by request count. The background sampler is
+            # the sole collector; during its first pass return an explicit warmup.
+            return {"generated_at": 0, "age_s": 0,
+                    "interval": self.cfg["login_interval"],
+                    "configured": bool(self.cfg["login_nodes"]) or self.cfg["source"] in ("mock", "local"),
+                    "nodes": [], "top_users": [], "stale": True,
+                    "warming_up": True}
         s = dict(self.login_nodes)
         s["age_s"] = round(time.time() - s.get("generated_at", time.time()), 1)
         return s
@@ -297,7 +327,7 @@ class Engine:
 MIME = {".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8",
         ".css": "text/css; charset=utf-8", ".json": "application/json; charset=utf-8",
         ".svg": "image/svg+xml", ".png": "image/png", ".ico": "image/x-icon",
-        ".woff2": "font/woff2"}
+        ".woff2": "font/woff2", ".txt": "text/plain; charset=utf-8"}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -306,16 +336,23 @@ class Handler(BaseHTTPRequestHandler):
     engine: "Engine"  # injected in main() before serving
 
     def log_message(self, format, *args):  # noqa: A002 — silence access log
-        pass
+        if CFG["access_log"]:
+            super().log_message(format, *args)
 
     # ---- helpers ----
     def _json(self, code, body):
         data = json.dumps(body).encode()
+        compressed = len(data) >= 1024 and "gzip" in self.headers.get("Accept-Encoding", "").lower()
+        if compressed:
+            data = gzip.compress(data, compresslevel=5)
         self.send_response(code)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(data)))
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Cache-Control", "no-store")
+        if compressed:
+            self.send_header("Content-Encoding", "gzip")
+            self.send_header("Vary", "Accept-Encoding")
         self.end_headers()
         if self.command != "HEAD":
             self.wfile.write(data)
@@ -335,12 +372,23 @@ class Handler(BaseHTTPRequestHandler):
         except (BrokenPipeError, ConnectionResetError):
             pass
         except Exception as e:
+            request_id = secrets.token_hex(4)
+            print(json.dumps({"event": "http_error", "request_id": request_id,
+                              "path": path, "type": type(e).__name__, "error": str(e)}),
+                  file=sys.stderr, flush=True)
             try:
-                self._json(500, {"error": str(e)})
+                self._json(500, {"error": "internal server error", "request_id": request_id})
             except Exception:
                 pass
 
-    do_HEAD = do_GET
+    def do_HEAD(self):
+        if urlparse(self.path).path == "/api/stream":
+            self.send_response(405)
+            self.send_header("Allow", "GET")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
+        self.do_GET()
 
     def _api(self, path):
         eng = self.engine
@@ -348,8 +396,8 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/snapshot":
             try:
                 return self._json(200, eng.snapshot())
-            except Exception as e:
-                return self._json(503, {"error": str(e), "source": CFG["source"]})
+            except Exception:
+                return self._json(503, {"error": "snapshot unavailable", "source": CFG["source"]})
         if path == "/api/history":
             hours = query_float(q, "hours", 24, 1, 168)
             until = int(time.time())
@@ -424,9 +472,9 @@ class Handler(BaseHTTPRequestHandler):
             ua = self.headers.get("User-Agent", "")
             if any(m in ua.lower() for m in ("bot", "crawl", "spider", "curl", "wget")):
                 return
-            fwd = self.headers.get("X-Forwarded-For", "")
+            fwd = self.headers.get("X-Forwarded-For", "") if CFG["trust_proxy"] else ""
             ip = fwd.split(",")[0].strip() if fwd else self.client_address[0]
-            visitor = hashlib.sha256(f"{ip}|{ua}".encode()).hexdigest()[:16]
+            visitor = self.engine.store.visitor_id(ip, ua)
             self.engine.store.record_visit(visitor, time.time())
         except Exception:
             pass
@@ -436,9 +484,15 @@ class Handler(BaseHTTPRequestHandler):
         rel = "index.html" if path in ("/", "") else path.lstrip("/")
         full = os.path.realpath(os.path.join(root, rel))
         # contain to FRONTEND (commonpath isn't fooled by sibling-prefix dirs)
-        if os.path.commonpath([full, root]) != root or not os.path.isfile(full):
-            full = os.path.join(root, "index.html")   # SPA fallback
-            if not os.path.isfile(full):
+        contained = os.path.commonpath([full, root]) == root
+        if not contained or not os.path.isfile(full):
+            # SPA fallback is only for extensionless browser navigations. Missing
+            # assets and robots.txt must be honest 404s, never index.html with 200.
+            accepts_html = "text/html" in self.headers.get("Accept", "").lower()
+            extensionless = not os.path.splitext(rel)[1]
+            if contained and accepts_html and extensionless:
+                full = os.path.join(root, "index.html")
+            if not os.path.isfile(full) or not (contained and accepts_html and extensionless):
                 return self._json(404, {"error": "not found"})
         # A served index.html is one SPA page entry — assets/API calls don't count.
         if os.path.basename(full) == "index.html" and self.command == "GET":
@@ -446,11 +500,20 @@ class Handler(BaseHTTPRequestHandler):
         with open(full, "rb") as f:
             data = f.read()
         ext = os.path.splitext(full)[1]
-        cacheable = ext in (".js", ".css", ".svg", ".png", ".woff2")
+        compressed = (len(data) >= 1024 and ext in (".html", ".js", ".css", ".json", ".svg")
+                      and "gzip" in self.headers.get("Accept-Encoding", "").lower())
+        if compressed:
+            data = gzip.compress(data, compresslevel=6)
+        hashed_asset = bool(re.search(r"-[A-Za-z0-9_-]{8,}\.(?:js|css|svg|png|woff2)$", os.path.basename(full)))
         self.send_response(200)
         self.send_header("Content-Type", MIME.get(ext, "application/octet-stream"))
         self.send_header("Content-Length", str(len(data)))
-        self.send_header("Cache-Control", "public, max-age=60" if cacheable else "no-store")
+        self.send_header("Cache-Control", "public, max-age=31536000, immutable" if hashed_asset
+                         else "public, max-age=3600" if ext in (".svg", ".png", ".woff2")
+                         else "no-store")
+        if compressed:
+            self.send_header("Content-Encoding", "gzip")
+            self.send_header("Vary", "Accept-Encoding")
         self.end_headers()
         if self.command != "HEAD":
             self.wfile.write(data)
@@ -459,8 +522,8 @@ class Handler(BaseHTTPRequestHandler):
 def main():
     eng = Engine(CFG)
     Handler.engine = eng
-    # Sample in the background so the port binds immediately; the first request
-    # lazily triggers a fetch if the background sample hasn't landed yet.
+    # Sample in the background so the port binds immediately; early requests get
+    # an explicit warming-up response and never perform collection themselves.
     threading.Thread(target=eng.run, daemon=True).start()
     httpd = ThreadingHTTPServer(("0.0.0.0", CFG["port"]), Handler)
     print(f"Hakusan Monitor · source={CFG['source']} · "

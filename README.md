@@ -18,7 +18,7 @@ cluster is usually busy, and how to run your job (including containers).
 - **Multilingual and theme-aware** — 日本語 / English / 中文; the theme follows
   the browser unless a user chooses one manually.
 - **Zero-dependency backend** — Python 3 standard library only. The frontend is a
-  modern React app (Vite + Tailwind + shadcn/ui + Tremor + Radix Colors) built to
+  modern React app (Vite + Tailwind + shadcn/ui + lightweight SVG charts + Radix Colors) built to
   static files the backend serves.
 
 ## Architecture
@@ -43,14 +43,14 @@ from one result: the in-memory *latest* snapshot (real-time), the SQLite store
 - `backend/sources.py` — acquire raw Slurm data (ssh / local / mock) as compact
   text, parse to a JSON-shaped dict.
 - `backend/login_nodes.py` — optional Hakusan 1 / Hakusan 2 health sampler:
-  `/proc`, `df`, `iostat` if available, compact `ps`, top processes,
+  `/proc`, byte and inode `df`, `iostat` if available, compact `ps`, top processes,
   top users.
 - `backend/normalize.py` — pure transform: dedupe overlapping partitions by node,
   count GPUs (incl. ones offline for maintenance), per-partition pressure score.
 - `backend/store.py` — SQLite: raw `samples` (retention-pruned) + `samples_hourly`
   rollup (kept) → history & peak/trough analytics.
 - `backend/server.py` — sampler thread + SSE + REST + static file serving.
-- `web/` — React + TypeScript SPA (Vite, Tailwind, shadcn/ui, Tremor, Radix
+- `web/` — React + TypeScript SPA (Vite, Tailwind, shadcn/ui, local SVG charts, Radix
   Colors), built to `web/dist` and served by `server.py`. See `web/README.md`.
 
 ## Pages
@@ -180,6 +180,7 @@ npm install
 npm run dev      # http://localhost:5173, proxies /api → :8787 (run the backend too)
 npm run build    # → web/dist (what the backend serves in production)
 npm run lint     # oxlint
+npm test         # Vitest domain/helper tests
 ```
 
 ## Configuration (env vars)
@@ -199,14 +200,19 @@ npm run lint     # oxlint
 | `HM_LOGIN_TIMEOUT` | `25` | per-node login health command timeout, seconds |
 | `HM_MASK_USERS` | `0` | `1` anonymizes usernames in the public view |
 | `HM_DB` | `data/hakusan.sqlite` | time-series database path |
-| `HM_RETAIN_DAYS` | `60` | raw-sample retention (hourly rollup kept beyond) |
+| `HM_RETAIN_DAYS` | `60` | cluster raw-sample retention in days (hourly rollup kept beyond) |
+| `HM_LOGIN_RETAIN_DAYS` | `HM_RETAIN_DAYS` | login-node sample retention in days |
+| `HM_VISIT_RETAIN_DAYS` | `365` | anonymous daily visit-counter retention in days |
+| `HM_MAX_SSE` | `64` | maximum concurrent SSE clients |
+| `HM_TRUST_PROXY` | `0` | trust `X-Forwarded-For` only when set to `1` behind a trusted proxy |
+| `HM_ACCESS_LOG` | `0` | enable HTTP access logging when set to `1` |
 | `HM_FRONTEND` | `web/dist` | directory of the built web app to serve |
 
 ## API
 
 | Endpoint | Purpose |
 |---|---|
-| `GET /api/snapshot` | current normalized snapshot (real-time) |
+| `GET /api/snapshot` | current normalized, versioned snapshot (real-time) |
 | `GET /api/stream` | **SSE** — pushes the snapshot on every new sample |
 | `GET /api/history?hours=24` | down-sampled time-series for trend charts |
 | `GET /api/login-nodes` | current Hakusan login-node health: load, CPU, memory, disk pressure, processes, users |

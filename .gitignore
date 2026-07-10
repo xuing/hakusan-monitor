@@ -18,3 +18,6 @@ web/dist/
 .vscode/
 # session-local (not part of the project)
 .remember/
+
+# repo-audit working material (reports/screenshots) — publish deliberately, not by default
+audit/

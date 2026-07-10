@@ -1,4 +1,4 @@
-import { AreaChart } from "@tremor/react";
+import { AreaChart } from "@/components/charts/simple-charts";
 import { ChartPlaceholder } from "@/components/common/chart-placeholder";
 import { Empty } from "@/components/common/empty";
 import { SectionCard } from "@/components/common/section-card";

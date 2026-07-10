@@ -1,4 +1,4 @@
-import { AreaChart } from "@tremor/react";
+import { AreaChart } from "@/components/charts/simple-charts";
 import { AlertTriangle, Cpu, HardDrive, Loader2, MemoryStick, Server } from "lucide-react";
 import type { ReactNode } from "react";
 import { Empty } from "@/components/common/empty";
@@ -41,6 +41,7 @@ export default function LoginNodesPage() {
   const nodeIds = okNodes.map((n) => n.id);
 
   if (current.loading && !data) return <LoadingState />;
+  if (data?.warming_up) return <LoadingState />;
   if (current.error && !data) return <LoginErrorState message={current.error.message} />;
 
   return (

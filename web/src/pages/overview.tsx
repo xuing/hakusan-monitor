@@ -6,13 +6,14 @@ import { ReleasesPanel } from "@/components/dashboard/releases-panel";
 import { ResourcePools } from "@/components/dashboard/resource-pools";
 import { TopUsers } from "@/components/dashboard/top-users";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useLive } from "@/hooks/use-live";
-import { useResourceFilter } from "@/hooks/use-resource-filter";
+import { LivePending } from "@/components/common/live-pending";
+import { useLive } from "@/hooks/live-context";
+import { useResourceFilter } from "@/hooks/resource-filter-context";
 
 export default function OverviewPage() {
   const { snap } = useLive();
   const { filter } = useResourceFilter();
-  if (!snap) return <LoadingSkeleton />;
+  if (!snap) return <LivePending fallback={<LoadingSkeleton />} />;
 
   return (
     <div className="space-y-4">

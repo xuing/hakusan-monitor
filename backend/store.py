@@ -8,7 +8,9 @@ Two tables, the classic raw + rollup TSDB pattern:
 Thread-safe: one connection per thread (works under ThreadingHTTPServer).
 """
 from __future__ import annotations
-import os, json, sqlite3, threading, time
+import hashlib, os, json, secrets, sqlite3, threading, time
+
+SCHEMA_VERSION = 1
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS samples (
@@ -51,6 +53,10 @@ CREATE TABLE IF NOT EXISTS visits (
   hits    INTEGER NOT NULL DEFAULT 1,
   PRIMARY KEY (day, visitor)
 );
+CREATE TABLE IF NOT EXISTS app_meta (
+  key   TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
 """
 
 
@@ -68,13 +74,19 @@ def _metrics(snap):
 
 
 class Store:
-    def __init__(self, path, retain_days=60):
+    def __init__(self, path, retain_days=60, login_retain_days=None, visit_retain_days=365):
         self.path = path
         self.retain_days = retain_days
+        self.login_retain_days = retain_days if login_retain_days is None else login_retain_days
+        self.visit_retain_days = visit_retain_days
         self._last_ts = None        # guard against same-second double-counting
         self._local = threading.local()
+        self._record_lock = threading.Lock()
         os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-        self._conn().executescript(SCHEMA)
+        c = self._conn()
+        c.executescript(SCHEMA)
+        c.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
+        self._visitor_salt = self._meta_secret("visitor_salt")
 
     def _conn(self):
         c = getattr(self._local, "conn", None)
@@ -88,38 +100,41 @@ class Store:
 
     # ---- write -------------------------------------------------------------
     def record(self, snap, ts):
-        if ts == self._last_ts:   # same-second resample would double-count the hourly rollup
-            return
-        self._last_ts = ts
-        m = _metrics(snap)
-        detail = json.dumps({"pools": snap.get("pools"), "gpus": snap.get("gpus")})
-        c = self._conn()
-        with c:
-            c.execute(
-                """INSERT OR REPLACE INTO samples
-                   (ts,cpu_util,gpu_util,mem_util,cpus_total,cpus_alloc,
-                    gpus_total,gpus_used,nodes_total,nodes_avail,nodes_down,
-                    running,pending,detail)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-                (ts, m["cpu_util"], m["gpu_util"], m["mem_util"], m["cpus_total"],
-                 m["cpus_alloc"], m["gpus_total"], m["gpus_used"], m["nodes_total"],
-                 m["nodes_avail"], m["nodes_down"], m["running"], m["pending"], detail))
-            hour = ts - ts % 3600
-            c.execute(
-                """INSERT INTO samples_hourly
-                     (hour,n,cpu_avg,cpu_max,gpu_avg,gpu_max,pending_avg,pending_max,running_avg)
-                   VALUES (?,1,?,?,?,?,?,?,?)
-                   ON CONFLICT(hour) DO UPDATE SET
-                     cpu_avg     = (cpu_avg*n + excluded.cpu_avg)/(n+1),
-                     cpu_max     = max(cpu_max, excluded.cpu_max),
-                     gpu_avg     = (gpu_avg*n + excluded.gpu_avg)/(n+1),
-                     gpu_max     = max(gpu_max, excluded.gpu_max),
-                     pending_avg = (pending_avg*n + excluded.pending_avg)/(n+1),
-                     pending_max = max(pending_max, excluded.pending_max),
-                     running_avg = (running_avg*n + excluded.running_avg)/(n+1),
-                     n = n+1""",
-                (hour, m["cpu_util"], m["cpu_util"], m["gpu_util"], m["gpu_util"],
-                 m["pending"], m["pending"], m["running"]))
+        with self._record_lock:
+            if ts == self._last_ts:   # same-second resample would double-count the hourly rollup
+                return
+            self._last_ts = ts
+            m = _metrics(snap)
+            detail = json.dumps({"pools": snap.get("pools"), "gpus": snap.get("gpus")})
+            c = self._conn()
+            with c:
+                c.execute(
+                    """INSERT OR REPLACE INTO samples
+                       (ts,cpu_util,gpu_util,mem_util,cpus_total,cpus_alloc,
+                        gpus_total,gpus_used,nodes_total,nodes_avail,nodes_down,
+                        running,pending,detail)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    (ts, m["cpu_util"], m["gpu_util"], m["mem_util"], m["cpus_total"],
+                     m["cpus_alloc"], m["gpus_total"], m["gpus_used"], m["nodes_total"],
+                     m["nodes_avail"], m["nodes_down"], m["running"], m["pending"], detail),
+                )
+                hour = ts - ts % 3600
+                c.execute(
+                    """INSERT INTO samples_hourly
+                         (hour,n,cpu_avg,cpu_max,gpu_avg,gpu_max,pending_avg,pending_max,running_avg)
+                       VALUES (?,1,?,?,?,?,?,?,?)
+                       ON CONFLICT(hour) DO UPDATE SET
+                         cpu_avg     = (cpu_avg*n + excluded.cpu_avg)/(n+1),
+                         cpu_max     = max(cpu_max, excluded.cpu_max),
+                         gpu_avg     = (gpu_avg*n + excluded.gpu_avg)/(n+1),
+                         gpu_max     = max(gpu_max, excluded.gpu_max),
+                         pending_avg = (pending_avg*n + excluded.pending_avg)/(n+1),
+                         pending_max = max(pending_max, excluded.pending_max),
+                         running_avg = (running_avg*n + excluded.running_avg)/(n+1),
+                         n = n+1""",
+                    (hour, m["cpu_util"], m["cpu_util"], m["gpu_util"], m["gpu_util"],
+                     m["pending"], m["pending"], m["running"]),
+                )
 
     def record_login(self, payload, ts):
         nodes = [n for n in (payload or {}).get("nodes", []) if n.get("ok")]
@@ -166,51 +181,66 @@ class Store:
                    ON CONFLICT(day, visitor) DO UPDATE SET hits = hits + 1""",
                 (day, visitor))
 
+    def visitor_id(self, ip, user_agent):
+        """Installation-keyed pseudonymous visitor id; raw network data is never stored."""
+        payload = f"{ip}\0{user_agent}".encode()
+        return hashlib.blake2b(payload, key=bytes.fromhex(self._visitor_salt), digest_size=16).hexdigest()
+
+    def _meta_secret(self, key):
+        c = self._conn()
+        row = c.execute("SELECT value FROM app_meta WHERE key = ?", (key,)).fetchone()
+        if row:
+            return row["value"]
+        value = secrets.token_hex(32)
+        with c:
+            c.execute("INSERT OR IGNORE INTO app_meta (key,value) VALUES (?,?)", (key, value))
+        return c.execute("SELECT value FROM app_meta WHERE key = ?", (key,)).fetchone()["value"]
+
     def prune(self, now):
         cutoff = int(now) - self.retain_days * 86400
+        login_cutoff = int(now) - self.login_retain_days * 86400
+        visit_cutoff = time.strftime(
+            "%Y-%m-%d", time.localtime(int(now) - max(self.visit_retain_days - 1, 0) * 86400)
+        )
         c = self._conn()
         with c:
             c.execute("DELETE FROM samples WHERE ts < ?", (cutoff,))
+            c.execute("DELETE FROM login_samples WHERE ts < ?", (login_cutoff,))
+            c.execute("DELETE FROM visits WHERE day < ?", (visit_cutoff,))
 
     # ---- read --------------------------------------------------------------
     def history(self, since, until, max_points=600):
         """Raw samples in [since, until], evenly down-sampled to <= max_points."""
         c = self._conn()
-        n = c.execute("SELECT count(*) AS n FROM samples WHERE ts BETWEEN ? AND ?",
-                      (since, until)).fetchone()["n"]
-        step = max(1, (n // max_points) + 1)
         rows = c.execute(
             """SELECT ts,cpu_util,gpu_util,mem_util,running,pending,
-                      nodes_avail,nodes_down,
-                      row_number() OVER (ORDER BY ts) AS rn
+                      nodes_avail,nodes_down
                FROM samples WHERE ts BETWEEN ? AND ? ORDER BY ts""",
             (since, until)).fetchall()
-        out = []
-        for r in rows:
-            if r["rn"] % step == 0:
-                d = dict(r)
-                d.pop("rn", None)
-                out.append(d)
-        return out
+        return [dict(r) for r in _evenly_sample(rows, max_points)]
 
     def login_history(self, since, until, max_points=600):
         c = self._conn()
-        n = c.execute("SELECT count(*) AS n FROM login_samples WHERE ts BETWEEN ? AND ?",
-                      (since, until)).fetchone()["n"]
-        step = max(1, (n // max_points) + 1)
         rows = c.execute(
             """SELECT ts,node_id,load1,load_per_core,cpu_busy,cpu_iowait,
                       mem_used_ratio,swap_used_ratio,disk_used_max,inode_used_max,
-                      d_state,
-                      row_number() OVER (ORDER BY ts,node_id) AS rn
+                      d_state
                FROM login_samples WHERE ts BETWEEN ? AND ? ORDER BY ts,node_id""",
             (since, until)).fetchall()
-        out = []
+        by_node = {}
         for r in rows:
-            if r["rn"] % step == 0:
-                d = dict(r)
-                d.pop("rn", None)
-                out.append(d)
+            by_node.setdefault(r["node_id"], []).append(r)
+        if not by_node or max_points <= 0:
+            return []
+        node_ids = sorted(by_node)
+        base, extra = divmod(max_points, len(node_ids))
+        out = []
+        for i, node_id in enumerate(node_ids):
+            budget = base + (1 if i < extra else 0)
+            if budget <= 0:
+                continue
+            out.extend(dict(r) for r in _evenly_sample(by_node[node_id], budget))
+        out.sort(key=lambda r: (r["ts"], r["node_id"]))
         return out
 
     def visit_stats(self, days=30, now=None):
@@ -317,4 +347,36 @@ class Store:
         l = c.execute("SELECT count(*) n FROM login_samples").fetchone()
         return {"samples": s["n"], "first_ts": s["a"], "last_ts": s["b"],
                 "hours": h["n"], "login_samples": l["n"],
-                "retain_days": self.retain_days}
+                "retain_days": self.retain_days,
+                "login_retain_days": self.login_retain_days,
+                "visit_retain_days": self.visit_retain_days,
+                "schema_version": SCHEMA_VERSION}
+
+    def close(self):
+        c = getattr(self._local, "conn", None)
+        if c is not None:
+            c.close()
+            self._local.conn = None
+
+
+def _evenly_sample(rows, max_points):
+    """Return <= max_points evenly-spaced rows, always preserving both endpoints."""
+    n = len(rows)
+    if max_points <= 0 or n == 0:
+        return []
+    if n <= max_points:
+        return list(rows)
+    if max_points == 1:
+        return [rows[-1]]
+    indices = [round(i * (n - 1) / (max_points - 1)) for i in range(max_points)]
+    # round() can theoretically collide; retain order and fill any gap from the
+    # right while keeping the final row authoritative.
+    unique = list(dict.fromkeys(indices))
+    if len(unique) < max_points:
+        for i in range(n - 1, -1, -1):
+            if i not in unique:
+                unique.append(i)
+            if len(unique) == max_points:
+                break
+        unique.sort()
+    return [rows[i] for i in unique]

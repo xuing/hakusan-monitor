@@ -155,6 +155,7 @@ export function DataTable<T>({
         <div className="relative min-w-[14rem] flex-1 sm:max-w-xs">
           <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input
+            aria-label={t("table.search")}
             placeholder={t("table.search")}
             value={globalFilter}
             onChange={(e) => setGlobalFilter(e.target.value)}

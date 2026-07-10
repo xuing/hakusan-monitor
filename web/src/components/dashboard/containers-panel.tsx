@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { Check, Copy, ExternalLink } from "lucide-react";
-import { useCopied } from "@/components/common/copy-button";
+import { useCopied } from "@/hooks/use-copied";
 import { SectionCard } from "@/components/common/section-card";
 import { Button } from "@/components/ui/button";
 import { useApi } from "@/hooks/use-api";

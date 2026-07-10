@@ -1,11 +1,10 @@
 import type { ReactNode } from "react";
-import { ProgressCircle } from "@tremor/react";
 import { Card, CardContent } from "@/components/ui/card";
-import { useLive } from "@/hooks/use-live";
-import { useResourceFilter } from "@/hooks/use-resource-filter";
+import { useLive } from "@/hooks/live-context";
+import { useResourceFilter } from "@/hooks/resource-filter-context";
 import { poolLabel, useT, type TFn } from "@/i18n";
 import { nf, pct } from "@/lib/format";
-import { toneTremor, utilTone } from "@/lib/slurm";
+import { utilTone } from "@/lib/slurm";
 import type { Pool, Snapshot } from "@/types/snapshot";
 
 export function KpiCards() {
@@ -93,12 +92,24 @@ function PoolKpis({ pool, t }: { pool: Pool; t: TFn }) {
 }
 
 function GaugeKpi({ label, util, value, hint }: { label: string; util: number; value: string; hint: string }) {
+  const radius = 27;
+  const circumference = 2 * Math.PI * radius;
+  const tone = utilTone(util);
+  const color = tone === "bad" ? "var(--red-10)" : tone === "warn" ? "var(--amber-10)" : "var(--green-10)";
   return (
     <Card>
       <CardContent className="flex items-center gap-4 p-5">
-        <ProgressCircle value={Math.round(util * 100)} radius={32} strokeWidth={6} color={toneTremor[utilTone(util)]}>
-          <span className="tnum text-xs font-semibold">{pct(util)}</span>
-        </ProgressCircle>
+        <div className="relative grid h-16 w-16 shrink-0 place-items-center" role="img" aria-label={`${label}: ${pct(util)}`}>
+          <svg className="absolute inset-0 h-full w-full -rotate-90" viewBox="0 0 64 64" aria-hidden>
+            <circle cx="32" cy="32" r={radius} fill="none" stroke="hsl(var(--muted))" strokeWidth="6" />
+            <circle
+              cx="32" cy="32" r={radius} fill="none" stroke={color} strokeWidth="6" strokeLinecap="round"
+              strokeDasharray={circumference}
+              strokeDashoffset={circumference * (1 - Math.max(0, Math.min(1, util)))}
+            />
+          </svg>
+          <span className="tnum relative text-xs font-semibold">{pct(util)}</span>
+        </div>
         <div className="min-w-0">
           <Label>{label}</Label>
           <div className="tnum text-2xl font-semibold leading-tight">{value}</div>

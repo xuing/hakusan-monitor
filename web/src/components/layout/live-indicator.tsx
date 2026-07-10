@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useLive } from "@/hooks/use-live";
+import { useLive } from "@/hooks/live-context";
 import { useT, type TFn } from "@/i18n";
 import type { LiveStatus } from "@/lib/live";
 import { secondsSince } from "@/lib/format";
