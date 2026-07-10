@@ -346,6 +346,11 @@ export const ja: Record<TranslationKey, string> = {
   "releases.none": "終了予定が判明したジョブはありません。",
   "release.at": "{time} に解放",
   "release.left": "残り ≤{dur}",
+  "day.today": "今日",
+  "day.tomorrow": "明日",
+  "dur.d": "{n} 日",
+  "dur.h": "{n} 時間",
+  "dur.m": "{n} 分",
 
   "container.lead": "Hakusan の通常ジョブでは SingularityCE でコンテナを実行します。Docker は計算ノードのジョブ用ランタイムとして直接使いません。Docker/OCI イメージは SIF に変換してから実行します。",
   "container.docs": "Sylabs 4.3 文書",
