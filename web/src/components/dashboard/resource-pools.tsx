@@ -123,11 +123,16 @@ function PoolCard({ pool, snap, t }: { pool: Pool; snap: Snapshot; t: TFn }) {
     || fitHasClearSlot(gpuFit, pendingActive, Date.now(), 720 * 60);
   const rawGpuFree = isGpu ? pool.gpu?.free ?? 0 : 0;
   const reservedGpu = isGpu ? pool.gpu?.reserved ?? 0 : 0;
-  const displayFree = isGpu ? rawGpuFree : pool.cores.free;
+  // Scheduler-reserved cards are physically idle and reachable through the
+  // timed backfill gap — count them in the hero and let colour alone say
+  // whether the default request can have them ("0 GPU" when cards visibly
+  // sit idle reads as a lie).
+  const idleGpu = rawGpuFree + reservedGpu;
+  const displayFree = isGpu ? idleGpu : pool.cores.free;
   const hasAvailable = (isGpu ? gpuSched > 0 && gpuClear : availableNodes > 0) && !maint;
-  const hasStrandedGpu = isGpu && (rawGpuFree > 0 || reservedGpu > 0) && !(gpuSched > 0 && gpuClear) && !maint;
+  const hasStrandedGpu = isGpu && idleGpu > 0 && !(gpuSched > 0 && gpuClear) && !maint;
   const availableNodesLabel = isGpu
-    ? t("pool.gpuFreePhysical", { n: rawGpuFree })
+    ? t("pool.gpuFreePhysical", { n: idleGpu })
     : t("pool.availableNodes", { n: availableNodes });
   const free = displayFree;
   const total = isGpu && pool.gpu ? pool.gpu.total : pool.cores.total;
@@ -1223,18 +1228,23 @@ function gpuAvailabilityText(
   t: TFn,
 ) {
   if (!isGpu) return availableLabel;
+  const reservedNote = reserved > 0 ? t("pool.reserved", { n: reserved }) : "";
   if (schedulable > 0) {
     if (fit && !fitHasClearSlot(fit, pendingActive, Date.now(), CARD_REQUEST_SEC)) {
-      return t("pool.gpuStrandedContested", { n: rawFree });
+      const base = t("pool.gpuStrandedContested", { n: rawFree });
+      return reservedNote ? `${base} · ${reservedNote}` : base;
     }
     return availableLabel;
   }
-  if (rawFree > 0) return gpuStrandedText(fit, rawFree, pendingActive, t);
-  const unavailable = [
-    reserved > 0 ? t("pool.reserved", { n: reserved }) : "",
-    down > 0 ? t("pool.offline", { n: down }) : "",
-  ].filter(Boolean);
-  return unavailable.length > 0 ? `${t("gpu.full")} · ${unavailable.join(" · ")}` : t("gpu.full");
+  if (rawFree > 0) {
+    const base = gpuStrandedText(fit, rawFree, pendingActive, t);
+    return reservedNote ? `${base} · ${reservedNote}` : base;
+  }
+  // Reserved-only is not "full": those cards are idle and the timed gap can
+  // still take a short job — never print 已满 next to an amber count.
+  const offline = down > 0 ? t("pool.offline", { n: down }) : "";
+  if (reservedNote) return [reservedNote, offline].filter(Boolean).join(" · ");
+  return offline ? `${t("gpu.full")} · ${offline}` : t("gpu.full");
 }
 
 function gpuStrandedText(fit: GpuFitInfo | null, rawFree: number, pendingActive: RawJob[], t: TFn) {
@@ -1374,21 +1384,22 @@ function fmtMemRaw(mb: number) {
   return `${nf(Math.max(0, Math.round(mb)))}M`;
 }
 
-/** One block per physical GPU — free (green), stranded/reserved (amber),
- * used (red), then genuinely offline (lighter red with an inset border). */
+/** One block per physical GPU — schedulable (green), then stranded or
+ * scheduler-reserved (one solid amber group up front: both are idle and only
+ * reachable via tweaks or the timed gap), used (red), then genuinely offline
+ * (lighter red with an inset border). */
 function GpuBlocks({ gpu, schedulableFree, className }: { gpu: PoolGpu; schedulableFree?: number; className?: string }) {
   const ready = Math.max(0, Math.min(gpu.free, schedulableFree ?? gpu.free));
-  const stranded = Math.max(0, gpu.free - ready);
+  const stranded = Math.max(0, gpu.free - ready) + (gpu.reserved ?? 0);
   const seg = (n: number, cls: string, key: string) =>
     Array.from({ length: Math.max(0, n) }, (_, i) => (
       <span key={key + i} className={cn("h-2.5 min-w-0 flex-1 rounded-sm", cls)} />
     ));
   return (
-    <div className={cn("flex gap-0.5", className)} title={`${ready} schedulable · ${stranded} stranded · ${gpu.used} used${gpu.reserved ? ` · ${gpu.reserved} reserved` : ""}${gpu.down ? ` · ${gpu.down} down` : ""}`}>
+    <div className={cn("flex gap-0.5", className)} title={`${ready} schedulable · ${stranded} stranded/reserved · ${gpu.used} used${gpu.down ? ` · ${gpu.down} down` : ""}`}>
       {seg(ready, "bg-ok", "f")}
       {seg(stranded, "bg-warn", "s")}
       {seg(gpu.used, "bg-bad", "u")}
-      {seg(gpu.reserved ?? 0, "bg-warn/70 ring-1 ring-inset ring-warn", "r")}
       {seg(gpu.down, "bg-bad/35 ring-1 ring-inset ring-bad/65", "d")}
     </div>
   );

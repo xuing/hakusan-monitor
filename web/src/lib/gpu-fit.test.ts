@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { gpuBackfillTipCommand, gpuFitFromNodes } from "./gpu-fit";
+import { gpuBackfillTipCommand, gpuFitFromNodes, gpuStrandedCount } from "./gpu-fit";
 import type { Pool, RawJob, RawNode } from "@/types/snapshot";
 
 const pool = {
@@ -67,6 +67,8 @@ describe("planned GPU backfill", () => {
     expect(fit.rawFree).toBe(0);
     expect(fit.schedulable).toBe(0);
     expect(fit.reservedNodes).toHaveLength(1);
+    // the reserved idle card must surface as an amber count, not a bare "0"
+    expect(gpuStrandedCount(fit)).toBe(1);
     expect(gpuBackfillTipCommand(
       fit,
       pool,

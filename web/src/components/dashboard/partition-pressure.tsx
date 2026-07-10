@@ -420,7 +420,10 @@ function PoolHeader({
             </span>
             <span>·</span>
             {isGpu ? (
-              <span className="font-mono text-ok-fg">{nf(pool?.gpu?.free ?? 0)} {unit} {t("part.available")}</span>
+              // a green zero would contradict the colour language — grey it out
+              <span className={cn("font-mono", (pool?.gpu?.free ?? 0) > 0 ? "text-ok-fg" : "text-muted-foreground")}>
+                {nf(pool?.gpu?.free ?? 0)} {unit} {t("part.available")}
+              </span>
             ) : pc.idleNodes > 0 ? (
               <>
                 <span className="font-mono">{t("pool.idleNodes", { n: pc.idleNodes })}</span>
@@ -487,10 +490,13 @@ function UnitBlocks({
       className="flex h-2.5 w-36 shrink-0 gap-px"
       title={`${nf(free)} ${unit} ${unit === "GPU" ? "free" : "available"}${stranded ? ` (${nf(stranded)} unused by any policy)` : ""} · ${nf(used)} used${reserved ? ` · ${nf(reserved)} reserved` : ""}${down ? ` · ${nf(down)} down` : ""}`}
     >
+      {/* reserved reads exactly like stranded — idle, reachable only via
+          tweaks or the timed gap — so it sits solid amber with the free-ish
+          cells up front, not hollow behind the used ones */}
       {cell(okCells, "bg-ok", "ok")}
       {cell(strandedCells, "bg-warn", "stranded")}
+      {cell(reservedCells, "bg-warn", "reserved")}
       {cell(usedCells, "bg-bad", "used")}
-      {cell(reservedCells, "bg-warn/70 ring-1 ring-inset ring-warn", "reserved")}
       {cell(downCells, "bg-bad/35 ring-1 ring-inset ring-bad/65", "down")}
     </div>
   );

@@ -260,11 +260,14 @@ export function hasUncontestedGpuSlot(nodes: RawNode[], pendingActive: RawJob[],
   return fit.schedulable > 0 && fitHasClearSlot(fit, pendingActive, nowMs, requiredSec);
 }
 
-/** Physically-free GPUs in this pool that THIS partition's request can't
- *  reach — the gap behind "3 GPU free at the top, 0 GPU on every policy
- *  below" that a bare hero number leaves unexplained. */
+/** Physically-idle GPUs in this pool that THIS partition's default request
+ *  can't have right now: nodes short on leftover CPU/mem, plus cards the
+ *  scheduler holds for a future reservation. Both kinds stay reachable via
+ *  tweaks or the timed backfill gap, so the UI shows their count in amber
+ *  instead of a bare "0". */
 export function gpuStrandedCount(fit: GpuFitInfo): number {
-  return Math.max(0, fit.rawFree - fit.schedulable);
+  const reserved = fit.reservedNodes.reduce((sum, row) => sum + row.freeGpu, 0);
+  return Math.max(0, fit.rawFree - fit.schedulable) + reserved;
 }
 
 export function pendingForPool(jobs: RawJob[], partPool: Record<string, string>, poolId: string) {
