@@ -344,6 +344,8 @@ export const en = {
   "jobs.filter.state": "State",
   "jobs.filter.resource": "Resource",
   "releases.none": "No running jobs report a known end time.",
+  "release.at": "frees at {time}",
+  "release.left": "≤{dur} left",
 
   "container.lead": "Hakusan jobs run containers with SingularityCE. Docker is not used directly as the compute-node job runtime; convert Docker/OCI images to SIF, then run the SIF.",
   "container.docs": "Sylabs 4.3 docs",

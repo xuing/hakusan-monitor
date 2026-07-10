@@ -344,6 +344,8 @@ export const zh: Record<TranslationKey, string> = {
   "jobs.filter.state": "状态",
   "jobs.filter.resource": "资源",
   "releases.none": "暂无已知结束时间的运行作业。",
+  "release.at": "{time} 释放",
+  "release.left": "剩 ≤{dur}",
 
   "container.lead": "Hakusan 普通作业用 SingularityCE 运行容器。Docker 不直接作为计算节点作业运行时；需要 Docker/OCI 镜像时，先转换成 SIF 再运行。",
   "container.docs": "Sylabs 4.3 文档",

@@ -1,10 +1,14 @@
 import { useEffect, useState } from "react";
 import { Tag } from "./tag";
-import { clockOf, fmtDur, parseDur } from "@/lib/format";
+import { clockOrDate, fmtDur, parseDur } from "@/lib/format";
+import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 import type { NextFree } from "@/types/snapshot";
 
-/** Shared earliest-GPU-release indicator for Overview and Partitions. */
+/** Shared earliest-GPU-release indicator for Overview and Partitions.
+ * "02:39 释放 · 剩 ≤16m": the verb glued to the clock keeps HH:MM from
+ * reading as a duration, and ≤ is honest — jobs may end before their limit,
+ * so the wait is at most that long. */
 export function GpuReleaseHint({
   next,
   generatedAt,
@@ -14,6 +18,7 @@ export function GpuReleaseHint({
   generatedAt: number;
   className?: string;
 }) {
+  const t = useT();
   const [now, setNow] = useState(() => Date.now() / 1000);
   useEffect(() => {
     if (!next) return;
@@ -28,7 +33,8 @@ export function GpuReleaseHint({
   return (
     <div className={cn("flex shrink-0 flex-col items-end gap-1 text-right text-xs", className)}>
       <span className="text-info-fg">
-        ~ {clockOf(next.at)} <span className="text-muted-foreground">({fmtDur(remaining)})</span>
+        {t("release.at", { time: clockOrDate(next.at) })}
+        <span className="text-muted-foreground"> · {t("release.left", { dur: fmtDur(remaining) })}</span>
       </span>
       <Tag tone="info">↑{releasingGpus} GPU</Tag>
     </div>
