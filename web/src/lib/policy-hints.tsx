@@ -5,7 +5,7 @@
 import type { TFn } from "@/i18n";
 import { cleanCpuProbeRaw, type CpuProbeRow, type CpuProbeState } from "@/lib/cpu-probes";
 import { clockOf, nf } from "@/lib/format";
-import { interactiveForcedLabel, type PartitionCap, type PartitionPolicy, type Tone } from "@/lib/slurm";
+import { effectiveJobMemGb, interactiveForcedLabel, type PartitionCap, type PartitionPolicy, type Tone } from "@/lib/slurm";
 
 export interface PolicyLimitRow {
   key: string;
@@ -64,12 +64,18 @@ export function fmtCapMem(gb?: number) {
   return `${gb}GB`;
 }
 
-/** "8 GPU / 208c / 2TB / 4 nodes / 3d" — no label prefix, "" when the cap is empty. */
-export function fmtPolicyLimit(cap: PartitionCap, isGpu: boolean, t: TFn, partition?: string) {
+/** "8 GPU / 208c / 2TB / 4 nodes / 3d" — no label prefix, "" when the cap is empty.
+ * Cores render as a range ("256–2,048c") where the QOS enforces a minimum
+ * (submitting below it is rejected outright — measured on LARGE), and memory
+ * is clamped to what the nodes can physically grant. */
+export function fmtPolicyLimit(cap: PartitionCap, isGpu: boolean, t: TFn, partition?: string, nodeMemMb?: number) {
   const parts: string[] = [];
   if (isGpu && cap.maxGpus) parts.push(`${cap.maxGpus} GPU`);
-  if (cap.maxCores) parts.push(`${nf(cap.maxCores)}c`);
-  if (cap.maxMemGb) parts.push(fmtCapMem(cap.maxMemGb));
+  if (cap.maxCores) {
+    parts.push(cap.minCores ? `${nf(cap.minCores)}–${nf(cap.maxCores)}c` : `${nf(cap.maxCores)}c`);
+  }
+  const memGb = effectiveJobMemGb(cap, nodeMemMb);
+  if (memGb) parts.push(fmtCapMem(memGb));
   if (cap.maxNodes) parts.push(`${nf(cap.maxNodes)} ${t(cap.maxNodes === 1 ? "spec.nodeSingle" : "spec.nodes")}`);
   if (cap.wall) {
     // the QOS wall only binds sbatch; salloc gets a plugin-forced walltime —

@@ -56,6 +56,26 @@ export interface PartitionPolicy {
   maxSubmitPerUser?: number;
 }
 
+// QOS memory caps are nominal hardware sizes, not requestable values —
+// measured live: GPU-S MaxTRES mem=512G vs node RealMemory 515306MB (~503G),
+// and `sbatch --mem=512G` fails instantly with "Requested node configuration
+// is not available" while 502G schedules. The requestable ceiling is always
+// min(policy, hardware).
+
+/** Largest --mem (per node) a single node can actually grant. */
+export function effectiveMemPerNodeGb(cap: PartitionCap, nodeMemMb?: number): number | undefined {
+  const hw = nodeMemMb ? Math.floor(nodeMemMb / 1024) : undefined;
+  if (hw && cap.maxMemGb) return Math.min(hw, cap.maxMemGb);
+  return hw ?? cap.maxMemGb;
+}
+
+/** Job-total memory ceiling for the policy-limit line (spans maxNodes). */
+export function effectiveJobMemGb(cap: PartitionCap, nodeMemMb?: number): number | undefined {
+  if (!cap.maxMemGb) return undefined;
+  const hw = nodeMemMb ? Math.floor(nodeMemMb / 1024) * (cap.maxNodes ?? 1) : undefined;
+  return hw ? Math.min(cap.maxMemGb, hw) : cap.maxMemGb;
+}
+
 export const PARTITION_DISPLAY_ORDER = [
   "GPU-1",
   "GPU-S",

@@ -40,7 +40,7 @@ import {
   type GpuFitNode,
   type GpuFitTipData,
 } from "@/lib/gpu-fit";
-import { interactiveForcedSec, isMaterialsStudioPartition, matchPool, partitionCap, partitionPolicy, type PartitionPolicy, type Tone } from "@/lib/slurm";
+import { effectiveMemPerNodeGb, interactiveForcedSec, isMaterialsStudioPartition, matchPool, partitionCap, partitionPolicy, type PartitionPolicy, type Tone } from "@/lib/slurm";
 import { cn } from "@/lib/utils";
 import { cpuProbeMaxAge, cpuProbeRows, cpuProbeState, type CpuProbeRow } from "@/lib/cpu-probes";
 import { buildRequestCommand, shouldShowGapShell } from "@/lib/request-command";
@@ -340,13 +340,18 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
   const memRaw = mem.trim();
   const normalizedMem = normalizeMem(memRaw);
   const parsedMemMb = normalizedMem ? parseMemoryInputMb(normalizedMem) : 0;
-  const maxMemMb = cap.maxMemGb ? cap.maxMemGb * 1024 : 0;
+  // --mem is per node, and the true ceiling is min(QOS cap, RealMemory):
+  // the QOS mem is the nominal hardware size, so e.g. GPU-S "512G" dies at
+  // submit ("Requested node configuration is not available") — never let the
+  // panel emit a request no node can hold.
+  const effMemGb = effectiveMemPerNodeGb(cap, pool.mem_per_node);
+  const maxMemMb = effMemGb ? effMemGb * 1024 : 0;
   const memTooHigh = parsedMemMb > 0 && maxMemMb > 0 && parsedMemMb > maxMemMb;
   const memValue = normalizedMem && !memTooHigh ? normalizedMem : "";
   const memError = memRaw && !normalizedMem
     ? t("pool.memInvalid")
     : memTooHigh
-      ? t("pool.memTooHigh", { max: `${cap.maxMemGb}G` })
+      ? t("pool.memTooHigh", { max: `${effMemGb}G` })
       : "";
   const memOverrideMb = memValue ? parsedMemMb : 0;
   const effectiveGpuFit = gpuFit && memOverrideMb > 0 ? gpuFitWithMemOverride(gpuFit, memOverrideMb) : gpuFit;
@@ -356,9 +361,11 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
   const groupLimitReached = Boolean(policy.grpJobs && groupRunning >= policy.grpJobs);
   // A selection the new partition's cap can't hold reverts to Default — the
   // select must never show "Default" while the command silently emits a
-  // clamped flag, and vice versa.
+  // clamped flag, and vice versa. Below-minimum counts too: LARGE-class QOS
+  // rejects -c under MinTRES at submit, while flagless requests are shaped
+  // up to the minimum automatically, so Default is the safe fallback.
   const nodeCount = withinCapInt(nodes, cap.maxNodes);
-  const coreCount = withinCapInt(cores, cap.maxCores);
+  const coreCount = withinCapInt(cores, cap.maxCores, cap.minCores);
   // Same rule for -t vs the partition wall (mirrors --mem's memTooHigh).
   const wallSec = parseWallMinutes(cap.wall) * 60;
   const timeSel = time.trim() && (!wallSec || parseWalltimeSec(time) <= wallSec) ? time : "";
@@ -471,7 +478,7 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
   // user pins -N themselves it describes a state they already left
   const multiNodeCpuPolicy = !isGpu && (cap.maxNodes ?? 1) > 1 && !nodeCount;
   const nodeOptions = numberOptions(cap.maxNodes, [1, 2, 3, 4, 8, 16, 32]);
-  const coreOptions = numberOptions(cap.maxCores, [1, 2, 4, 8, 16, 26, 32, 52, 64, 96, 128, 208, 256, 512, 768, 1024, 2048, 4096, 8192]);
+  const coreOptions = numberOptions(cap.maxCores, [1, 2, 4, 8, 16, 26, 32, 52, 64, 96, 128, 208, 256, 512, 768, 1024, 2048, 4096, 8192], cap.minCores);
   const timeOptions = timeOptionsFor(cap.wall, t);
   const partitionGroups = partitionOptionGroups(pool.partitions, t);
   const fieldCls = "h-7 w-full rounded-md border border-border bg-background px-2 text-xs outline-none focus:border-primary";
@@ -711,7 +718,7 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
                     ))}
                   </select>
                 </Field>
-                <Field label={capSuffix(t("unit.cores"), cap.maxCores)}>
+                <Field label={capSuffix(t("unit.cores"), cap.maxCores, cap.minCores)}>
                   <select value={coreCount ? cores : ""} onChange={(e) => setCores(e.target.value)} className={fieldCls}>
                     <option value="">{t("pool.default")}</option>
                     {coreOptions.map((n) => (
@@ -756,13 +763,16 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
   );
 }
 
-/** A stored selection that exceeds the (new) cap counts as "no selection" —
- *  clamping it silently would emit a flag the UI no longer shows. */
-function withinCapInt(value: string, max?: number) {
+/** A stored selection outside the (new) partition's bounds counts as "no
+ *  selection" — clamping it silently would emit a flag the UI no longer
+ *  shows. Bounds are two-sided: QOS MinTRES rejects too-small requests. */
+function withinCapInt(value: string, max?: number, min?: number) {
   const parsed = Number(value);
   if (!Number.isFinite(parsed) || parsed <= 0) return 0;
   const n = Math.floor(parsed);
-  return max && n > max ? 0 : n;
+  if (max && n > max) return 0;
+  if (min && n < min) return 0;
+  return n;
 }
 
 function normalizeMem(value: string) {
@@ -784,14 +794,17 @@ function parseMemoryInputMb(value: string) {
   return Math.round(n * mult[unit]);
 }
 
-function capSuffix(label: string, max?: number) {
+function capSuffix(label: string, max?: number, min?: number) {
+  if (min && max) return `${label} ${min}–${max}`;
   return max ? `${label} <=${max}` : label;
 }
 
-function numberOptions(max: number | undefined, values: number[]) {
+function numberOptions(max: number | undefined, values: number[], min?: number) {
   const limit = max ?? Math.max(...values);
-  const out = new Set(values.filter((n) => n > 0 && n <= limit));
+  const floor = min ?? 1;
+  const out = new Set(values.filter((n) => n >= floor && n <= limit));
   if (max && max > 0) out.add(max);
+  if (min && min > 0 && min <= limit) out.add(min);
   return [...out].sort((a, b) => a - b);
 }
 
