@@ -14,24 +14,19 @@ export interface RequestCommandInput {
 
 export type BackfillVariant = "script" | "switch" | "fits" | null;
 
-/** The gap-shell affordance is only useful when the scheduler exposes a real
- * backfill window. A generic "will queue" verdict is not enough: with zero
- * physically free GPUs there is no gap to enter. */
+/** The gap-shell box exists only while the recipe is active: it then holds
+ * the usage note and the only restore control, and must survive tips
+ * recomputing to null on a later poll. There is no standalone pre-activation
+ * pitch — when the gap is shorter than the pinned 12 h, the backfill tip's
+ * "switch" button is the entry; when the gap already holds 12 h, a plain
+ * salloc fits it and the pitch's premise ("12 h rarely fits a gap") would
+ * contradict the tip one line above. */
 export function shouldShowGapShell(input: {
   isGpu: boolean;
   mode: "interactive" | "script";
   ptyActive: boolean;
-  backfillAvailable: boolean;
-  backfillVariant: BackfillVariant;
-  queueWarn: boolean;
 }) {
-  // ptyActive short-circuits: once the user is inside the recipe, the box
-  // (holding the only restore control) must survive tips recomputing to null
-  // on a later poll — only the initial pitch is gated on a real window.
-  return input.isGpu
-    && input.mode === "interactive"
-    && (input.ptyActive
-      || (input.backfillAvailable && input.backfillVariant !== "switch" && input.queueWarn));
+  return input.isGpu && input.mode === "interactive" && input.ptyActive;
 }
 
 /** Pure, testable Slurm command builder used by the quick-request UI. */

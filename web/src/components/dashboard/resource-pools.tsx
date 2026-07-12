@@ -645,32 +645,20 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
                 t={t}
               />
             )}
-            {/* the pty entry shares the tip-box language and appears only while
-                queuing is on the table (and never beside the bf "switch"
-                button, which is the same jump with parameters filled) */}
-            {shouldShowGapShell({
-              isGpu,
-              mode,
-              ptyActive,
-              backfillAvailable: Boolean(bfTip),
-              backfillVariant: bfVariant,
-              queueWarn: queueHint?.tone === "warn",
-            }) && (
+            {/* active-recipe box only: usage note + the sole restore control.
+                The pre-activation entry is the bf tip's "switch" button — a
+                standalone pitch would either duplicate it or (gap ≥ 12 h)
+                contradict the tip above, where plain salloc already fits. */}
+            {shouldShowGapShell({ isGpu, mode, ptyActive }) && (
               <div className="mt-2 rounded-md border border-info/40 bg-info-soft/45 px-2 py-1.5 text-xs leading-relaxed">
                 <div className="flex flex-wrap items-center gap-1.5">
                   <Tag tone="info">{t("pool.ptyTag")}</Tag>
                   <span className="text-foreground">
-                    {ptyActive
-                      ? <>{t("pool.ptyNote")}{!timeSel && <> {t("pool.ptyNoteDefaultTime")}</>}</>
-                      : t("pool.ptyPitch")}
+                    {t("pool.ptyNote")}{!timeSel && <> {t("pool.ptyNoteDefaultTime")}</>}
                   </span>
                   <button
                     type="button"
                     onClick={() => {
-                      if (!ptyActive) {
-                        setPtyOn(true);
-                        return;
-                      }
                       // restore = a CLEAN plain-interactive state: drop the
                       // -t (meaningless there) and any tip-autofilled --mem;
                       // a hand-typed --mem survives
@@ -680,13 +668,11 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
                     }}
                     className="whitespace-nowrap rounded border border-info/45 bg-background/80 px-1.5 py-0.5 font-medium text-info-fg transition-colors hover:bg-info-soft"
                   >
-                    {ptyActive ? t("pool.ptyBack") : t("pool.ptyGo")}
+                    {t("pool.ptyBack")}
                   </button>
-                  {ptyActive && (
-                    <Link to="/slurm#pty" className="whitespace-nowrap text-info-fg hover:underline">
-                      {t("pool.scriptPtyMore")}
-                    </Link>
-                  )}
+                  <Link to="/slurm#pty" className="whitespace-nowrap text-info-fg hover:underline">
+                    {t("pool.scriptPtyMore")}
+                  </Link>
                 </div>
               </div>
             )}

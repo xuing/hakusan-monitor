@@ -47,46 +47,16 @@ describe("buildRequestCommand", () => {
 });
 
 describe("shouldShowGapShell", () => {
-  it("hides the affordance when a queued pool has no real backfill window", () => {
-    expect(shouldShowGapShell({
-      isGpu: true,
-      mode: "interactive",
-      ptyActive: false,
-      backfillAvailable: false,
-      backfillVariant: null,
-      queueWarn: true,
-    })).toBe(false);
-  });
-
-  it("shows only a usable GPU backfill path", () => {
-    expect(shouldShowGapShell({
-      isGpu: true,
-      mode: "interactive",
-      ptyActive: false,
-      backfillAvailable: true,
-      backfillVariant: "fits",
-      queueWarn: true,
-    })).toBe(true);
-    expect(shouldShowGapShell({
-      isGpu: true,
-      mode: "interactive",
-      ptyActive: false,
-      backfillAvailable: true,
-      backfillVariant: "switch",
-      queueWarn: true,
-    })).toBe(false);
+  it("never pitches before activation — the backfill tip's switch button is the entry", () => {
+    // when the gap already holds the pinned 12 h, plain salloc fits it and a
+    // "12 h rarely fits a gap" pitch would contradict the tip shown above
+    expect(shouldShowGapShell({ isGpu: true, mode: "interactive", ptyActive: false })).toBe(false);
   });
 
   it("keeps the active-session box (and its restore control) when tips vanish", () => {
     // a later SSE poll can null the backfill tip while the user is still
     // inside the pty recipe — the only way back must not disappear
-    expect(shouldShowGapShell({
-      isGpu: true,
-      mode: "interactive",
-      ptyActive: true,
-      backfillAvailable: false,
-      backfillVariant: null,
-      queueWarn: false,
-    })).toBe(true);
+    expect(shouldShowGapShell({ isGpu: true, mode: "interactive", ptyActive: true })).toBe(true);
+    expect(shouldShowGapShell({ isGpu: true, mode: "script", ptyActive: true })).toBe(false);
   });
 });
