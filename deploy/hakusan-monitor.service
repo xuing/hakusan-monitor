@@ -23,9 +23,10 @@ Environment=HM_SOURCE=ssh
 Environment=HM_PORT=8787
 Environment=HM_DB=%h/temp/hakusan-monitor/data/hakusan.sqlite
 Environment=TZ=Asia/Tokyo
-# Reuse the interactive ssh-agent so the passphrase-protected key works without
-# a prompt. (For fully unattended reboots, switch to a dedicated key — see DEPLOY.md.)
-ExecStart=/bin/bash -lc 'source %h/.ssh/.agent_env 2>/dev/null; exec python3 backend/server.py'
+# SSH auth uses the dedicated passphrase-less key set via HM_SSH_OPTS in .env
+# (see docs/DEPLOY.md "SSH auth") — no ssh-agent needed, so collection keeps
+# working across unattended reboots.
+ExecStart=/usr/bin/python3 backend/server.py
 Restart=always
 RestartSec=5
 

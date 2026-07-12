@@ -69,23 +69,24 @@ and frontend dependency updates weekly.
 The collector logs in to your SSH target (`HM_SSH_HOST`, set in `.env` — e.g.
 `you@hakusan2`). If `HM_LOGIN_NODES` is set, the login-node health sampler uses
 the same SSH options/agent for each configured target, e.g.
-`hakusan1=you@hakusan1,hakusan2=you@hakusan2`. Today that uses your **interactive
-ssh-agent** (`~/.ssh/.agent_env`) holding the passphrase-protected key. That works
-while the agent (and the box) stays up — but **after a reboot the agent is gone**,
-so the service can't SSH until you re-run `ssh-add` and refresh `~/.ssh/.agent_env`.
+`hakusan1=you@hakusan1,hakusan2=you@hakusan2`. The service uses a **dedicated
+passphrase-less key** (`~/.ssh/hakusan_monitor`, wired up via `HM_SSH_OPTS` in
+`.env`) so collection keeps working across unattended reboots — no ssh-agent
+involved. (It used to piggyback on the interactive ssh-agent, which broke on
+every reboot until someone re-ran `ssh-add`.)
 
-For **fully unattended** operation across reboots, use a dedicated key:
+To set this up on a new box:
 
 ```bash
 ssh-keygen -t ed25519 -N '' -f ~/.ssh/hakusan_monitor      # passphrase-less
-ssh-copy-id -i ~/.ssh/hakusan_monitor.pub "$HM_SSH_HOST"   # e.g. you@hakusan2
-# then point the service at it:
-#   HM_SSH_OPTS="-i ~/.ssh/hakusan_monitor -o BatchMode=yes -o ControlMaster=auto -o ControlPath=~/.ssh/hm-%r@%h:%p -o ControlPersist=120"
+ssh-copy-id -i ~/.ssh/hakusan_monitor.pub you@hakusan2     # per host in HM_SSH_HOST
+# then point the service at it in .env:
+#   HM_SSH_OPTS=-i ~/.ssh/hakusan_monitor -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=8 -o ServerAliveInterval=15 -o StrictHostKeyChecking=accept-new -o ControlMaster=auto -o ControlPath=~/.ssh/hm-%r@%h:%p -o ControlPersist=600
 ```
 
 Trade-off: a private key without a passphrase lives on disk — but it only grants
 this box read-only `squeue`/`scontrol` access to the cluster. Standard for a
-service account. (Ask and I'll wire this up.)
+service account.
 
 ## Notes
 
