@@ -220,6 +220,7 @@ export function slotContention(row: GpuFitNode, pendingActive: RawJob[], nowMs =
   const windowSec = win ? Math.max(0, Math.floor((win.untilMs - nowMs) / 1000)) : null;
   let contenders = 0;
   for (const job of pendingActive) {
+    if (!pendingJobMayUseNode(job, row.node.name)) continue;
     // min_memory_mb / cpus / gpus are job totals; a multi-node job claims this
     // node with its per-node share. A waiter in a GPU pool with no parsed GPU
     // count still wants one — counting it keeps us on the "says queue" side.
@@ -238,6 +239,20 @@ export function slotContention(row: GpuFitNode, pendingActive: RawJob[], nowMs =
     contenders += 1;
   }
   return { contenders, planned, windowSec };
+}
+
+/** Apply Slurm's explicit host constraints before calling a queued job a
+ * contender for a particular node. ReqNodeList entries are mandatory, but
+ * Slurm may add other hosts when the requested node count is larger than that
+ * list. SchedNodes deliberately does not participate: it is a movable plan,
+ * not a user constraint. */
+export function pendingJobMayUseNode(job: RawJob, nodeName: string): boolean {
+  const excluded = expandHostlist(job.exc_nodes || "");
+  if (excluded.includes(nodeName)) return false;
+
+  const required = expandHostlist(job.req_nodes || "");
+  if (required.length === 0 || required.includes(nodeName)) return true;
+  return Math.max(1, job.node_count || 1) > required.length;
 }
 
 /** Would a NEW request needing `requiredSec` of walltime fail to take this

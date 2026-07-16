@@ -29,7 +29,7 @@ MARK = "@@HM@@"
 SEP = "|@|"   # field separator unlikely to occur in any value (e.g. job names)
 # order matters — see parse_queue()
 SQUEUE_FIELDS = ["%i", "%u", "%a", "%P", "%T", "%r", "%D", "%C", "%b", "%V",
-                 "%e", "%S", "%L", "%j", "%q", "%N", "%M", "%l", "%m"]
+                 "%e", "%S", "%L", "%j", "%q", "%N", "%M", "%l", "%m", "%n", "%x"]
 SQUEUE_FMT = SEP.join(SQUEUE_FIELDS)
 CONTAINER_FMT = "JobID:64,tres-alloc:256,SchedNodes:128,Container:512"
 CPU_TEST_PARTITIONS = ["TINY", "DEF", "SINGLE", "SMALL", "LARGE", "XLARGE", "X2LARGE", "LONG", "LONG-L"]
@@ -101,8 +101,8 @@ def _epoch(iso):
 
 
 def _clean(s):
-    """Slurm prints 'N/A' / 'INVALID' / 'Unknown' for unset times."""
-    return "" if s in ("N/A", "INVALID", "Unknown", "") else s
+    """Normalize Slurm's unset sentinels across times and optional fields."""
+    return "" if s in ("N/A", "INVALID", "Unknown", "(null)", "None", "NULL", "") else s
 
 
 def _mem_mb(s):
@@ -332,7 +332,8 @@ def parse_queue(text, extras=None, pending_reqtres=None):
         if len(p) < len(SQUEUE_FIELDS):
             continue
         (jid, user, acct, part, state, reason, nnodes, cpus, gres, submit,
-         end, start_est, left, name, qos, nodelist, used, timelimit, min_mem) = p[:19]
+         end, start_est, left, name, qos, nodelist, used, timelimit, min_mem,
+         req_nodes, exc_nodes) = p[:21]
         extra = extras.get(str(jid)) or {}
         alloc = _parse_tres(extra.get("tres", ""))
         gm = re.search(r"gpu:(?:([A-Za-z0-9_\-]+):)?(\d+)", gres or "")
@@ -367,6 +368,9 @@ def parse_queue(text, extras=None, pending_reqtres=None):
             "time_left": _clean(left),
             "name": name, "qos": qos, "nodelist": _clean(nodelist),
             "sched_nodes": extra.get("sched_nodes", "") if state == "PENDING" else "",
+            # Hard placement constraints are distinct from SchedNodes, which
+            # is only the scheduler's current (and movable) future plan.
+            "req_nodes": _clean(req_nodes), "exc_nodes": _clean(exc_nodes),
             "time_used": _clean(used), "time_limit": _clean(timelimit),
             # keep the display string consistent with the corrected total so
             # the UI never shows a per-CPU "10000M" next to a 260000M verdict

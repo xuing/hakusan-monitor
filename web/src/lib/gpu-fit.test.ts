@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { gpuBackfillTipCommand, gpuFitFromNodes, gpuStrandedCount } from "./gpu-fit";
+import {
+  activePendingForPool,
+  fitHasClearSlot,
+  gpuBackfillTipCommand,
+  gpuFitFromNodes,
+  gpuStrandedCount,
+  slotContention,
+} from "./gpu-fit";
 import type { Pool, RawJob, RawNode } from "@/types/snapshot";
 
 const pool = {
@@ -94,5 +101,82 @@ describe("planned GPU backfill", () => {
       Date.parse("2026-07-10T12:00:00"),
       12 * 60 * 60,
     )).toBeNull();
+  });
+});
+
+function idleNode(name: string): RawNode {
+  return {
+    ...plannedNode,
+    name,
+    state_bucket: "idle",
+    schedulable: true,
+    state: ["IDLE"],
+    alloc_cpus: 0,
+    alloc_memory: 0,
+    gres_used: "",
+  };
+}
+
+function waiter(overrides: Partial<RawJob> = {}): RawJob {
+  return {
+    ...reservation,
+    state_reason: "Resources",
+    start_est: "",
+    sched_nodes: "",
+    min_memory_mb: 256_000,
+    ...overrides,
+  };
+}
+
+describe("pending GPU job node eligibility", () => {
+  const nodes = [idleNode("spcc-cld-gl02"), idleNode("spcc-cld-gl03")];
+  const fit = gpuFitFromNodes(
+    nodes,
+    [],
+    pool,
+    { maxGpus: 1, maxCores: 26, maxMemGb: 256 },
+    "GPU-1",
+  );
+  const row = (name: string) => fit.fitNodes.find((candidate) => candidate.node.name === name)!;
+
+  it("does not let a one-node pinned waiter claim an idle sibling", () => {
+    const pinned = waiter({ req_nodes: "spcc-cld-gl02" });
+
+    expect(slotContention(row("spcc-cld-gl02"), [pinned]).contenders).toBe(1);
+    expect(slotContention(row("spcc-cld-gl03"), [pinned]).contenders).toBe(0);
+    expect(fitHasClearSlot(fit, [pinned], Date.now(), 12 * 60 * 60)).toBe(true);
+  });
+
+  it("keeps SchedNodes as a movable plan rather than a hard node constraint", () => {
+    const planned = waiter({ sched_nodes: "spcc-cld-gl02" });
+
+    expect(slotContention(row("spcc-cld-gl02"), [planned]).contenders).toBe(1);
+    expect(slotContention(row("spcc-cld-gl03"), [planned]).contenders).toBe(1);
+    expect(fitHasClearSlot(fit, [planned], Date.now(), 12 * 60 * 60)).toBe(false);
+  });
+
+  it("honors explicit exclusions without hiding contention on eligible siblings", () => {
+    const excluding = waiter({ exc_nodes: "spcc-cld-gl02" });
+
+    expect(slotContention(row("spcc-cld-gl02"), [excluding]).contenders).toBe(0);
+    expect(slotContention(row("spcc-cld-gl03"), [excluding]).contenders).toBe(1);
+  });
+
+  it("allows extra nodes when a multi-node request needs more than its required list", () => {
+    const multiNode = waiter({
+      req_nodes: "spcc-cld-gl02",
+      node_count: 2,
+      cpus: 52,
+      gpus: 2,
+      min_memory_mb: 512_000,
+    });
+
+    expect(slotContention(row("spcc-cld-gl03"), [multiNode]).contenders).toBe(1);
+  });
+
+  it("still removes QOS-blocked jobs before node contention is evaluated", () => {
+    const limited = waiter({ state_reason: "QOSMaxJobsPerUserLimit" });
+
+    expect(activePendingForPool([limited], { "GPU-1": "a40" }, "a40")).toEqual([]);
   });
 });

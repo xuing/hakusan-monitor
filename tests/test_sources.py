@@ -79,6 +79,8 @@ class QueueParserTests(unittest.TestCase):
                 "01:00",
                 "1:00:00",
                 "512G",
+                "N/A",
+                "(null)",
             ],
         )
 
@@ -89,6 +91,8 @@ class QueueParserTests(unittest.TestCase):
         self.assertEqual(job["node_count"], 2)
         self.assertEqual(job["min_memory_mb"], 524288)
         self.assertEqual(job["nodelist"], "spcc-a40g[13,17]")
+        self.assertEqual(job["req_nodes"], "")
+        self.assertEqual(job["exc_nodes"], "")
 
     def test_parse_queue_prefers_tres_alloc_over_ambiguous_squeue_fields(self):
         # %m prints MinMemoryCPU=6000M as a bare "6000M" — without tres-alloc the
@@ -99,6 +103,7 @@ class QueueParserTests(unittest.TestCase):
                 "1", "64", "N/A", "2026-06-30T12:00:00", "2026-07-07T12:00:00",
                 "N/A", "6-00:00:00", "calc", "normal", "lcpcc-043",
                 "1-00:00:00", "7-00:00:00", "6000M",
+                "", "",
             ],
         )
         extras = {"378759": {"tres": "cpu=64,mem=375G,node=1,billing=64", "container": ""}}
@@ -132,6 +137,7 @@ class QueueParserTests(unittest.TestCase):
                 "1", "26", "gpu:1", "2026-07-04T13:32:39", "N/A",
                 "2026-07-09T01:45:25", "12:00:00", "interactive", "gpu-s", "",
                 "0:00", "12:00:00", "10000M",
+                "spcc-cld-gl01", "spcc-cld-gl[02-03]",
             ],
         )
         reqtres = parse_pending_reqtres(
@@ -144,6 +150,8 @@ class QueueParserTests(unittest.TestCase):
 
         self.assertEqual(job["min_memory_mb"], 260000)
         self.assertEqual(job["min_memory"], "260000M")
+        self.assertEqual(job["req_nodes"], "spcc-cld-gl01")
+        self.assertEqual(job["exc_nodes"], "spcc-cld-gl[02-03]")
 
         # Running jobs must keep trusting tres-alloc, not the pending map.
         running = line.replace("PENDING", "RUNNING")

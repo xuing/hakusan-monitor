@@ -316,6 +316,10 @@ export interface RawJob {
   nodelist: string;
   /** backfill scheduler's planned placement for a pending job (hostlist) */
   sched_nodes?: string;
+  /** nodes explicitly required by --nodelist; these are mandatory, not a preference */
+  req_nodes?: string;
+  /** nodes explicitly made ineligible by --exclude */
+  exc_nodes?: string;
   time_used: string;
   time_limit: string;
 }
