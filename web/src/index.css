@@ -59,7 +59,7 @@
   }
 
   html:lang(zh) {
-    --font-sans: Inter, system-ui, "PingFang SC", "Microsoft YaHei",
+    --font-sans: Inter, system-ui, "PingFang SC", "Microsoft YaHei UI", "Microsoft YaHei",
       "Noto Sans CJK SC", "Source Han Sans SC", sans-serif;
   }
 
@@ -96,12 +96,11 @@
     --status-info-fg: var(--blue-11);
   }
 
-  /* Type scales with the device; 12px stays the floor, not the target.
-     Everything is sized in rem off this root, and the root never drops below
-     100%, so text-xs (0.75rem) can't fall under 12px — while still following
+  /* Type scales with the device; text-xs is defined as a 13px product-UI
+     floor in Tailwind and everything is sized in rem off this root. This still follows
      the user's browser font-size setting and OS display scaling (Windows
      125%/150% multiplies CSS px for free). Low-DPI screens (~1dppx) keep the
-     16px root on purpose: integer 12/14px render sharpest under hinting
+     16px root on purpose: integer 13/14px render sharply under hinting
      there, and fractional sizes are exactly what reads as "fuzzy". High-DPI
      screens have the physical pixels for fractional sizes, so on large HiDPI
      viewports the whole scale lifts a notch instead of sitting on the floor. */
@@ -110,18 +109,17 @@
   }
   @media (min-resolution: 1.25dppx) and (min-width: 1600px) {
     html {
-      font-size: 106.25%; /* 17px root → captions 12.75px, body 14.9px */
+      font-size: 106.25%; /* 17px root → captions 13.8px, body 14.9px */
     }
   }
   @media (min-resolution: 1.25dppx) and (min-width: 2200px) {
     html {
-      font-size: 112.5%; /* 18px root → captions 13.5px, body 15.75px */
+      font-size: 112.5%; /* 18px root → captions 14.6px, body 15.75px */
     }
   }
   /* Wide 1x monitors (27" 1440p at 100% OS scaling ≈ 109 PPI): a CSS px is
-     physically ~12% smaller than at 96 DPI, so 12px glyphs drop under 3mm.
-     Size beats integer hinting there — lift the scale so captions land at
-     13.5px ≈ the physical height 12px has on a baseline 96 DPI screen. */
+     physically ~12% smaller than at 96 DPI. Size beats integer hinting there,
+     so lift the scale rather than letting captions become physically tiny. */
   @media (max-resolution: 1.24dppx) and (min-width: 2400px) {
     html {
       font-size: 112.5%;

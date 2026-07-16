@@ -36,6 +36,28 @@ export interface GpuFitInfo {
   reservedNodes: GpuFitNode[];
 }
 
+export interface GpuAvailabilityTotals {
+  /** Physically idle and not held by a future scheduler reservation. */
+  unreservedFree: number;
+  /** Physically idle, but already held by the scheduler. */
+  reserved: number;
+  /** Everything physically idle, whether immediately unreserved or held. */
+  physicalIdle: number;
+}
+
+/** Keep the dashboard's three GPU capacity concepts explicit. In particular,
+ * never promote `free + reserved` to the primary actionable number and then
+ * present `free` and `reserved` as if they were a contradictory breakdown. */
+export function gpuAvailabilityTotals(free: number, reserved: number): GpuAvailabilityTotals {
+  const unreservedFree = Math.max(0, free);
+  const schedulerReserved = Math.max(0, reserved);
+  return {
+    unreservedFree,
+    reserved: schedulerReserved,
+    physicalIdle: unreservedFree + schedulerReserved,
+  };
+}
+
 export interface GpuFitTipData {
   mem: string;
   node: string;

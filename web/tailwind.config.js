@@ -16,6 +16,12 @@ export default {
         sans: ["var(--font-sans)"],
         mono: ["ui-monospace", "JetBrains Mono", "SFMono-Regular", "Menlo", "monospace"],
       },
+      fontSize: {
+        // Product UI floor: 13px at the 16px root. Large/HiDPI viewports lift
+        // the root further, so captions remain crisp instead of falling back
+        // to hand-tuned 10–12px text.
+        xs: ["0.8125rem", { lineHeight: "1.125rem" }],
+      },
       colors: {
         border: "hsl(var(--border))",
         input: "hsl(var(--input))",

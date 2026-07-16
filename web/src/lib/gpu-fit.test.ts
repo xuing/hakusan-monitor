@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   activePendingForPool,
   fitHasClearSlot,
+  gpuAvailabilityTotals,
   gpuBackfillTipCommand,
   gpuFitFromNodes,
   gpuStrandedCount,
@@ -60,6 +61,31 @@ const reservation = {
   time_used: "",
   time_limit: "7-00:00:00",
 } satisfies RawJob;
+
+describe("GPU availability totals", () => {
+  it.each([
+    {
+      case: "ordinary free capacity",
+      free: 6,
+      reserved: 0,
+      expected: { unreservedFree: 6, reserved: 0, physicalIdle: 6 },
+    },
+    {
+      case: "free capacity alongside a scheduler reservation",
+      free: 5,
+      reserved: 1,
+      expected: { unreservedFree: 5, reserved: 1, physicalIdle: 6 },
+    },
+    {
+      case: "reserved-only idle capacity",
+      free: 0,
+      reserved: 2,
+      expected: { unreservedFree: 0, reserved: 2, physicalIdle: 2 },
+    },
+  ])("keeps primary, reserved, and physical counts distinct for $case", ({ free, reserved, expected }) => {
+    expect(gpuAvailabilityTotals(free, reserved)).toEqual(expected);
+  });
+});
 
 describe("planned GPU backfill", () => {
   it("keeps PLANNED GPUs out of free totals but exposes a bounded gap", () => {

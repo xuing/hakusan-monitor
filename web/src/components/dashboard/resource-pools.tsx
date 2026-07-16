@@ -12,6 +12,7 @@ import { useResourceFilter } from "@/hooks/resource-filter-context";
 import { poolLabel, reasonLabel, useT, type TFn, type TranslationKey } from "@/i18n";
 import { occupantsForPool, poolCapacity } from "@/lib/derive";
 import { fmtCountdown, fmtDur, fmtMB, nf, parseDur } from "@/lib/format";
+import { gpuAvailabilitySegments, type GpuAvailabilitySegmentKind } from "@/lib/gpu-availability";
 import {
   cpuProbeDetail,
   cpuProbeLabel,
@@ -20,9 +21,9 @@ import {
   policyLimitRows,
 } from "@/lib/policy-hints";
 import {
-  conservativeMemGb,
   contendersForPool,
   fitHasClearSlot,
+  gpuAvailabilityTotals,
   gpuBackfillTipCommand,
   gpuFitSnapshot,
   gpuFitTipCommand,
@@ -121,20 +122,22 @@ function PoolCard({ pool, snap, t }: { pool: Pool; snap: Snapshot; t: TFn }) {
   // first — judged for the interactive default (GPU salloc is pinned to 12h).
   const gpuClear = !isGpu || !gpuFit || gpuSched <= 0
     || fitHasClearSlot(gpuFit, pendingActive, Date.now(), 720 * 60);
-  const rawGpuFree = isGpu ? pool.gpu?.free ?? 0 : 0;
-  const reservedGpu = isGpu ? pool.gpu?.reserved ?? 0 : 0;
-  // Scheduler-reserved cards are physically idle and reachable through the
-  // timed backfill gap — count them in the hero and let colour alone say
-  // whether the default request can have them ("0 GPU" when cards visibly
-  // sit idle reads as a lie).
-  const idleGpu = rawGpuFree + reservedGpu;
-  const displayFree = isGpu ? idleGpu : pool.cores.free;
+  const gpuAvailability = gpuAvailabilityTotals(
+    isGpu ? pool.gpu?.free ?? 0 : 0,
+    isGpu ? pool.gpu?.reserved ?? 0 : 0,
+  );
+  const rawGpuFree = gpuAvailability.unreservedFree;
+  const reservedGpu = gpuAvailability.reserved;
+  // The header is the overview: all physically idle GPUs. The body then
+  // partitions that same total into peer status blocks (ready, constrained,
+  // or reserved) instead of presenting one subset as a second headline.
+  const idleGpu = gpuAvailability.physicalIdle;
   const hasAvailable = (isGpu ? gpuSched > 0 && gpuClear : availableNodes > 0) && !maint;
   const hasStrandedGpu = isGpu && idleGpu > 0 && !(gpuSched > 0 && gpuClear) && !maint;
   const availableNodesLabel = isGpu
     ? t("pool.gpuFreePhysical", { n: idleGpu })
     : t("pool.availableNodes", { n: availableNodes });
-  const free = displayFree;
+  const free = isGpu ? idleGpu : pool.cores.free;
   const total = isGpu && pool.gpu ? pool.gpu.total : pool.cores.total;
   const used = isGpu && pool.gpu ? pool.gpu.used : pool.cores.alloc;
   const util = total ? used / total : 0;   // bar fills as the pool gets used (full = red)
@@ -188,44 +191,39 @@ function PoolCard({ pool, snap, t }: { pool: Pool; snap: Snapshot; t: TFn }) {
           </span>
         </div>
 
-        <div className="mt-3 flex items-end justify-between gap-3">
-          <div>
+        <div className="mt-3 flex items-start justify-between gap-3">
+          <div className="min-w-0 flex-1">
             {maint ? (
               <span className="text-lg font-semibold text-muted-foreground">{t("pool.maint")}</span>
+            ) : isGpu ? (
+              <GpuAvailabilityBreakdown
+                fit={gpuFit}
+                schedulable={gpuSched}
+                clear={gpuClear}
+                free={rawGpuFree}
+                reserved={reservedGpu}
+                down={pool.gpu?.down ?? 0}
+                pendingActive={pendingActive}
+                t={t}
+              />
             ) : (
-              <div className={cn("tnum text-2xl font-bold", freeColor)}>
-                {isGpu ? (
-                  t("pool.gpuCount", { n: nf(free) })
-                ) : (
-                  <>
-                    {nf(free)}
-                    <span className="text-sm font-normal text-muted-foreground">
-                      {" / "}
-                      {nf(total)} {t("unit.cores")}
-                    </span>
-                  </>
-                )}
-              </div>
+              <>
+                <div className={cn("tnum text-2xl font-bold", freeColor)}>
+                  {nf(free)}
+                  <span className="text-sm font-normal text-muted-foreground">
+                    {" / "}
+                    {nf(total)} {t("unit.cores")}
+                  </span>
+                </div>
+                <div className="text-xs text-muted-foreground">{availableNodesLabel}</div>
+              </>
             )}
-            <div className="text-xs text-muted-foreground">
-              {maint ? null : gpuAvailabilityText(
-                isGpu,
-                gpuFit,
-                gpuSched,
-                rawGpuFree,
-                pool.gpu?.down ?? 0,
-                pool.gpu?.reserved ?? 0,
-                availableNodesLabel,
-                pendingActive,
-                t,
-              )}
-            </div>
           </div>
           <GpuReleaseHint next={isGpu ? pool.gpu?.next_free : null} generatedAt={snap.generated_at} />
         </div>
 
         {isGpu && pool.gpu ? (
-          <GpuBlocks gpu={pool.gpu} schedulableFree={gpuSched} className="mt-2" />
+          <GpuBlocks gpu={pool.gpu} schedulableFree={gpuClear ? gpuSched : 0} className="mt-2" />
         ) : (
           <Bar value={maint ? 0 : util} tone={maint ? "neutral" : undefined} className="mt-2" />
         )}
@@ -410,7 +408,7 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
   const defaultGpuBlocked = Boolean(isGpu && gpuFit && gpuFit.rawFree > 0 && gpuFit.schedulable <= 0);
   const showGpuFitDetails = Boolean(defaultGpuBlocked && !memValue);
   // Partition options carry their verdict so the dropdown reads like tabs:
-  // "GPU-S · 可绕过" beats opening each one to find out. CPU pools already
+  // "GPU-S · 可绕过排队" beats opening each one to find out. CPU pools already
   // label options with their probe result; in interactive mode each option
   // is judged with its own plugin-forced walltime.
   const optionVerdictSec = mode === "interactive" && !ptyActive
@@ -424,16 +422,8 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
     if (!snap) return base;
     const s = partitionRequestSummary(pool, snap, p, isGpu, pendingActive, nowMs, t, optionVerdictSec);
     if (!s) return base;
-    const verdict = s.hint?.tone === "ok"
-      ? t("pool.queueHintCanStart")
-      : s.gpuTip
-        ? t("pool.optBypass")
-        : s.bfTip
-          ? t("pool.optGap")
-          : s.hint
-            ? t("pool.queueHintWillQueue")
-            : "";
-    return verdict ? `${base} · ${verdict}` : base;
+    const verdict = partitionOptionVerdict(s, t);
+    return verdict ? `${base} · ${verdict.label}` : base;
   };
   const queueHint = selectedCpuRow
     ? null
@@ -481,6 +471,19 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
   const coreOptions = numberOptions(cap.maxCores, [1, 2, 4, 8, 16, 26, 32, 52, 64, 96, 128, 208, 256, 512, 768, 1024, 2048, 4096, 8192], cap.minCores);
   const timeOptions = timeOptionsFor(cap.wall, t);
   const partitionGroups = partitionOptionGroups(pool.partitions, t);
+  const gpuPartitionChoices = isGpu && pool.partitions.length > 1
+    ? pool.partitions.map((p): GpuPartitionChoice => {
+        const summary = snap
+          ? partitionRequestSummary(pool, snap, p, true, pendingActive, nowMs, t, optionVerdictSec)
+          : null;
+        return {
+          partition: p,
+          policy: trMaybe(t, `policy.${p}`, p),
+          limit: fmtPolicyLimit(partitionCap(p, snap?.policy), true, t, p),
+          verdict: partitionOptionVerdict(summary, t),
+        };
+      })
+    : [];
   const fieldCls = "h-7 w-full rounded-md border border-border bg-background px-2 text-xs outline-none focus:border-primary";
 
   // Collapsed one-glance verdict for the row. Scan every partition and lead
@@ -503,8 +506,16 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
       <DisclosureRow open={open} onToggle={() => setOpen(!open)} label={t("pool.quickRequest")} summary={rowSummary} />
       {open && (
         <div className="space-y-2 px-2 pb-2 pt-0.5">
+          {gpuPartitionChoices.length > 0 && (
+            <GpuPartitionPicker
+              choices={gpuPartitionChoices}
+              value={partition}
+              onChange={setPartChoice}
+              label={t("col.partition")}
+            />
+          )}
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-            {pool.partitions.length > 1 && (
+            {!isGpu && pool.partitions.length > 1 && (
               <Field label={t("col.partition")}>
                 <select value={partition} onChange={(e) => setPartChoice(e.target.value)} className={fieldCls}>
                   {partitionGroups.map((group) => (
@@ -919,6 +930,92 @@ interface PartitionRequestSummary {
   bfTip: GpuBackfillTipData | null;
 }
 
+interface PartitionOptionVerdict {
+  tone: Tone;
+  label: string;
+}
+
+function partitionOptionVerdict(
+  summary: PartitionRequestSummary | null,
+  t: TFn,
+): PartitionOptionVerdict | null {
+  if (!summary) return null;
+  if (summary.hint?.tone === "ok") return { tone: "ok", label: t("pool.queueHintCanStart") };
+  if (summary.gpuTip) return { tone: "warn", label: t("pool.optBypass") };
+  if (summary.bfTip) return { tone: "info", label: t("pool.optGap") };
+  if (summary.hint) return { tone: "warn", label: t("pool.queueHintWillQueue") };
+  return null;
+}
+
+interface GpuPartitionChoice {
+  partition: string;
+  policy: string;
+  limit: string;
+  verdict: PartitionOptionVerdict | null;
+}
+
+function GpuPartitionPicker({
+  choices,
+  value,
+  onChange,
+  label,
+}: {
+  choices: GpuPartitionChoice[];
+  value: string;
+  onChange: (partition: string) => void;
+  label: string;
+}) {
+  return (
+    <div className="space-y-1">
+      <div className="text-xs text-muted-foreground">{label}</div>
+      <div
+        role="group"
+        aria-label={label}
+        className={cn(
+          "grid gap-1.5",
+          choices.length === 2 ? "sm:grid-cols-2" : "sm:grid-cols-3",
+        )}
+      >
+        {choices.map((choice) => {
+          const selected = choice.partition === value;
+          return (
+            <button
+              key={choice.partition}
+              type="button"
+              aria-pressed={selected}
+              onClick={() => onChange(choice.partition)}
+              className={cn(
+                "min-w-0 cursor-pointer rounded-md border px-2.5 py-2 text-left outline-none transition-colors",
+                "focus-visible:ring-2 focus-visible:ring-primary/45 focus-visible:ring-offset-1 focus-visible:ring-offset-background",
+                selected
+                  ? "border-primary/65 bg-primary/10"
+                  : "border-border bg-background/55 hover:border-foreground/25 hover:bg-muted/45",
+              )}
+            >
+              <div className="flex min-w-0 items-center justify-between gap-2">
+                <span className={cn("truncate font-mono text-xs font-semibold", selected ? "text-primary" : "text-foreground")}>
+                  {choice.partition}
+                </span>
+                {choice.verdict && (
+                  <Tag tone={choice.verdict.tone} className="shrink-0 px-1.5 py-0.5 leading-none">
+                    {choice.verdict.label}
+                  </Tag>
+                )}
+              </div>
+              <div className="mt-1 truncate text-xs font-medium text-foreground/85">{choice.policy}</div>
+              {choice.limit && (
+                <div className="tnum mt-0.5 text-xs text-muted-foreground">
+                  {choice.limit}
+                </div>
+              )}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 /** Collapsed quick-request row: lead with the pool's most startable partition.
  *  The default partition saying "will queue · group full" must not bury a
  *  sibling policy that can start — outright, via the --mem tip, or via the
@@ -1215,57 +1312,77 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
 // 12h — a slot (or its reservation gap) must hold that much to claim "free".
 const CARD_REQUEST_SEC = 720 * 60;
 
-function gpuAvailabilityText(
-  isGpu: boolean,
-  fit: GpuFitInfo | null,
-  schedulable: number,
-  rawFree: number,
-  down: number,
-  reserved: number,
-  availableLabel: string,
-  pendingActive: RawJob[],
-  t: TFn,
-) {
-  if (!isGpu) return availableLabel;
-  const reservedNote = reserved > 0 ? t("pool.reserved", { n: reserved }) : "";
-  if (schedulable > 0) {
-    if (fit && !fitHasClearSlot(fit, pendingActive, Date.now(), CARD_REQUEST_SEC)) {
-      const base = t("pool.gpuStrandedContested", { n: rawFree });
-      return reservedNote ? `${base} · ${reservedNote}` : base;
-    }
-    return availableLabel;
-  }
-  if (rawFree > 0) {
-    const base = gpuStrandedText(fit, rawFree, pendingActive, t);
-    return reservedNote ? `${base} · ${reservedNote}` : base;
-  }
-  // Reserved-only is not "full": those cards are idle and the timed gap can
-  // still take a short job — never print 已满 next to an amber count.
-  const offline = down > 0 ? t("pool.offline", { n: down }) : "";
-  if (reservedNote) return [reservedNote, offline].filter(Boolean).join(" · ");
-  return offline ? `${t("gpu.full")} · ${offline}` : t("gpu.full");
+function GpuAvailabilityBreakdown({
+  fit,
+  schedulable,
+  clear,
+  free,
+  reserved,
+  down,
+  pendingActive,
+  t,
+}: {
+  fit: GpuFitInfo | null;
+  schedulable: number;
+  clear: boolean;
+  free: number;
+  reserved: number;
+  down: number;
+  pendingActive: RawJob[];
+  t: TFn;
+}) {
+  const rows = fit?.stranded ?? [];
+  const memoryNode = strandedTipNode(fit);
+  const constrainedContested = !!memoryNode
+    && slotBlocked(slotContention(memoryNode, pendingActive, Date.now()), CARD_REQUEST_SEC);
+  const segments = gpuAvailabilitySegments({
+    unreservedFree: free,
+    schedulable,
+    reserved,
+    down,
+    hasClearSlot: clear,
+    constrainedContested,
+    shortCpu: rows.some((row) => row.missingCores > 0),
+    shortMemory: rows.some((row) => row.missingMemMb > 0),
+  });
+  return (
+    <div className="flex flex-wrap items-end gap-x-6 gap-y-2">
+      {segments.map((segment) => (
+        <span key={segment.kind} className="inline-flex items-end gap-x-2">
+          <b className={cn("tnum text-2xl font-bold leading-none", gpuSegmentTextClass(segment.kind))}>
+            {t("pool.gpuCount", { n: nf(segment.count) })}
+          </b>
+          <span className="text-xs leading-snug text-muted-foreground">
+            {gpuSegmentLabel(segment.kind, t)}
+          </span>
+        </span>
+      ))}
+    </div>
+  );
 }
 
-function gpuStrandedText(fit: GpuFitInfo | null, rawFree: number, pendingActive: RawJob[], t: TFn) {
-  const rows = fit?.stranded ?? [];
-  const mem = rows.some((row) => row.missingMemMb > 0);
-  const cpu = rows.some((row) => row.missingCores > 0);
-  if (cpu && mem) return t("pool.gpuStrandedCpuMem", { n: rawFree });
-  if (cpu) return t("pool.gpuStrandedCpu", { n: rawFree });
-  if (mem) {
-    const best = strandedTipNode(fit);
-    // Only queued jobs that can start HERE and NOW own the slot; a reservation
-    // whose idle gap still holds a 12h job does not (verified live: a test
-    // job started instantly on a PLANNED node while the card said "reserved").
-    if (best && slotBlocked(slotContention(best, pendingActive, Date.now()), CARD_REQUEST_SEC)) {
-      return t("pool.gpuStrandedContested", { n: rawFree });
-    }
-    const tip = best ? `${conservativeMemGb(best.freeMemMb)}G` : "";
-    return best && conservativeMemGb(best.freeMemMb) > 0
-      ? t("pool.gpuStrandedMemTip", { n: rawFree, mem: tip })
-      : t("pool.gpuStrandedMem", { n: rawFree });
-  }
-  return t("pool.gpuStranded", { n: rawFree });
+function gpuSegmentTextClass(kind: GpuAvailabilitySegmentKind) {
+  if (kind === "ready") return "text-ok-fg";
+  if (kind === "down") return "text-bad-fg";
+  if (kind === "full") return "text-muted-foreground";
+  // Resource constraints, queue contention, and scheduler reservations all
+  // mean "idle but not directly available" and intentionally share amber.
+  return "text-warn-fg";
+}
+
+function gpuSegmentLabel(kind: GpuAvailabilitySegmentKind, t: TFn) {
+  const keys: Record<GpuAvailabilitySegmentKind, TranslationKey> = {
+    ready: "pool.gpuStatusReady",
+    contested: "pool.gpuStatusContested",
+    memory: "pool.gpuStatusMemory",
+    cpu: "pool.gpuStatusCpu",
+    "cpu-memory": "pool.gpuStatusCpuMemory",
+    constrained: "pool.gpuStatusConstrained",
+    reserved: "pool.gpuStatusReserved",
+    down: "pool.gpuStatusDown",
+    full: "pool.gpuStatusFull",
+  };
+  return t(keys[kind]);
 }
 
 function strandedTipNode(fit: GpuFitInfo | null) {
@@ -1383,21 +1500,22 @@ function fmtMemRaw(mb: number) {
   return `${nf(Math.max(0, Math.round(mb)))}M`;
 }
 
-/** One block per physical GPU — schedulable (green), then stranded or
- * scheduler-reserved (one solid amber group up front: both are idle and only
- * reachable via tweaks or the timed gap), used (red), then genuinely offline
- * (lighter red with an inset border). */
+/** One block per physical GPU — ready (green), unavailable idle capacity
+ * (amber, whether constrained or scheduler-reserved), used (red), then
+ * genuinely offline (lighter red with an inset border). */
 function GpuBlocks({ gpu, schedulableFree, className }: { gpu: PoolGpu; schedulableFree?: number; className?: string }) {
   const ready = Math.max(0, Math.min(gpu.free, schedulableFree ?? gpu.free));
-  const stranded = Math.max(0, gpu.free - ready) + (gpu.reserved ?? 0);
+  const stranded = Math.max(0, gpu.free - ready);
+  const reserved = Math.max(0, gpu.reserved ?? 0);
   const seg = (n: number, cls: string, key: string) =>
     Array.from({ length: Math.max(0, n) }, (_, i) => (
       <span key={key + i} className={cn("h-2.5 min-w-0 flex-1 rounded-sm", cls)} />
     ));
   return (
-    <div className={cn("flex gap-0.5", className)} title={`${ready} schedulable · ${stranded} stranded/reserved · ${gpu.used} used${gpu.down ? ` · ${gpu.down} down` : ""}`}>
+    <div className={cn("flex gap-0.5", className)} title={`${ready} ready · ${stranded} constrained · ${reserved} reserved · ${gpu.used} used${gpu.down ? ` · ${gpu.down} down` : ""}`}>
       {seg(ready, "bg-ok", "f")}
       {seg(stranded, "bg-warn", "s")}
+      {seg(reserved, "bg-warn", "r")}
       {seg(gpu.used, "bg-bad", "u")}
       {seg(gpu.down, "bg-bad/35 ring-1 ring-inset ring-bad/65", "d")}
     </div>
