@@ -1,5 +1,5 @@
 # ---- stage 1: build the React app ----
-FROM node:24-slim@sha256:cb4e8f7c443347358b7875e717c29e27bf9befc8f5a26cf18af3c3dec80e58c5 AS web
+FROM node:26-slim@sha256:715e55e4b84e4bb0ff48e49b398a848f08e55daed8eb6a0ea1839ae53bc57583 AS web
 WORKDIR /web
 COPY web/package.json web/package-lock.json ./
 RUN npm ci
