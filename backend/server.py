@@ -17,6 +17,7 @@ Run:  python3 backend/server.py     (see env vars below)
 from __future__ import annotations
 import gzip, json, math, os, queue, re, secrets, sys, threading, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from types import MappingProxyType
 from urllib.parse import urlparse, parse_qs
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -330,10 +331,31 @@ MIME = {".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=ut
         ".woff2": "font/woff2", ".txt": "text/plain; charset=utf-8"}
 
 
+def load_static_assets(frontend):
+    """Load the trusted web build once; requests only select from this allowlist."""
+    assets = {}
+    root = os.path.realpath(frontend)
+    for directory, subdirs, filenames in os.walk(root, followlinks=False):
+        # A build artifact should never need symlinks. Ignoring them prevents a
+        # link from making content outside the build available over HTTP.
+        subdirs[:] = [name for name in subdirs
+                      if not os.path.islink(os.path.join(directory, name))]
+        for filename in filenames:
+            full = os.path.join(directory, filename)
+            if os.path.islink(full) or not os.path.isfile(full):
+                continue
+            relative = os.path.relpath(full, root).replace(os.sep, "/")
+            with open(full, "rb") as f:
+                data = f.read()
+            assets["/" + relative] = (data, os.path.splitext(filename)[1], filename)
+    return MappingProxyType(assets)
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "HakusanMonitor/1.0"
     protocol_version = "HTTP/1.1"
     engine: "Engine"  # injected in main() before serving
+    static_assets = {}  # injected in main() before serving
 
     def log_message(self, format, *args):  # noqa: A002 — silence access log
         if CFG["access_log"]:
@@ -480,31 +502,26 @@ class Handler(BaseHTTPRequestHandler):
             pass
 
     def _static(self, path):
-        root = os.path.realpath(FRONTEND)
-        rel = "index.html" if path in ("/", "") else path.lstrip("/")
-        full = os.path.realpath(os.path.join(root, rel))
-        # contain to FRONTEND (commonpath isn't fooled by sibling-prefix dirs)
-        contained = os.path.commonpath([full, root]) == root
-        if not contained or not os.path.isfile(full):
+        requested = "/index.html" if path in ("/", "") else path
+        asset = self.static_assets.get(requested)
+        if asset is None:
             # SPA fallback is only for extensionless browser navigations. Missing
             # assets and robots.txt must be honest 404s, never index.html with 200.
             accepts_html = "text/html" in self.headers.get("Accept", "").lower()
-            extensionless = not os.path.splitext(rel)[1]
-            if contained and accepts_html and extensionless:
-                full = os.path.join(root, "index.html")
-            if not os.path.isfile(full) or not (contained and accepts_html and extensionless):
+            extensionless = not os.path.splitext(requested)[1]
+            if accepts_html and extensionless:
+                asset = self.static_assets.get("/index.html")
+            if asset is None:
                 return self._json(404, {"error": "not found"})
+        data, ext, filename = asset
         # A served index.html is one SPA page entry — assets/API calls don't count.
-        if os.path.basename(full) == "index.html" and self.command == "GET":
+        if filename == "index.html" and self.command == "GET":
             self._record_visit()
-        with open(full, "rb") as f:
-            data = f.read()
-        ext = os.path.splitext(full)[1]
         compressed = (len(data) >= 1024 and ext in (".html", ".js", ".css", ".json", ".svg")
                       and "gzip" in self.headers.get("Accept-Encoding", "").lower())
         if compressed:
             data = gzip.compress(data, compresslevel=6)
-        hashed_asset = bool(re.search(r"-[A-Za-z0-9_-]{8,}\.(?:js|css|svg|png|woff2)$", os.path.basename(full)))
+        hashed_asset = bool(re.search(r"-[A-Za-z0-9_-]{8,}\.(?:js|css|svg|png|woff2)$", filename))
         self.send_response(200)
         self.send_header("Content-Type", MIME.get(ext, "application/octet-stream"))
         self.send_header("Content-Length", str(len(data)))
@@ -522,6 +539,7 @@ class Handler(BaseHTTPRequestHandler):
 def main():
     eng = Engine(CFG)
     Handler.engine = eng
+    Handler.static_assets = load_static_assets(FRONTEND)
     # Sample in the background so the port binds immediately; early requests get
     # an explicit warming-up response and never perform collection themselves.
     threading.Thread(target=eng.run, daemon=True).start()
@@ -535,7 +553,7 @@ def main():
         else:
             print("  WARNING: HM_SSH_HOST is not set — set it in .env (e.g. you@hakusan2). "
                   "See .env.example.", flush=True)
-    if not os.path.isfile(os.path.join(FRONTEND, "index.html")):
+    if "/index.html" not in Handler.static_assets:
         print(f"  note: no web build at {FRONTEND} — run `cd web && npm install && npm run build`", flush=True)
     try:
         httpd.serve_forever()
