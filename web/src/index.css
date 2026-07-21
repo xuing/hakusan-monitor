@@ -20,10 +20,10 @@
 @import "@radix-ui/colors/amber-dark-alpha.css";
 @import "@radix-ui/colors/red-dark.css";
 @import "@radix-ui/colors/red-dark-alpha.css";
+@import "tailwindcss";
 
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@config "../tailwind.config.js";
+@custom-variant dark (&:where(.dark, .dark *));
 
 @layer base {
   /* light theme (default :root) */
