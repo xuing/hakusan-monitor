@@ -1,7 +1,7 @@
 import animate from "tailwindcss-animate";
 
 /**
- * Tailwind v3 config on one Radix-Colors light/dark palette.
+ * Tailwind config on one Radix-Colors light/dark palette.
  * Status colors (ok/warn/bad/info) come straight from Radix scales.
  */
 export default {

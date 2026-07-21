@@ -157,7 +157,7 @@ The frontend was rebuilt as a React + TypeScript app (`web/`) — the backend AP
 is the stable contract, so nothing server-side changed except the new raw-data
 endpoints.
 
-- **Stack:** Vite · Tailwind v3 · **shadcn/ui** (owned, copy-in Radix primitives)
+- **Stack:** Vite · Tailwind v4 · **shadcn/ui** (owned, copy-in Radix primitives)
   · owned responsive SVG charts · **Radix Colors** dark scales · TanStack Table
   · react-router. One unified dark theme maps semantic status tokens onto the
   high-contrast Radix palette (`web/src/index.css` + `tailwind.config.js`).

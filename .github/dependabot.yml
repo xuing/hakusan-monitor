@@ -5,6 +5,18 @@ updates:
     schedule:
       interval: weekly
     groups:
+      react:
+        patterns:
+          - react
+          - react-dom
+          - "@types/react"
+          - "@types/react-dom"
+      tailwind:
+        patterns:
+          - tailwindcss
+          - "@tailwindcss/*"
+          - tailwind-merge
+          - tailwindcss-animate
       frontend-compatible:
         update-types:
           - patch
@@ -14,8 +26,17 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    groups:
+      runtime-images:
+        patterns:
+          - node
+          - python
 
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
+    groups:
+      github-actions:
+        patterns:
+          - "*"
