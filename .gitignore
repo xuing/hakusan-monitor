@@ -8,6 +8,11 @@ __pycache__/
 # node / web build
 web/node_modules/
 web/dist/
+# accidental root-level npm runs (the real package.json lives in web/)
+/node_modules/
+/package-lock.json
+# stray screenshots at repo root
+/*.png
 # local config (per-developer; never commit — keeps your SSH user/ID private)
 .env
 # misc
