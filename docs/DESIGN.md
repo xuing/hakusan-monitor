@@ -214,3 +214,49 @@ the **framing** was the bug.
   running *on that node* (user · job id · GPU/CPU · time left), via a Slurm
   hostlist expander (`expandHostlist`) over the raw jobs. Most-active-users now
   carry a share bar.
+
+## 10. v5 — GPU availability as one owned decision
+
+Every GPU number, colour and status label comes from a single module,
+`web/src/lib/gpu-availability.ts`. It takes plain per-node numbers and returns
+mutually exclusive states — `ready` · `contested` · `memory` · `cpu` ·
+`cpu-memory` · `reserved` · `down` · `full` — that sum back to the pool's
+physically idle GPUs. No React, no i18n, no snapshot types: the Overview pool
+cards and the Partitions page both adapt into it (`gpuNodeFacts`) and both
+render out of it (`components/common/gpu-status.tsx`), so a GPU can never read
+"available" on one screen and "reserved" on the other.
+
+**The default request is not the QoS cap.** The two are different numbers and
+mixing them up produced a shipped bug: three completely empty H100 nodes read
+"memory insufficient".
+
+| partition | flagless request (real) | QoS MaxTRES (ceiling) | node holds |
+|---|---|---|---|
+| `GPU-1` | 26 cores x 9845 MB = 255970 MB | `mem=256G` | 515306 MB / 2 GPUs |
+| `VM-GPU-L` | 32 cores x 14900 MB = 476800 MB | `mem=480G` | 469070 MB / 1 GPU |
+
+The backend now collects both: `DefMemPerCPU` live from `scontrol show
+partition`, and the submit plugin's core count from the measured table in
+`backend/cluster_policy.py` (`BUILTIN_PARTITION_DEFAULTS`, with the exact probe
+commands recorded there). They ship as `policy.partition_defaults`.
+
+**Two rules keep the verdicts honest.**
+
+1. *One GPU's need never exceeds one GPU's hardware share.* `VM-GPU-L` really
+   does ask for more memory than a `spcc-cld-gl0x` node has; Slurm answers by
+   spreading the job across two nodes (verified: it landed on `gl[02-03]` and
+   took 2 GPUs), not by refusing. So the per-GPU need is capped at
+   `node_memory / gpus_per_node`.
+2. *Shortage means "the default request would queue here", not "this GPU is
+   unusable".* A node with a free GPU and 12 spare cores still runs a `-n 12`
+   job; the card's tip offers the flag that fits.
+
+Together they give the invariant the test suite asserts directly: **a fully
+idle, schedulable node's GPUs are always `ready`.**
+
+**Tests are real data, one case per display mode.**
+`web/src/lib/gpu-availability.fixtures.ts` holds cluster records captured on
+2026-07-29 (with the commands used to capture them), and
+`gpu-availability.test.ts` pins each display mode to one of them, running the
+real adapter → classifier path. Nothing is hand-tuned to make a rule pass; a
+failure means the rules changed, not that a fixture drifted.

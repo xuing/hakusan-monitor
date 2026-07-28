@@ -1,18 +1,19 @@
 import { Fragment, useEffect, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { ChevronRight } from "lucide-react";
-import { Bar } from "@/components/common/bar";
 import { CopyButton } from "@/components/common/copy-button";
 import { GpuReleaseHint } from "@/components/common/gpu-release-hint";
 import { PolicyLimitChips } from "@/components/common/policy-limit-chips";
 import { Tag } from "@/components/common/tag";
+import { UnitBlocks } from "@/components/common/unit-blocks";
 import { Card, CardContent } from "@/components/ui/card";
 import { useLive } from "@/hooks/live-context";
 import { useResourceFilter } from "@/hooks/resource-filter-context";
 import { poolLabel, reasonLabel, useT, type TFn, type TranslationKey } from "@/i18n";
 import { occupantsForPool, poolCapacity } from "@/lib/derive";
 import { fmtCountdown, fmtDur, fmtMB, nf, parseDur } from "@/lib/format";
-import { gpuAvailabilitySegments, type GpuAvailabilitySegmentKind } from "@/lib/gpu-availability";
+import { gpuAvailability, type GpuAvailabilitySegment } from "@/lib/gpu-availability";
+import { gpuSegmentLabel, gpuSegmentTextClass } from "@/components/common/gpu-status";
 import {
   cpuProbeDetail,
   cpuProbeLabel,
@@ -23,9 +24,9 @@ import {
 import {
   contendersForPool,
   fitHasClearSlot,
-  gpuAvailabilityTotals,
   gpuBackfillTipCommand,
   gpuFitSnapshot,
+  gpuNodeFacts,
   gpuFitTipCommand,
   gpuFitWithMemOverride,
   isLimitBlocked,
@@ -41,20 +42,24 @@ import {
   type GpuFitNode,
   type GpuFitTipData,
 } from "@/lib/gpu-fit";
-import { effectiveMemPerNodeGb, interactiveForcedSec, isMaterialsStudioPartition, matchPool, partitionCap, partitionPolicy, type PartitionPolicy, type Tone } from "@/lib/slurm";
+import { capPerGpu, effectiveMemPerNodeGb, interactiveForcedSec, isMaterialsStudioPartition, matchPool, partitionCap, partitionDefaultRequest, partitionPolicy, type PartitionPolicy, type Tone } from "@/lib/slurm";
 import { cn } from "@/lib/utils";
 import { cpuProbeMaxAge, cpuProbeRows, cpuProbeState, type CpuProbeRow } from "@/lib/cpu-probes";
 import { buildRequestCommand, shouldShowGapShell } from "@/lib/request-command";
+import { defaultRequestFit, singleNodeCoreFlag } from "@/lib/default-request";
 import { gpuPartitionAdvice, partitionRunningJobs } from "@/lib/gpu-advice";
 import type { Occupant, Partition, Pool, PoolGpu, RawJob, Snapshot } from "@/types/snapshot";
 
 
 // Minimal starter per pool. Hakusan's submit plugin applies the partition
 // defaults, including the GPU partition's default one GPU per node.
+// No pool hardcodes a resource flag: where the plugin's default overflows a
+// node (VM-CPU / VM-GPU-L / VM-LM), `defaultRequestFit` derives the `-n` that
+// pins it back to one node, so a config change is picked up on its own.
 const SAMPLE: Record<string, { partition: string; requiredFlags?: string[] }> = {
   "vm-cpu": { partition: "VM-CPU" },
   cpu: { partition: "DEF" },
-  lm: { partition: "VM-LM", requiredFlags: ["-n 1"] },
+  lm: { partition: "VM-LM" },
   a40: { partition: "GPU-1" },
   a100: { partition: "GPU-1A" },
   "h100-80": { partition: "VM-GPU-L" },
@@ -115,32 +120,29 @@ function PoolCard({ pool, snap, t }: { pool: Pool; snap: Snapshot; t: TFn }) {
   const maint = isMaintPool(pool);
   const availableNodes = pool.available_nodes ?? pool.idle_nodes ?? 0;
   const samplePartition = SAMPLE[pool.id]?.partition ?? "";
-  const gpuFit = isGpu ? gpuFitSnapshot(snap, pool, partitionCap(samplePartition, snap.policy), samplePartition) : null;
-  const gpuSched = gpuFit?.schedulable ?? 0;
   const pendingActive = isGpu ? contendersForPool(snap, pool.id) : [];
-  // A schedulable slot only means "starts now" if no queued job can claim it
-  // first — judged for the interactive default (GPU salloc is pinned to 12h).
-  const gpuClear = !isGpu || !gpuFit || gpuSched <= 0
-    || fitHasClearSlot(gpuFit, pendingActive, Date.now(), 720 * 60);
-  const gpuAvailability = gpuAvailabilityTotals(
-    isGpu ? pool.gpu?.free ?? 0 : 0,
-    isGpu ? pool.gpu?.reserved ?? 0 : 0,
-  );
-  const rawGpuFree = gpuAvailability.unreservedFree;
-  const reservedGpu = gpuAvailability.reserved;
+  // One classifier decides every GPU number on this card: each physically
+  // idle GPU lands in exactly one state, and the states sum to the headline.
+  const avail = isGpu
+    ? gpuAvailability(
+        gpuNodeFacts(snap.nodes, pool, pendingActive, Date.now()),
+        partitionDefaultRequest(samplePartition, snap.policy),
+        capPerGpu(partitionCap(samplePartition, snap.policy)),
+      )
+    : null;
+  const readyGpu = avail?.ready ?? 0;
   // The header is the overview: all physically idle GPUs. The body then
   // partitions that same total into peer status blocks (ready, constrained,
   // or reserved) instead of presenting one subset as a second headline.
-  const idleGpu = gpuAvailability.physicalIdle;
-  const hasAvailable = (isGpu ? gpuSched > 0 && gpuClear : availableNodes > 0) && !maint;
-  const hasStrandedGpu = isGpu && idleGpu > 0 && !(gpuSched > 0 && gpuClear) && !maint;
+  const idleGpu = avail?.physicalIdle ?? 0;
+  const hasAvailable = (isGpu ? readyGpu > 0 : availableNodes > 0) && !maint;
+  const hasStrandedGpu = isGpu && idleGpu > 0 && readyGpu <= 0 && !maint;
   const availableNodesLabel = isGpu
     ? t("pool.gpuFreePhysical", { n: idleGpu })
     : t("pool.availableNodes", { n: availableNodes });
   const free = isGpu ? idleGpu : pool.cores.free;
   const total = isGpu && pool.gpu ? pool.gpu.total : pool.cores.total;
   const used = isGpu && pool.gpu ? pool.gpu.used : pool.cores.alloc;
-  const util = total ? used / total : 0;   // bar fills as the pool gets used (full = red)
   const freeRatio = total ? free / total : 0;
   // colour by how much is free: none = red, scarce (<10%) = amber, plenty = green
   const freeColor = maint
@@ -195,17 +197,8 @@ function PoolCard({ pool, snap, t }: { pool: Pool; snap: Snapshot; t: TFn }) {
           <div className="min-w-0 flex-1">
             {maint ? (
               <span className="text-lg font-semibold text-muted-foreground">{t("pool.maint")}</span>
-            ) : isGpu ? (
-              <GpuAvailabilityBreakdown
-                fit={gpuFit}
-                schedulable={gpuSched}
-                clear={gpuClear}
-                free={rawGpuFree}
-                reserved={reservedGpu}
-                down={pool.gpu?.down ?? 0}
-                pendingActive={pendingActive}
-                t={t}
-              />
+            ) : isGpu && avail ? (
+              <GpuAvailabilityBreakdown segments={avail.segments} t={t} />
             ) : (
               <>
                 <div className={cn("tnum text-2xl font-bold", freeColor)}>
@@ -223,9 +216,17 @@ function PoolCard({ pool, snap, t }: { pool: Pool; snap: Snapshot; t: TFn }) {
         </div>
 
         {isGpu && pool.gpu ? (
-          <GpuBlocks gpu={pool.gpu} schedulableFree={gpuClear ? gpuSched : 0} className="mt-2" />
+          <GpuBlocks gpu={pool.gpu} schedulableFree={readyGpu} className="mt-2" />
         ) : (
-          <Bar value={maint ? 0 : util} tone={maint ? "neutral" : undefined} className="mt-2" />
+          <UnitBlocks
+            free={free}
+            used={used}
+            reserved={0}
+            down={Math.max(0, total - free - used)}
+            total={total}
+            unit={t("unit.cores")}
+            className="mt-2 w-full"
+          />
         )}
 
         <div className="mt-2.5 flex flex-wrap items-center gap-x-4 text-xs text-muted-foreground">
@@ -342,6 +343,13 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
   // the QOS mem is the nominal hardware size, so e.g. GPU-S "512G" dies at
   // submit ("Requested node configuration is not available") — never let the
   // panel emit a request no node can hold.
+  // The plugin's flagless request can exceed one node (measured: VM-CPU and
+  // VM-GPU-L 476800 MB vs 469070 MB, VM-LM 3772800 MB vs 3754178 MB). Slurm
+  // then spreads the job — VM-GPU-L takes a second H100 for one task — or
+  // refuses it. Pin it back to one node and say why.
+  const nodeShape = { cores: poolCoresPerNode(pool), memMb: pool.mem_per_node };
+  const defaultFit = defaultRequestFit(partitionDefaultRequest(partition, snap?.policy), nodeShape);
+  const singleNodeFlag = singleNodeCoreFlag(defaultFit);
   const effMemGb = effectiveMemPerNodeGb(cap, pool.mem_per_node);
   const maxMemMb = effMemGb ? effMemGb * 1024 : 0;
   const memTooHigh = parsedMemMb > 0 && maxMemMb > 0 && parsedMemMb > maxMemMb;
@@ -449,7 +457,7 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
   // the shell exits, so the placeholder never idles to its limit.
   const cmd = buildRequestCommand({
     partition,
-    requiredFlags: base.requiredFlags,
+    requiredFlags: [...(base.requiredFlags ?? []), ...(singleNodeFlag ? [singleNodeFlag] : [])],
     nodeCount,
     coreCount,
     memValue,
@@ -604,6 +612,30 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
               <div className="mt-1 text-xs leading-relaxed text-muted-foreground">{t("pool.cpuProbeDefaultOnly")}</div>
             )}
             {multiNodeCpuPolicy && <div className="mt-1 text-xs leading-relaxed text-warn-fg">{t("pool.multiNodeHint")}</div>}
+            {/* Why the command carries a -n the user did not choose. Stated as
+                a fact about the partition, never as a note about our editing:
+                the reader has no idea a "default" was rewritten and no reason
+                to care — they only need to know why 31 and not 32. */}
+            {defaultFit && !defaultFit.fitsOneNode && (
+              <div className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                {t("pool.defaultOverflow", {
+                  partition,
+                  n: defaultFit.maxCoresOnOneNode,
+                  cores: defaultFit.cores,
+                  per: fmtMemRaw(defaultFit.memPerCoreMb),
+                  need: fmtMemRaw(defaultFit.memMb),
+                  node: fmtMemRaw(defaultFit.node.memMb),
+                })}{" "}
+                {/* without the flag: a pool with spare nodes gets the job
+                    split (GPU pools lose an extra card to it), a single-node
+                    pool has nowhere to spill and Slurm refuses the job */}
+                {pool.nodes < defaultFit.nodesNeeded
+                  ? t("pool.defaultOverflowRefused", { n: defaultFit.maxCoresOnOneNode })
+                  : isGpu
+                    ? t("pool.defaultOverflowSplitGpu", { n: defaultFit.maxCoresOnOneNode, nodes: defaultFit.nodesNeeded })
+                    : t("pool.defaultOverflowSplit", { n: defaultFit.maxCoresOnOneNode, nodes: defaultFit.nodesNeeded })}
+              </div>
+            )}
             {gpuTip && (
               <GpuFitQuickTip
                 tip={gpuTip}
@@ -1234,6 +1266,12 @@ function clockShort(ms: number) {
   return d.toDateString() === new Date().toDateString() ? hm : `${d.getMonth() + 1}/${d.getDate()} ${hm}`;
 }
 
+/** Cores on one node of this pool — pools are homogeneous, so the pool total
+ *  divided by its node count is the per-node figure Slurm sees. */
+function poolCoresPerNode(pool: Pool) {
+  return pool.nodes > 0 ? Math.floor(pool.cores.total / pool.nodes) : 0;
+}
+
 function partitionOptionGroups(partitions: string[], t: TFn) {
   const general = partitions.filter((partition) => !isMaterialsStudioPartition(partition));
   const materials = partitions.filter(isMaterialsStudioPartition);
@@ -1313,43 +1351,17 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
 const CARD_REQUEST_SEC = 720 * 60;
 
 function GpuAvailabilityBreakdown({
-  fit,
-  schedulable,
-  clear,
-  free,
-  reserved,
-  down,
-  pendingActive,
+  segments,
   t,
 }: {
-  fit: GpuFitInfo | null;
-  schedulable: number;
-  clear: boolean;
-  free: number;
-  reserved: number;
-  down: number;
-  pendingActive: RawJob[];
+  segments: GpuAvailabilitySegment[];
   t: TFn;
 }) {
-  const rows = fit?.stranded ?? [];
-  const memoryNode = strandedTipNode(fit);
-  const constrainedContested = !!memoryNode
-    && slotBlocked(slotContention(memoryNode, pendingActive, Date.now()), CARD_REQUEST_SEC);
-  const segments = gpuAvailabilitySegments({
-    unreservedFree: free,
-    schedulable,
-    reserved,
-    down,
-    hasClearSlot: clear,
-    constrainedContested,
-    shortCpu: rows.some((row) => row.missingCores > 0),
-    shortMemory: rows.some((row) => row.missingMemMb > 0),
-  });
   return (
     <div className="flex flex-wrap items-end gap-x-6 gap-y-2">
       {segments.map((segment) => (
         <span key={segment.kind} className="inline-flex items-end gap-x-2">
-          <b className={cn("tnum text-2xl font-bold leading-none", gpuSegmentTextClass(segment.kind))}>
+          <b className={cn("tnum shrink-0 whitespace-nowrap text-2xl font-bold leading-none", gpuSegmentTextClass(segment.kind))}>
             {t("pool.gpuCount", { n: nf(segment.count) })}
           </b>
           <span className="text-xs leading-snug text-muted-foreground">
@@ -1359,30 +1371,6 @@ function GpuAvailabilityBreakdown({
       ))}
     </div>
   );
-}
-
-function gpuSegmentTextClass(kind: GpuAvailabilitySegmentKind) {
-  if (kind === "ready") return "text-ok-fg";
-  if (kind === "down") return "text-bad-fg";
-  if (kind === "full") return "text-muted-foreground";
-  // Resource constraints, queue contention, and scheduler reservations all
-  // mean "idle but not directly available" and intentionally share amber.
-  return "text-warn-fg";
-}
-
-function gpuSegmentLabel(kind: GpuAvailabilitySegmentKind, t: TFn) {
-  const keys: Record<GpuAvailabilitySegmentKind, TranslationKey> = {
-    ready: "pool.gpuStatusReady",
-    contested: "pool.gpuStatusContested",
-    memory: "pool.gpuStatusMemory",
-    cpu: "pool.gpuStatusCpu",
-    "cpu-memory": "pool.gpuStatusCpuMemory",
-    constrained: "pool.gpuStatusConstrained",
-    reserved: "pool.gpuStatusReserved",
-    down: "pool.gpuStatusDown",
-    full: "pool.gpuStatusFull",
-  };
-  return t(keys[kind]);
 }
 
 function strandedTipNode(fit: GpuFitInfo | null) {
@@ -1528,7 +1516,10 @@ function isMaintPool(pool: Pool) {
 
 function hasAvailableNodes(pool: Pool, snap: Snapshot) {
   if (isMaintPool(pool)) return false;
-  if (pool.kind === "gpu") return schedulableGpuSlots(snap.nodes, pool, partitionCap(SAMPLE[pool.id]?.partition ?? "", snap.policy)) > 0;
+  if (pool.kind === "gpu") {
+    const partition = SAMPLE[pool.id]?.partition ?? "";
+    return schedulableGpuSlots(snap.nodes, pool, partitionCap(partition, snap.policy), partition, snap.policy) > 0;
+  }
   return (pool.available_nodes ?? pool.idle_nodes ?? 0) > 0;
 }
 

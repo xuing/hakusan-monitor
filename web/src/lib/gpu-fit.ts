@@ -3,8 +3,9 @@
 // CPU/memory can't host it? Pure computation — no React, no i18n — so both the
 // Overview pool cards and the Partitions page share one verdict.
 import { expandHostlist, nodeIsSchedulable } from "@/lib/derive";
-import { partitionPolicy, type PartitionCap } from "@/lib/slurm";
-import type { Pool, RawJob, RawNode, Snapshot } from "@/types/snapshot";
+import { gpuPerGpuNeed, type GpuDefaultRequest, type GpuNodeFacts } from "@/lib/gpu-availability";
+import { capPerGpu, partitionDefaultRequest, partitionPolicy, type PartitionCap } from "@/lib/slurm";
+import type { PolicySnapshot, Pool, RawJob, RawNode, Snapshot } from "@/types/snapshot";
 
 export interface GpuFitNeed {
   partition: string;
@@ -36,43 +37,25 @@ export interface GpuFitInfo {
   reservedNodes: GpuFitNode[];
 }
 
-export interface GpuAvailabilityTotals {
-  /** Physically idle and not held by a future scheduler reservation. */
-  unreservedFree: number;
-  /** Physically idle, but already held by the scheduler. */
-  reserved: number;
-  /** Everything physically idle, whether immediately unreserved or held. */
-  physicalIdle: number;
-}
-
-/** Keep the dashboard's three GPU capacity concepts explicit. In particular,
- * never promote `free + reserved` to the primary actionable number and then
- * present `free` and `reserved` as if they were a contradictory breakdown. */
-export function gpuAvailabilityTotals(free: number, reserved: number): GpuAvailabilityTotals {
-  const unreservedFree = Math.max(0, free);
-  const schedulerReserved = Math.max(0, reserved);
-  return {
-    unreservedFree,
-    reserved: schedulerReserved,
-    physicalIdle: unreservedFree + schedulerReserved,
-  };
-}
-
 export interface GpuFitTipData {
   mem: string;
   node: string;
 }
 
-export function schedulableGpuSlots(nodes: RawNode[], pool: Pool, cap: PartitionCap) {
-  return gpuFitFromNodes(nodes, [], pool, cap, "").schedulable;
+export function schedulableGpuSlots(nodes: RawNode[], pool: Pool, cap: PartitionCap,
+                                    partition: string, policy?: PolicySnapshot) {
+  return gpuFitFromNodes(nodes, [], pool, cap, partition,
+                         partitionDefaultRequest(partition, policy)).schedulable;
 }
 
 export function gpuFitSnapshot(snap: Snapshot, pool: Pool, cap: PartitionCap, partition: string): GpuFitInfo {
-  return gpuFitFromNodes(snap.nodes, snap.jobs, pool, cap, partition);
+  return gpuFitFromNodes(snap.nodes, snap.jobs, pool, cap, partition,
+                         partitionDefaultRequest(partition, snap.policy));
 }
 
-export function gpuFitFromNodes(nodes: RawNode[], jobs: RawJob[], pool: Pool, cap: PartitionCap, partition: string): GpuFitInfo {
-  const need = gpuFitNeed(nodes, pool, cap, partition);
+export function gpuFitFromNodes(nodes: RawNode[], jobs: RawJob[], pool: Pool, cap: PartitionCap,
+                                partition: string, request: GpuDefaultRequest): GpuFitInfo {
+  const need = gpuFitNeed(nodes, pool, cap, partition, request);
   const byNode = jobs.length ? runningJobsByNode(jobs) : new Map<string, RawJob[]>();
   const stranded: GpuFitNode[] = [];
   const fitNodes: GpuFitNode[] = [];
@@ -155,6 +138,44 @@ export function gpuFitWithMemOverride(fit: GpuFitInfo, memMb: number): GpuFitInf
   };
 }
 
+// Kept in sync with backend/normalize.py needs_attention(): these states mean
+// "operator problem", every other non-schedulable state is a scheduler hold.
+const ATTENTION_STATES = ["DOWN", "NOT_RESPONDING", "DRAIN", "DRAINING", "FAIL", "FAILING",
+  "MAINT", "POWER_DOWN", "POWERING_DOWN", "POWERED_DOWN", "REBOOT_ISSUED", "REBOOT_REQUESTED"];
+
+/** Adapt a pool's raw nodes into the plain records gpu-availability classifies.
+ *  Every node of the pool is included — a drained node's idle GPUs are part of
+ *  the picture ("down"), they are just not capacity. */
+export function gpuNodeFacts(nodes: RawNode[], pool: Pool, pendingActive: RawJob[], nowMs: number): GpuNodeFacts[] {
+  const type = pool.gpu?.type ?? "";
+  return nodes
+    .filter((node) => node.pool === pool.id)
+    .map((node) => {
+      const states = new Set(node.state.map((state) => String(state).toUpperCase()));
+      const offline = ATTENTION_STATES.some((state) => states.has(state));
+      const held = !offline && !nodeIsSchedulable(node);
+      const freeGpu = Math.max(0, parseGpuCount(node.gres, type) - parseGpuCount(node.gres_used, type));
+      const freeCores = Math.max(0, node.cpus - node.alloc_cpus);
+      const freeMemMb = Math.max(0, node.real_memory - node.alloc_memory);
+      // Contention only decides the verdict for nodes that are otherwise
+      // takeable; an offline or held node is already spoken for.
+      const contested = !offline && !held && freeGpu > 0
+        && slotContention({ node, freeGpu, freeCores, freeMemMb } as GpuFitNode, pendingActive, nowMs).contenders > 0;
+      return {
+        name: node.name,
+        gpusTotal: parseGpuCount(node.gres, type),
+        gpusUsed: parseGpuCount(node.gres_used, type),
+        coresTotal: node.cpus,
+        coresFree: freeCores,
+        memTotalMb: node.real_memory,
+        memFreeMb: freeMemMb,
+        offline,
+        held,
+        contested,
+      };
+    });
+}
+
 /** PLANNED is a future scheduler reservation, not an outage. Such a node must
  * stay out of ordinary free totals, but Slurm may backfill its idle resources
  * when the request is guaranteed to finish before the reservation starts. */
@@ -166,26 +187,28 @@ function nodeIsBackfillCandidate(node: RawNode) {
     .some((state) => states.has(state));
 }
 
-function gpuFitNeed(nodes: RawNode[], pool: Pool, cap: PartitionCap, partition: string): GpuFitNeed {
-  const maxGpus = Math.max(1, cap.maxGpus ?? 1);
-  const cores = Math.max(1, Math.ceil((cap.maxCores ?? 1) / maxGpus));
-  const capMemMb = cap.maxMemGb ? Math.ceil((cap.maxMemGb * 1000) / maxGpus) : 0;
-  const observedMem = pool.gpu
-    ? Math.max(0, ...nodes
-        .filter((node) => node.pool === pool.id)
-        .map((node) => {
-          const usedGpu = parseGpuCount(node.gres_used, pool.gpu!.type);
-          if (usedGpu <= 0) return 0;
-          const mem = parseTresMemoryMb(node.alloc_tres) || node.alloc_memory;
-          return mem > 0 ? Math.ceil(mem / usedGpu) : 0;
-        }))
-    : 0;
-  return {
-    partition,
-    gpus: 1,
-    cores,
-    memMb: Math.max(capMemMb, observedMem),
+/**
+ * One GPU's share of the partition's DEFAULT request.
+ *
+ * Delegates to gpu-availability so the pool cards, the partitions page and the
+ * tips all judge against the same footprint. The two traps this replaced:
+ *
+ *  - the QoS cap is not the default. `salloc -p VM-GPU-L` asks 32 cores x
+ *    DefMemPerCPU 14900 MB = 476800 MB; the cap says mem=480G.
+ *  - the biggest memory any single GPU can ever get is the node's per-GPU
+ *    hardware share (469070 MB on a gl0x node). Asking for more than that
+ *    made every idle H100 node read "memory insufficient" instead of "free".
+ */
+function gpuFitNeed(nodes: RawNode[], pool: Pool, cap: PartitionCap, partition: string,
+                    request: GpuDefaultRequest): GpuFitNeed {
+  const poolNodes = nodes.filter((node) => node.pool === pool.id);
+  const shape = {
+    gpus: Math.max(0, ...poolNodes.map((node) => parseGpuCount(node.gres, pool.gpu?.type ?? ""))),
+    cores: Math.max(0, ...poolNodes.map((node) => node.cpus)),
+    memMb: Math.max(0, ...poolNodes.map((node) => node.real_memory)),
   };
+  const need = gpuPerGpuNeed(request, shape, capPerGpu(cap));
+  return { partition, gpus: need.gpus, cores: need.cores, memMb: need.memMb };
 }
 
 export function runningJobsByNode(jobs: RawJob[]) {
@@ -290,11 +313,6 @@ export function slotBlocked(c: SlotContention | null | undefined, requiredSec: n
 
 export function fitHasClearSlot(fit: GpuFitInfo, pendingActive: RawJob[], nowMs: number, requiredSec: number): boolean {
   return fit.fitNodes.some((row) => !slotBlocked(slotContention(row, pendingActive, nowMs), requiredSec));
-}
-
-export function hasUncontestedGpuSlot(nodes: RawNode[], pendingActive: RawJob[], pool: Pool, cap: PartitionCap, nowMs: number, requiredSec: number): boolean {
-  const fit = gpuFitFromNodes(nodes, [], pool, cap, "");
-  return fit.schedulable > 0 && fitHasClearSlot(fit, pendingActive, nowMs, requiredSec);
 }
 
 /** Physically-idle GPUs in this pool that THIS partition's default request

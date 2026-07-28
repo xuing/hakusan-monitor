@@ -37,6 +37,54 @@ BUILTIN_PARTITION_CAPS = {
     "VM-LM": {"maxCores": 96, "maxMemGb": 3840, "maxNodes": 1, "wall": "7d"},
 }
 
+# What a request with NO resource flags actually asks Slurm for. This is NOT
+# the QoS cap: the cap is the ceiling, these are the values hakusan's
+# job_submit.lua + the partition's DefMemPerCPU put on the job. Confusing the
+# two is a recurring source of wrong dashboard verdicts, so the numbers are
+# measured, not inferred.
+#
+# Measured 2026-07-29 on hakusan2 — held jobs never run, so the probe is free:
+#   sbatch -H --parsable -p $P --wrap 'sleep 1'
+#   scontrol show job $JOBID   # NumCPUs, MinMemoryCPU, TresPerNode
+#   scancel $JOBID
+# `def_mem_per_cpu_mb` is re-read live every policy cycle from
+# `scontrol show partition` (DefMemPerCPU); `cores`/`gpus_per_node` come from
+# the submit plugin and are visible only through the probe above.
+#
+# Cross-checks captured the same day:
+#   GPU-1     26 cores x 9845 MB  = 255970 MB, 1 GPU/node
+#   VM-GPU-L  32 cores x 14900 MB = 476800 MB, 1 GPU/node
+#             -> exceeds a gl0x node's 469070 MB, so `salloc -p VM-GPU-L`
+#                really is placed across two nodes (observed: gl[02-03]).
+BUILTIN_PARTITION_DEFAULTS = {
+    "DEF": {"cores": 16, "def_mem_per_cpu_mb": 6000},
+    "TINY": {"cores": 16, "def_mem_per_cpu_mb": 6000},
+    "SINGLE": {"cores": 16, "def_mem_per_cpu_mb": 6000},
+    "LONG": {"cores": 16, "def_mem_per_cpu_mb": 6000},
+    "SMALL": {"cores": 256, "def_mem_per_cpu_mb": 6000},
+    "LARGE": {"cores": 256, "def_mem_per_cpu_mb": 6000},
+    "XLARGE": {"cores": 256, "def_mem_per_cpu_mb": 6000},
+    "X2LARGE": {"cores": 256, "def_mem_per_cpu_mb": 6000},
+    "LONG-L": {"cores": 256, "def_mem_per_cpu_mb": 6000},
+    "MS_Castep": {"cores": 8, "def_mem_per_cpu_mb": 6000},
+    "MS_Dmol3": {"cores": 8, "def_mem_per_cpu_mb": 6000},
+    "MS_Forcite": {"cores": 8, "def_mem_per_cpu_mb": 6000},
+    "MS_Compass": {"cores": 8, "def_mem_per_cpu_mb": 6000},
+    "MS_Dftbplus": {"cores": 8, "def_mem_per_cpu_mb": 6000},
+    # MS_Amorphous / MatStudio refuse a probe without -L (license), and share
+    # the Materials Studio submit path — same defaults as their siblings.
+    "MS_Amorphous": {"cores": 8, "def_mem_per_cpu_mb": 6000},
+    "MatStudio": {"cores": 8, "def_mem_per_cpu_mb": 6000},
+    "GPU-1": {"cores": 26, "def_mem_per_cpu_mb": 9845, "gpus_per_node": 1},
+    "GPU-S": {"cores": 26, "def_mem_per_cpu_mb": 9845, "gpus_per_node": 1},
+    "GPU-L": {"cores": 26, "def_mem_per_cpu_mb": 9845, "gpus_per_node": 1},
+    "GPU-1A": {"cores": 26, "def_mem_per_cpu_mb": 9845, "gpus_per_node": 1},
+    "GPU-LA": {"cores": 26, "def_mem_per_cpu_mb": 9845, "gpus_per_node": 1},
+    "VM-CPU": {"cores": 32, "def_mem_per_cpu_mb": 14900},
+    "VM-GPU-L": {"cores": 32, "def_mem_per_cpu_mb": 14900, "gpus_per_node": 1},
+    "VM-LM": {"cores": 96, "def_mem_per_cpu_mb": 39300},
+}
+
 BUILTIN_PARTITION_POLICIES = {
     "DEF": {"maxJobsPerUser": 300, "maxSubmitPerUser": 40},
     "TINY": {"maxJobsPerUser": 5},

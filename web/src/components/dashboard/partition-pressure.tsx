@@ -1,3 +1,4 @@
+import { Fragment } from "react";
 import { CopyButton } from "@/components/common/copy-button";
 import { Empty } from "@/components/common/empty";
 import { HoverHint } from "@/components/common/hover-hint";
@@ -6,13 +7,16 @@ import { SectionCard } from "@/components/common/section-card";
 import { LivePending } from "@/components/common/live-pending";
 import { PolicyLimitChips } from "@/components/common/policy-limit-chips";
 import { Tag } from "@/components/common/tag";
+import { UnitBlocks } from "@/components/common/unit-blocks";
+import { gpuSegmentLabel } from "@/components/common/gpu-status";
 import { useLive } from "@/hooks/live-context";
 import { useResourceFilter } from "@/hooks/resource-filter-context";
 import { poolLabel, useT, type TFn } from "@/i18n";
 import type { TranslationKey } from "@/i18n/en";
 import { poolCapacity, type PoolCapacity } from "@/lib/derive";
 import { clockOf, fmtMB, nf } from "@/lib/format";
-import { contendersForPool, fitHasClearSlot, gpuStrandedCount } from "@/lib/gpu-fit";
+import { contendersForPool, fitHasClearSlot, gpuNodeFacts, gpuStrandedCount } from "@/lib/gpu-fit";
+import { gpuAvailability, type GpuAvailability } from "@/lib/gpu-availability";
 import { gpuPartitionAdvice, type GpuPartitionAdvice } from "@/lib/gpu-advice";
 import { cpuProbeForPartition, cpuProbeMaxAge, cpuProbeState, type CpuProbeRow } from "@/lib/cpu-probes";
 import {
@@ -23,10 +27,12 @@ import {
   policyLimitRows,
 } from "@/lib/policy-hints";
 import {
+  capPerGpu,
   isMaterialsStudioPartition,
   interactiveForcedSec,
   matchPartition,
   partitionCap,
+  partitionDefaultRequest,
   partitionPolicy as slurmPartitionPolicy,
   type PartitionCap,
 } from "@/lib/slurm";
@@ -206,6 +212,19 @@ export function PartitionPressure() {
             const gpuSchedulableMax = isGpu && pool
               ? Math.max(0, ...parts.map((sp) => gpuAdviceByPartition.get(sp.name)?.fit.schedulable ?? 0))
               : undefined;
+            // Same classifier as the Overview pool cards, so a GPU cannot be
+            // "available" on one page and reserved/short on the other. Sibling
+            // policies share the pool's hardware: the most permissive one wins,
+            // matching the per-row rule right below.
+            const gpuAvail = isGpu && pool
+              ? parts
+                  .map((sp) => gpuAvailability(
+                    gpuNodeFacts(snap.nodes, pool, pendingActive, nowMs),
+                    partitionDefaultRequest(sp.name, snap.policy),
+                    capPerGpu(partitionCap(sp.name, snap.policy)),
+                  ))
+                  .reduce<GpuAvailability | null>((best, next) => (!best || next.ready > best.ready ? next : best), null)
+              : null;
             return (
               <div key={group.key}>
                 <PoolHeader
@@ -215,6 +234,7 @@ export function PartitionPressure() {
                   isGpu={isGpu}
                   pc={pc}
                   gpuSchedulable={gpuSchedulableMax}
+                  gpuAvail={gpuAvail}
                   generatedAt={snap.generated_at}
                   t={t}
                 />
@@ -354,6 +374,7 @@ function PoolHeader({
   isGpu,
   pc,
   gpuSchedulable,
+  gpuAvail,
   generatedAt,
   t,
 }: {
@@ -363,10 +384,14 @@ function PoolHeader({
   isGpu: boolean;
   pc: PoolCapacity;
   gpuSchedulable?: number;
+  gpuAvail?: GpuAvailability | null;
   generatedAt: number;
   t: TFn;
 }) {
   const maint = isGpu && !!pool?.gpu?.maint;
+  const gpuReady = gpuAvail?.ready ?? 0;
+  // Every idle-but-not-takeable state, in the classifier's own order.
+  const gpuBlocked = (gpuAvail?.segments ?? []).filter((s) => s.kind !== "ready" && s.kind !== "full");
   // every number is self-labelled: which dimension is "used", and used/total in raw units.
   const used = isGpu ? pool?.gpu?.used ?? 0 : pool?.cores.alloc ?? 0;
   const total = isGpu ? pool?.gpu?.total ?? 0 : pool?.cores.total ?? 0;
@@ -420,9 +445,10 @@ function PoolHeader({
             </span>
             <span>·</span>
             {isGpu ? (
-              // a green zero would contradict the colour language — grey it out
-              <span className={cn("font-mono", (pool?.gpu?.free ?? 0) > 0 ? "text-ok-fg" : "text-muted-foreground")}>
-                {nf(pool?.gpu?.free ?? 0)} {unit} {t("part.available")}
+              // "available" means takeable now, exactly as on the pool cards —
+              // a green zero would contradict the colour language, so grey it out
+              <span className={cn("font-mono", gpuReady > 0 ? "text-ok-fg" : "text-muted-foreground")}>
+                {nf(gpuReady)} {unit} {t("part.available")}
               </span>
             ) : pc.idleNodes > 0 ? (
               <>
@@ -439,85 +465,19 @@ function PoolHeader({
                 {pc.freeCores > 0 && <span className="text-muted-foreground"> {t("pool.scatteredNote")}</span>}
               </span>
             )}
-            {isGpu && (pool?.gpu?.reserved ?? 0) > 0 && (
-              <>
+            {isGpu && gpuBlocked.map((segment) => (
+              <Fragment key={segment.kind}>
                 <span>·</span>
-                <span className="font-mono text-warn-fg">
-                  {t("pool.reserved", { n: nf(pool?.gpu?.reserved ?? 0) })}
+                <span className={cn("font-mono", segment.kind === "down" ? "text-bad-fg" : "text-warn-fg")}>
+                  {nf(segment.count)} {unit} {gpuSegmentLabel(segment.kind, t)}
                 </span>
-              </>
-            )}
+              </Fragment>
+            ))}
           </>
         )}
       </div>
     </div>
   );
-}
-
-function UnitBlocks({
-  free,
-  used,
-  reserved,
-  down,
-  total,
-  unit,
-  schedulable,
-}: {
-  free: number;
-  used: number;
-  reserved: number;
-  down: number;
-  total: number;
-  unit: string;
-  /** GPU pools only: of `free`, how many at least one sibling policy could
-   *  actually grant right now — splits the free segment green/yellow instead
-   *  of counting every physically-idle GPU as equally available. */
-  schedulable?: number;
-}) {
-  if (total <= 0) return null;
-  const stranded = schedulable !== undefined ? Math.max(0, free - schedulable) : 0;
-  const okFree = schedulable !== undefined ? Math.min(schedulable, free) : free;
-  const [okCells, strandedCells, usedCells, reservedCells, downCells] = scaleCells(
-    [okFree, stranded, used, reserved, down],
-    total,
-  );
-  const cell = (n: number, cls: string, key: string) =>
-    Array.from({ length: n }, (_, i) => (
-      <span key={`${key}-${i}`} className={cn("h-2.5 min-w-0 flex-1 rounded-sm", cls)} />
-    ));
-  return (
-    <div
-      className="flex h-2.5 w-36 shrink-0 gap-px"
-      title={`${nf(free)} ${unit} ${unit === "GPU" ? "free" : "available"}${stranded ? ` (${nf(stranded)} unused by any policy)` : ""} · ${nf(used)} used${reserved ? ` · ${nf(reserved)} reserved` : ""}${down ? ` · ${nf(down)} down` : ""}`}
-    >
-      {/* reserved reads exactly like stranded — idle, reachable only via
-          tweaks or the timed gap — so it sits solid amber with the free-ish
-          cells up front, not hollow behind the used ones */}
-      {cell(okCells, "bg-ok", "ok")}
-      {cell(strandedCells, "bg-warn", "stranded")}
-      {cell(reservedCells, "bg-warn", "reserved")}
-      {cell(usedCells, "bg-bad", "used")}
-      {cell(downCells, "bg-bad/35 ring-1 ring-inset ring-bad/65", "down")}
-    </div>
-  );
-}
-
-function scaleCells(values: number[], total: number, maxCells = 48): number[] {
-  const cells = Math.max(1, Math.min(maxCells, Math.round(total)));
-  if (total <= maxCells) return values.map((v) => Math.max(0, Math.round(v)));
-  const raw = values.map((v) => (Math.max(0, v) / total) * cells);
-  const out = raw.map(Math.floor);
-  let remaining = cells - out.reduce((sum, n) => sum + n, 0);
-  raw
-    .map((v, i) => ({ i, frac: v - Math.floor(v) }))
-    .sort((a, b) => b.frac - a.frac)
-    .forEach(({ i }) => {
-      if (remaining > 0) {
-        out[i] += 1;
-        remaining -= 1;
-      }
-    });
-  return out;
 }
 
 function PartitionRow({

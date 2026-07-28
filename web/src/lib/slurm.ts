@@ -1,4 +1,5 @@
 // Slurm-domain helpers: load tones, chart color mapping, resource filtering.
+import type { GpuDefaultRequest } from "@/lib/gpu-availability";
 import type { Partition, PolicySnapshot, Pool, Release } from "@/types/snapshot";
 
 export type Tone = "ok" | "warn" | "bad" | "info" | "neutral";
@@ -125,6 +126,37 @@ export const isMaterialsStudioPartition = (name: string) => MATERIALS_STUDIO_PAR
 
 export const partitionCap = (name: string, policy?: PolicySnapshot): PartitionCap =>
   policy?.partition_caps?.[name] ?? {};
+
+/** QoS ceiling expressed per GPU, for narrowing the per-GPU need. Slurm quotes
+ *  MaxTRES memory in binary GB (mem=256G = 256 GiB), so scale by 1024. */
+export function capPerGpu(cap: PartitionCap): { cores?: number; memMb?: number } {
+  const maxGpus = Math.max(1, cap.maxGpus ?? 1);
+  return {
+    cores: cap.maxCores ? Math.ceil(cap.maxCores / maxGpus) : undefined,
+    memMb: cap.maxMemGb ? Math.ceil((cap.maxMemGb * 1024) / maxGpus) : undefined,
+  };
+}
+
+/**
+ * What `salloc -p NAME` (no resource flags) actually asks Slurm for.
+ *
+ * Distinct from `partitionCap`, which is the QoS ceiling — the two differ by
+ * enough to invert a verdict: VM-GPU-L defaults to 32 x 14900 MB = 476800 MB
+ * while its cap reads mem=480G. Values come from the snapshot's measured
+ * `partition_defaults`; the fallbacks only keep an old snapshot from producing
+ * a zero-memory request.
+ */
+export function partitionDefaultRequest(name: string, policy?: PolicySnapshot): GpuDefaultRequest {
+  const d = policy?.partition_defaults?.[name] ?? {};
+  // Zeroes mean "unknown" — gpuPerGpuNeed then falls back to the node's own
+  // per-GPU hardware share instead of inventing a request.
+  return {
+    partition: name,
+    cores: d.cores ?? 0,
+    memPerCoreMb: d.def_mem_per_cpu_mb ?? 0,
+    gpusPerNode: d.gpus_per_node ?? 1,
+  };
+}
 
 export const partitionPolicy = (name: string, policy?: PolicySnapshot): PartitionPolicy =>
   policy?.partition_policies?.[name] ?? {};

@@ -140,5 +140,6 @@ function hasAvailableNodes(pool: Pool) {
 function gpuPoolSchedulableMax(snap: Snapshot, pool: Pool): number {
   if (pool.kind !== "gpu") return 0;
   const parts = snap.partitions.filter((p) => p.pool === pool.id);
-  return Math.max(0, ...parts.map((p) => schedulableGpuSlots(snap.nodes, pool, partitionCap(p.name, snap.policy))));
+  return Math.max(0, ...parts.map((p) =>
+    schedulableGpuSlots(snap.nodes, pool, partitionCap(p.name, snap.policy), p.name, snap.policy)));
 }

@@ -178,11 +178,26 @@ export interface DynamicPartitionPolicy {
   maxSubmitPerUser?: number;
 }
 
+/** What a flagless request actually asks Slurm for. NOT the QoS cap — see
+ *  backend/cluster_policy.py BUILTIN_PARTITION_DEFAULTS for how it is measured. */
+export interface PartitionDefaults {
+  /** cores the submit plugin puts on a request with no -n/-c */
+  cores?: number;
+  /** partition DefMemPerCPU, in MB (read live from `scontrol show partition`) */
+  def_mem_per_cpu_mb?: number;
+  max_mem_per_cpu_mb?: number;
+  def_mem_per_node_mb?: number;
+  max_mem_per_node_mb?: number;
+  /** GPUs per node the plugin adds on GPU partitions (TresPerNode=gres/gpu:N) */
+  gpus_per_node?: number;
+}
+
 export interface PolicySnapshot {
   generated_at: number;
   interval: number;
   partition_caps: Record<string, DynamicPartitionCap>;
   partition_policies: Record<string, DynamicPartitionPolicy>;
+  partition_defaults?: Record<string, PartitionDefaults>;
   /** per-partition provenance: "live" (sacctmgr) or "builtin" (fallback table) */
   cap_origin?: Record<string, "live" | "builtin">;
   qos?: Record<string, unknown>;

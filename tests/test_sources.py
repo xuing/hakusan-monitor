@@ -55,6 +55,35 @@ class TresPolicyTests(unittest.TestCase):
         self.assertEqual(snap["partition_policies"]["GPU-1"]["grpJobs"], 30)
         self.assertEqual(snap["partitions"]["GPU-1"]["nodes"], "spcc-a40g[01-20]")
 
+    def test_partition_defaults_keep_the_request_default_apart_from_the_qos_cap(self):
+        # Captured 2026-07-29 from `scontrol -o show partition VM-GPU-L`. The
+        # QoS ceiling is mem=480G; what a flagless request actually asks for is
+        # 32 cores x DefMemPerCPU. Confusing the two made three idle H100 nodes
+        # report "memory insufficient".
+        qos_text = "vm-gpu-l|cpu=32,gres/gpu:h100-80c=1,mem=480G|2-00:00:00|||||"
+        partition_text = (
+            "PartitionName=VM-GPU-L AllowQos=normal,vm-gpu-l AllocNodes=ALL Default=NO "
+            "QoS=vm-gpu-l Nodes=spcc-cld-gl[01-04] State=UP TotalCPUs=128 TotalNodes=4 "
+            "DefMemPerCPU=14900 MaxMemPerCPU=14900"
+        )
+
+        snap = build_policy_snapshot(qos_text, partition_text, now=123, interval=86400)
+        defaults = snap["partition_defaults"]["VM-GPU-L"]
+
+        self.assertEqual(defaults["cores"], 32)
+        self.assertEqual(defaults["def_mem_per_cpu_mb"], 14900)
+        self.assertEqual(defaults["gpus_per_node"], 1)
+        self.assertEqual(snap["partition_caps"]["VM-GPU-L"]["maxMemGb"], 480)
+        # 32 x 14900 = 476800 MB, more than a gl0x node's 469070 MB RealMemory.
+        self.assertGreater(defaults["cores"] * defaults["def_mem_per_cpu_mb"], 469070)
+
+    def test_partition_defaults_fall_back_to_the_builtin_table(self):
+        # No live partition text at all (first cycle / scontrol timeout).
+        snap = build_policy_snapshot("", "", now=1, interval=1)
+
+        self.assertEqual(snap["partition_defaults"]["GPU-1"],
+                         {"cores": 26, "def_mem_per_cpu_mb": 9845, "gpus_per_node": 1})
+
 
 class QueueParserTests(unittest.TestCase):
     def test_parse_queue_multiplies_gres_per_node_by_node_count(self):

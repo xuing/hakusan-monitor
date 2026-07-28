@@ -21,9 +21,11 @@ except Exception:          # unknown TZ name / missing tzdata -> host localtime
     CLUSTER_TZ = None
 
 try:                       # flat import when run as `python3 backend/server.py`
-    from cluster_policy import BUILTIN_PARTITION_CAPS, BUILTIN_PARTITION_POLICIES
+    from cluster_policy import (BUILTIN_PARTITION_CAPS, BUILTIN_PARTITION_DEFAULTS,
+                                BUILTIN_PARTITION_POLICIES)
 except ImportError:        # package import in tests (`from backend.sources import …`)
-    from backend.cluster_policy import BUILTIN_PARTITION_CAPS, BUILTIN_PARTITION_POLICIES
+    from backend.cluster_policy import (BUILTIN_PARTITION_CAPS, BUILTIN_PARTITION_DEFAULTS,
+                                        BUILTIN_PARTITION_POLICIES)
 
 MARK = "@@HM@@"
 SEP = "|@|"   # field separator unlikely to occur in any value (e.g. job names)
@@ -218,7 +220,30 @@ def parse_qos_policies(text):
     return qos
 
 
+def _mem_per_x_mb(line, key):
+    """`DefMemPerCPU=9845` -> 9845. UNLIMITED / absent -> 0.
+
+    scontrol prints these plain (already MB), so no unit suffix is expected —
+    _mem_mb still tolerates one rather than silently returning 0.
+    """
+    raw = _kv(line, key)
+    if not raw or raw.upper() in ("UNLIMITED", "N/A", "(NULL)"):
+        return 0
+    return _mem_mb(raw)
+
+
 def parse_partition_policies(text):
+    """`scontrol -o show partition` -> {partition: {...}}.
+
+    Beyond the QoS wiring, this carries the memory *defaults*: Slurm's
+    DefMemPerCPU is what a request with no `--mem` actually asks for, which is
+    a completely different number from the QoS MaxTRES ceiling. Measured live
+    2026-07-29: GPU-1 DefMemPerCPU=9845 (x26 default cores = 255970 MB) while
+    its QoS cap says mem=256G, and VM-GPU-L DefMemPerCPU=14900 (x32 = 476800
+    MB) against a 480G cap on nodes that physically hold 469070 MB. Treating
+    the cap as the default is what made three fully idle H100 nodes report
+    "memory insufficient".
+    """
     parts = {}
     for line in text.splitlines():
         if not line.startswith("PartitionName="):
@@ -234,8 +259,34 @@ def parse_partition_policies(text):
             "nodes": _kv(line, "Nodes"),
             "state": _kv(line, "State"),
             "default": _kv(line, "Default") == "YES",
+            "def_mem_per_cpu_mb": _mem_per_x_mb(line, "DefMemPerCPU"),
+            "max_mem_per_cpu_mb": _mem_per_x_mb(line, "MaxMemPerCPU"),
+            "def_mem_per_node_mb": _mem_per_x_mb(line, "DefMemPerNode"),
+            "max_mem_per_node_mb": _mem_per_x_mb(line, "MaxMemPerNode"),
+            "total_cpus": _int(_kv(line, "TotalCPUs")),
+            "total_nodes": _int(_kv(line, "TotalNodes")),
         }
     return parts
+
+
+def partition_defaults(partitions):
+    """Per-partition request defaults, live values over the built-in table.
+
+    Only the memory defaults are collected from Slurm; the *core* default is
+    applied by hakusan's job_submit.lua and is not visible in any scontrol
+    output, so it lives in the built-in table (measured, see cluster_policy).
+    """
+    out = {}
+    for name in set(BUILTIN_PARTITION_DEFAULTS) | set(partitions):
+        live = partitions.get(name) or {}
+        merged = dict(BUILTIN_PARTITION_DEFAULTS.get(name, {}))
+        for key in ("def_mem_per_cpu_mb", "max_mem_per_cpu_mb",
+                    "def_mem_per_node_mb", "max_mem_per_node_mb"):
+            if live.get(key):
+                merged[key] = live[key]
+        if merged:
+            out[name] = merged
+    return out
 
 
 def build_policy_snapshot(qos_text, partition_text, now, interval):
@@ -272,6 +323,7 @@ def build_policy_snapshot(qos_text, partition_text, now, interval):
         "partitions": partitions,
         "partition_caps": caps,
         "partition_policies": policies,
+        "partition_defaults": partition_defaults(partitions),
         "cap_origin": origins,
     }
 
