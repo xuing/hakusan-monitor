@@ -190,7 +190,7 @@ export const zh: Record<TranslationKey, string> = {
   "pool.queueReasonGpuFit": "GPU 空闲，但节点剩余资源不满足默认申请",
   "pool.queueReasonContested": "有 {n} 个排队作业可使用同一批空闲资源，新请求会排在其后",
   "pool.queueReasonPlanned": "空闲节点已被调度器预定（PLANNED）给排队中的作业",
-  "pool.queueContentionClear": "排队中的 {n} 个作业现在都拿不走这个空位（放不下、受配额限制或被预留挡住），本请求不排在它们后面",
+  "pool.queueContentionClear": "排队的 {n} 个作业均被资源、配额或预留卡住，不会排在你前面",
   "pool.queueReasonCores": "核数不足",
   "pool.wallSplit": "脚本 ≤{wall} · 交互固定 {forced}",
   "pool.limitGroup": "全组同时运行 {n}/{max}",

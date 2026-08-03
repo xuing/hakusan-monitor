@@ -190,7 +190,7 @@ export const en = {
   "pool.queueReasonGpuFit": "GPU free, but node resources do not satisfy the default request",
   "pool.queueReasonContested": "{n} queued jobs can use the same free resources; a new request lines up behind them",
   "pool.queueReasonPlanned": "the idle node is already reserved (PLANNED) for queued jobs",
-  "pool.queueContentionClear": "none of the {n} queued jobs can take this slot right now (too big, limit-capped, or fenced out by a reservation), so this request is not behind them",
+  "pool.queueContentionClear": "all {n} queued jobs are stuck on resources, limits, or reservations — none will start ahead of you",
   "pool.queueReasonCores": "not enough cores",
   "pool.wallSplit": "script ≤{wall} · interactive fixed {forced}",
   "pool.limitGroup": "group-wide running {n}/{max}",

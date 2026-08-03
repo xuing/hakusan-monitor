@@ -190,7 +190,7 @@ export const ja: Record<TranslationKey, string> = {
   "pool.queueReasonGpuFit": "GPUは空きでもノードの残り資源が既定要求を満たしません",
   "pool.queueReasonContested": "同じ空き資源を使える待機ジョブが {n} 件あり、新規リクエストはその後ろに並びます",
   "pool.queueReasonPlanned": "空きノードはスケジューラにより待機ジョブへ予約済み（PLANNED）です",
-  "pool.queueContentionClear": "待機中の {n} 件は今この空きを取れません（収まらない・上限・予約のため）。このリクエストがその後ろに並ぶことはありません",
+  "pool.queueContentionClear": "待機中の {n} 件はいずれも資源・上限・予約により停滞中で、あなたより先に始まることはありません",
   "pool.queueReasonCores": "コア不足",
   "pool.wallSplit": "スクリプト ≤{wall}・対話 {forced} 固定",
   "pool.limitGroup": "グループ全体で実行 {n}/{max}",
