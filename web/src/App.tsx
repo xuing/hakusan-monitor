@@ -1,5 +1,5 @@
 import { lazy, Suspense } from "react";
-import { BrowserRouter, Route, Routes } from "react-router-dom";
+import { BrowserRouter, Route, Routes } from "react-router";
 import { AppShell } from "@/components/layout/app-shell";
 import { AppErrorBoundary } from "@/components/common/app-error-boundary";
 import { Skeleton } from "@/components/ui/skeleton";

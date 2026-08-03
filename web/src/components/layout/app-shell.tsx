@@ -1,4 +1,4 @@
-import { Outlet } from "react-router-dom";
+import { Outlet } from "react-router";
 import { AppFooter } from "./app-footer";
 import { Brand, SidebarNav } from "./sidebar";
 import { Topbar } from "./topbar";

@@ -1,5 +1,5 @@
 import { Mountain } from "lucide-react";
-import { NavLink } from "react-router-dom";
+import { NavLink } from "react-router";
 import { NAV } from "@/lib/nav";
 import { useT } from "@/i18n";
 import type { TranslationKey } from "@/i18n/en";

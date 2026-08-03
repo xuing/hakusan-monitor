@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useState, type ReactNode } from "react";
-import { Link } from "react-router-dom";
+import { Link } from "react-router";
 import { ChevronRight } from "lucide-react";
 import { CopyButton } from "@/components/common/copy-button";
 import { GpuReleaseHint } from "@/components/common/gpu-release-hint";
