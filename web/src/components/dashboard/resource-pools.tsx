@@ -184,8 +184,14 @@ function PoolCard({ pool, snap, t }: { pool: Pool; snap: Snapshot; t: TFn }) {
               )}
             />
             <span className="font-semibold">{poolLabel(t, pool.id)}</span>
+            {/* GPU pools carry more cards than nodes (A100: 10 nodes x 2), and
+                every big number on this card counts GPUs — state the pool's GPU
+                total here so "20" never reads as a node count. */}
             <span className="text-xs text-muted-foreground">
-              {pool.nodes} {t("spec.nodes")} · {fmtMB(pool.mem_per_node)}
+              {pool.nodes} {t("spec.nodes")}
+              {isGpu && pool.gpu ? ` · ${nf(pool.gpu.total)} ${t("unit.gpu")}` : ""}
+              {" · "}
+              {fmtMB(pool.mem_per_node)}
             </span>
           </div>
           <span className="tnum font-mono text-sm text-muted-foreground">
