@@ -576,8 +576,10 @@ class Source:
         partition_cmd = (
             "timeout 8s scontrol -o show partition 2>/dev/null || true"
         ) if policy_due else "true"
-        out = self._exec(f"scontrol -o show nodes; echo {MARK}; "
-                         f"squeue -h -a -o '{SQUEUE_FMT}'; echo {MARK}; "
+        # Core reads must succeed: a later optional command must never turn a
+        # controller failure into a healthy-looking empty cluster/queue.
+        out = self._exec(f"scontrol -o show nodes || exit $?; echo {MARK}; "
+                         f"squeue -h -a -o '{SQUEUE_FMT}' || exit $?; echo {MARK}; "
                          f"(squeue -h -a -O '{CONTAINER_FMT}' 2>/dev/null || true); echo {MARK}; "
                          # pending jobs' AllocTRES is null and squeue %m prints
                          # per-CPU requests indistinguishably from totals (a
