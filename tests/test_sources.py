@@ -1,7 +1,10 @@
 import unittest
+import subprocess
+from unittest.mock import patch
 
 from backend.sources import (
     SEP,
+    Source,
     _parse_tres,
     _wall_compact,
     build_policy_snapshot,
@@ -11,6 +14,36 @@ from backend.sources import (
     parse_qos_policies,
     parse_queue,
 )
+
+
+class CollectionFailureTests(unittest.TestCase):
+    def collect_with_commands(self, commands):
+        source = Source(mode="local")
+        # Execute the real generated script with shell function stubs; no SSH
+        # connection or installed Slurm commands are needed.
+        def execute(script):
+            result = subprocess.run(["bash", "-c", commands + "\n" + script],
+                                    capture_output=True, text=True, timeout=5)
+            if result.returncode:
+                raise RuntimeError(f"collect failed rc={result.returncode}")
+            return result.stdout
+        with patch.object(source, "_exec", side_effect=execute):
+            return source.fetch()
+
+    def test_failed_nodes_read_aborts_collection(self):
+        with self.assertRaisesRegex(RuntimeError, "rc=7"):
+            self.collect_with_commands("scontrol() { return 7; }; squeue() { return 0; }")
+
+    def test_failed_queue_read_aborts_collection(self):
+        with self.assertRaisesRegex(RuntimeError, "rc=8"):
+            self.collect_with_commands("scontrol() { return 0; }; squeue() { return 8; }")
+
+    def test_empty_queue_and_failed_optional_reads_are_allowed(self):
+        nodes, queue = self.collect_with_commands(
+            "scontrol() { return 0; }; squeue() { return 0; }; "
+            "timeout() { return 1; }; singularity() { return 1; }")
+        self.assertEqual(nodes["nodes"], [])
+        self.assertEqual(queue["jobs"], [])
 
 
 class TresPolicyTests(unittest.TestCase):

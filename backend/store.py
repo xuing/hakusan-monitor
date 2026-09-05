@@ -79,7 +79,6 @@ class Store:
         self.retain_days = retain_days
         self.login_retain_days = retain_days if login_retain_days is None else login_retain_days
         self.visit_retain_days = visit_retain_days
-        self._last_ts = None        # guard against same-second double-counting
         self._local = threading.local()
         self._record_lock = threading.Lock()
         os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
@@ -101,23 +100,25 @@ class Store:
     # ---- write -------------------------------------------------------------
     def record(self, snap, ts):
         with self._record_lock:
-            if ts == self._last_ts:   # same-second resample would double-count the hourly rollup
-                return
-            self._last_ts = ts
             m = _metrics(snap)
             detail = json.dumps({"pools": snap.get("pools"), "gpus": snap.get("gpus")})
             c = self._conn()
             with c:
-                c.execute(
-                    """INSERT OR REPLACE INTO samples
+                inserted = c.execute(
+                    """INSERT INTO samples
                        (ts,cpu_util,gpu_util,mem_util,cpus_total,cpus_alloc,
                         gpus_total,gpus_used,nodes_total,nodes_avail,nodes_down,
                         running,pending,detail)
-                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                       ON CONFLICT(ts) DO NOTHING""",
                     (ts, m["cpu_util"], m["gpu_util"], m["mem_util"], m["cpus_total"],
                      m["cpus_alloc"], m["gpus_total"], m["gpus_used"], m["nodes_total"],
                      m["nodes_avail"], m["nodes_down"], m["running"], m["pending"], detail),
                 )
+                # Database-backed idempotency also survives restarts and
+                # out-of-order retries. Raw data and rollup commit together.
+                if inserted.rowcount == 0:
+                    return
                 hour = ts - ts % 3600
                 c.execute(
                     """INSERT INTO samples_hourly
