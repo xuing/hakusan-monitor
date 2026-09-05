@@ -18,8 +18,11 @@ export function connectLive({ onSnapshot, onStatus, onError }: LiveHandlers): ()
   let watchdog: ReturnType<typeof setInterval> | null = null;
   let lastBeat = Date.now(); // last proof the stream is alive (snapshot or ping)
   let gotData = false;
+  let pollGeneration = 0;
+  let pollBusy = false;
 
   const stopPolling = () => {
+    pollGeneration += 1; // invalidate requests started before SSE recovered
     if (pollTimer) {
       clearInterval(pollTimer);
       pollTimer = null;
@@ -29,17 +32,22 @@ export function connectLive({ onSnapshot, onStatus, onError }: LiveHandlers): ()
   const startPolling = () => {
     if (pollTimer || closed) return;
     const tick = async () => {
+      if (pollBusy) return;
+      pollBusy = true;
+      const generation = pollGeneration;
       try {
         const snap = await api.snapshot();
-        if (closed) return;
+        if (closed || generation !== pollGeneration) return;
         onError?.(null);
         onStatus("polling");
         onSnapshot(snap);
       } catch (error) {
-        if (!closed) {
+        if (!closed && generation === pollGeneration) {
           onError?.(error instanceof Error ? error : new Error("Snapshot request failed"));
           onStatus("offline");
         }
+      } finally {
+        pollBusy = false;
       }
     };
     void tick();
@@ -113,7 +121,7 @@ export function connectLive({ onSnapshot, onStatus, onError }: LiveHandlers): ()
   return () => {
     closed = true;
     es?.close();
-    if (pollTimer) clearInterval(pollTimer);
+    stopPolling();
     if (watchdog) clearInterval(watchdog);
     document.removeEventListener("visibilitychange", wake);
     window.removeEventListener("online", wake);
