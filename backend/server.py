@@ -22,7 +22,7 @@ from urllib.parse import urlparse, parse_qs
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import normalize as nz          # noqa: E402
-from login_nodes import LoginNodeCollector, summarize_users  # noqa: E402
+from login_nodes import LoginNodeCollector, public_nodes, summarize_users  # noqa: E402
 from sources import Source      # noqa: E402
 from store import Store         # noqa: E402
 
@@ -206,18 +206,6 @@ class Engine:
             # Push the cluster snapshot before login-node collection: a login
             # node timing out must not delay fresh cluster data by its timeout.
             self._broadcast(snap)
-            try:
-                login_payload, refreshed = self.login.fetch(now)
-                login_payload = {**login_payload,
-                                 "top_users": summarize_users(login_payload.get("nodes", []))}
-                self.login_nodes = login_payload
-                if refreshed:
-                    self.store.record_login(login_payload, int(now))
-            except Exception as e:
-                self.login_nodes = {"generated_at": int(now), "age_s": 0,
-                                    "configured": bool(self.cfg["login_nodes"]),
-                                    "nodes": [], "top_users": [], "stale": True,
-                                    "error": str(e)}
             return snap
         except Exception as e:
             self.error = str(e)
@@ -227,9 +215,32 @@ class Engine:
                 self.latest = {**self.latest, "stale": True, "error": str(e),
                                "fail_count": self.fail_count,
                                "last_fail_at": self.last_fail_at}
-                self._broadcast(self.latest)
+                # the stored age_s is the one from when it was fresh (0);
+                # subscribers must see how old it really is now
+                self._broadcast({**self.latest, "age_s": round(
+                    time.time() - self.latest.get("generated_at", time.time()), 1)})
             print(f"collect failed ({self.fail_count}x): {self.error}", flush=True)
             return None
+        finally:
+            # Login nodes are separate machines: a Slurm controller outage
+            # must not freeze their data (it used to skip this entirely).
+            self._sample_login(now)
+
+    def _sample_login(self, now):
+        try:
+            login_payload, refreshed = self.login.fetch(now)
+            nodes = login_payload.get("nodes", [])
+            login_payload = {**login_payload,
+                             "nodes": public_nodes(nodes),
+                             "top_users": summarize_users(nodes, self.cfg["login_top_n"])}
+            self.login_nodes = login_payload
+            if refreshed:
+                self.store.record_login(login_payload, int(now))
+        except Exception as e:
+            self.login_nodes = {"generated_at": int(now), "age_s": 0,
+                                "configured": bool(self.cfg["login_nodes"]),
+                                "nodes": [], "top_users": [], "stale": True,
+                                "error": str(e)}
 
     def run(self):
         while True:
@@ -319,6 +330,10 @@ class Engine:
                     "warming_up": True}
         s = dict(self.login_nodes)
         s["age_s"] = round(time.time() - s.get("generated_at", time.time()), 1)
+        # data older than three sampling rounds is stale whatever the last
+        # round claimed (a hung collector never gets to flip the flag itself)
+        if s.get("generated_at") and s["age_s"] > 3 * max(60, self.cfg["login_interval"]):
+            s["stale"] = True
         return s
 
 

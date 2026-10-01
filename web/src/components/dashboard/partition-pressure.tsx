@@ -27,6 +27,7 @@ import {
   policyLimitRows,
 } from "@/lib/policy-hints";
 import {
+  allowsMultiNode,
   isMaterialsStudioPartition,
   interactiveForcedSec,
   matchPartition,
@@ -102,7 +103,7 @@ function requestableNow(p: Partition, cap: PartitionCap, isGpu: boolean, pc: Poo
   if (probeCores) {
     return { n: probeCores, unit: "cores", capped: cap.maxCores !== undefined && probeCores < cap.maxCores };
   }
-  if ((cap.maxNodes ?? 1) > 1) {
+  if (allowsMultiNode(cap, p.spec.cores_per_node)) {
     // no probe data yet (e.g. backend just restarted) — fall back to the
     // coarser idle-node estimate
     return { n: Math.min(cap.maxNodes ?? pc.idleNodes, pc.idleNodes), unit: "nodes", capped: false };

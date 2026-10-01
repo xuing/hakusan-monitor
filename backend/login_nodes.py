@@ -113,7 +113,9 @@ def _cpu_fields(line):
         nums.append(0)
     idle = nums[3] + nums[4]
     iowait = nums[4]
-    total = sum(nums)
+    # guest/guest_nice (fields 9-10) are already counted inside user/nice;
+    # adding them again inflated busy (user=50, idle=50, guest=50 -> 67%).
+    total = sum(nums[:8])
     return {"total": total, "idle": idle, "iowait": iowait}
 
 
@@ -456,6 +458,7 @@ echo "{MARK} ps"; ps -eo {ps_fields}
             _df(sec.get("df", "")), _df_inodes(sec.get("df_inodes", "")))
                  if _is_health_disk(d)]
         io = _iostat(sec.get("iostat", ""))
+        users = _users_from_procs(all_procs)
         node = {
             "id": name,
             "target": target,
@@ -473,19 +476,37 @@ echo "{MARK} ps"; ps -eo {ps_fields}
                 "top_mem": top_mem,
                 "d_state": sum(1 for p in all_procs if "D" in p.get("stat", "")),
             },
-            "users": _users_from_procs(all_procs)[:self.top_n],
+            "users": users[:self.top_n],
+            # every user, for the cross-node summary; summarize_users must
+            # aggregate before truncating, or a user who is 13th on each node
+            # vanishes from the global table. Stripped before publishing.
+            "all_users": users,
         }
         return node
 
 
-def summarize_users(nodes):
+def summarize_users(nodes, top_n=12):
+    """Per-user totals across all login nodes.
+
+    cpu_pct adds up (core-percent is additive across machines); mem_pct does
+    NOT — 7.8% of one node + 7.3% of another is not 15.1% of anything — so it
+    is recomputed as the user's total RSS over the nodes' combined memory.
+    """
     agg = defaultdict(lambda: {"cpu_pct": 0.0, "mem_pct": 0.0, "rss": 0, "processes": 0})
+    mem_total = 0
     for node in nodes:
-        for user in node.get("users", []):
+        mem_total += (node.get("memory") or {}).get("total", 0) or 0
+        for user in node.get("all_users", node.get("users", [])):
             a = agg[user["user"]]
             a["cpu_pct"] += user.get("cpu_pct", 0.0)
-            a["mem_pct"] += user.get("mem_pct", 0.0)
             a["rss"] += user.get("rss", 0)
             a["processes"] += user.get("processes", 0)
+    for a in agg.values():
+        a["mem_pct"] = round(a["rss"] * 100.0 / mem_total, 2) if mem_total else 0.0
     return [{"user": u, **v} for u, v in sorted(
-        agg.items(), key=lambda item: (-item[1]["cpu_pct"], -item[1]["rss"]))[:12]]
+        agg.items(), key=lambda item: (-item[1]["cpu_pct"], -item[1]["rss"]))[:top_n]]
+
+
+def public_nodes(nodes):
+    """Login-node records as published: without the internal all_users list."""
+    return [{k: v for k, v in node.items() if k != "all_users"} for node in nodes]

@@ -10,31 +10,34 @@ Key names are camelCase on purpose: they land in the JSON snapshot verbatim
 and match web/src/lib/slurm.ts's PartitionCap/PartitionPolicy interfaces.
 """
 
+# maxNodes appears only where the QoS really carries node=1. Multi-node
+# partitions have NO node limit in Slurm (QoS small = cpu=768,mem=4.50T):
+# a 512-core SMALL job ran on 20 nodes, so an inferred "3 nodes" was false.
 BUILTIN_PARTITION_CAPS = {
     "DEF": {"maxCores": 64, "maxMemGb": 384, "maxNodes": 1, "wall": "7d"},
     "TINY": {"maxCores": 16, "maxMemGb": 96, "maxNodes": 1, "wall": "30m"},
     "SINGLE": {"maxCores": 256, "maxMemGb": 1536, "maxNodes": 1, "wall": "7d"},
     "LONG": {"maxCores": 256, "maxMemGb": 1536, "maxNodes": 1, "wall": "21d"},
-    "SMALL": {"maxCores": 768, "maxMemGb": 4608, "maxNodes": 3, "wall": "7d"},
-    "LARGE": {"minCores": 256, "maxCores": 2048, "maxMemGb": 12288, "maxNodes": 8, "wall": "7d"},
-    "XLARGE": {"minCores": 256, "maxCores": 4096, "maxMemGb": 24576, "maxNodes": 16, "wall": "5d"},
-    "X2LARGE": {"minCores": 256, "maxCores": 8192, "maxMemGb": 49152, "maxNodes": 32, "wall": "5d"},
-    "LONG-L": {"minCores": 256, "maxCores": 768, "maxMemGb": 4608, "maxNodes": 3, "wall": "14d"},
-    "MS_Castep": {"maxCores": 32, "maxMemGb": 192, "maxNodes": 1, "wall": "7d"},
-    "MS_Dmol3": {"maxCores": 128, "maxMemGb": 768, "maxNodes": 1, "wall": "7d"},
-    "MS_Forcite": {"maxCores": 64, "maxMemGb": 384, "maxNodes": 1, "wall": "7d"},
-    "MS_Compass": {"maxCores": 64, "maxMemGb": 384, "maxNodes": 1, "wall": "7d"},
-    "MS_Dftbplus": {"maxCores": 32, "maxMemGb": 192, "maxNodes": 1, "wall": "7d"},
-    "MS_Amorphous": {"maxCores": 32, "maxMemGb": 192, "maxNodes": 1, "wall": "7d"},
-    "MatStudio": {"maxCores": 32, "maxMemGb": 192, "maxNodes": 1, "wall": "7d"},
+    "SMALL": {"maxCores": 768, "maxMemGb": 4608, "wall": "7d"},
+    "LARGE": {"minCores": 256, "maxCores": 2048, "maxMemGb": 12288, "wall": "7d"},
+    "XLARGE": {"minCores": 256, "maxCores": 4096, "maxMemGb": 24576, "wall": "5d"},
+    "X2LARGE": {"minCores": 256, "maxCores": 8192, "maxMemGb": 49152, "wall": "5d"},
+    "LONG-L": {"minCores": 256, "maxCores": 768, "maxMemGb": 4608, "wall": "14d"},
+    "MS_Castep": {"maxCores": 32, "maxMemGb": 192, "wall": "7d"},
+    "MS_Dmol3": {"maxCores": 128, "maxMemGb": 768, "wall": "7d"},
+    "MS_Forcite": {"maxCores": 64, "maxMemGb": 384, "wall": "7d"},
+    "MS_Compass": {"maxCores": 64, "maxMemGb": 384, "wall": "7d"},
+    "MS_Dftbplus": {"maxCores": 32, "maxMemGb": 192, "wall": "7d"},
+    "MS_Amorphous": {"maxCores": 32, "maxMemGb": 192, "wall": "7d"},
+    "MatStudio": {"maxCores": 32, "maxMemGb": 192, "wall": "7d"},
     "GPU-1": {"maxGpus": 1, "maxCores": 26, "maxMemGb": 256, "maxNodes": 1, "wall": "7d"},
     "GPU-S": {"maxGpus": 2, "maxCores": 52, "maxMemGb": 512, "maxNodes": 1, "wall": "5d"},
-    "GPU-L": {"maxGpus": 8, "maxCores": 208, "maxMemGb": 2048, "maxNodes": 4, "wall": "3d"},
+    "GPU-L": {"maxGpus": 8, "maxCores": 208, "maxMemGb": 2048, "wall": "3d"},
     "GPU-1A": {"maxGpus": 1, "maxCores": 26, "maxMemGb": 256, "maxNodes": 1, "wall": "7d"},
-    "GPU-LA": {"maxGpus": 8, "maxCores": 208, "maxMemGb": 2048, "maxNodes": 4, "wall": "3d"},
-    "VM-CPU": {"maxCores": 32, "maxMemGb": 480, "maxNodes": 1, "wall": "7d"},
-    "VM-GPU-L": {"maxGpus": 1, "maxCores": 32, "maxMemGb": 480, "maxNodes": 1, "wall": "2d"},
-    "VM-LM": {"maxCores": 96, "maxMemGb": 3840, "maxNodes": 1, "wall": "7d"},
+    "GPU-LA": {"maxGpus": 8, "maxCores": 208, "maxMemGb": 2048, "wall": "3d"},
+    "VM-CPU": {"maxCores": 32, "maxMemGb": 480, "wall": "7d"},
+    "VM-GPU-L": {"maxGpus": 1, "maxCores": 32, "maxMemGb": 480, "wall": "2d"},
+    "VM-LM": {"maxCores": 96, "maxMemGb": 3840, "wall": "7d"},
 }
 
 # What a request with NO resource flags actually asks Slurm for. This is NOT

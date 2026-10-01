@@ -151,7 +151,10 @@ class QueueParserTests(unittest.TestCase):
         self.assertEqual(job["gpus"], 4)
         self.assertEqual(job["gpu_type"], "nvidia_a40")
         self.assertEqual(job["node_count"], 2)
-        self.assertEqual(job["min_memory_mb"], 524288)
+        # no tres-alloc / ReqTRES: %m ("512G") could be per-CPU, so the total
+        # is unknown (0) rather than guessed; the raw string is kept for display
+        self.assertEqual(job["min_memory_mb"], 0)
+        self.assertEqual(job["min_memory"], "512G")
         self.assertEqual(job["nodelist"], "spcc-a40g[13,17]")
         self.assertEqual(job["req_nodes"], "")
         self.assertEqual(job["exc_nodes"], "")

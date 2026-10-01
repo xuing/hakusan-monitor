@@ -41,7 +41,7 @@ import {
   type GpuFitNode,
   type GpuFitTipData,
 } from "@/lib/gpu-fit";
-import { effectiveMemPerNodeGb, interactiveForcedSec, isMaterialsStudioPartition, matchPool, partitionCap, partitionDefaultRequest, partitionPolicy, type PartitionPolicy, type Tone } from "@/lib/slurm";
+import { allowsMultiNode, effectiveMemPerNodeGb, interactiveForcedSec, isMaterialsStudioPartition, matchPool, partitionCap, partitionDefaultRequest, partitionPolicy, type PartitionPolicy, type Tone } from "@/lib/slurm";
 import { cn } from "@/lib/utils";
 import { cpuProbeMaxAge, cpuProbeRows, cpuProbeState, type CpuProbeRow } from "@/lib/cpu-probes";
 import { buildRequestCommand, shouldShowGapShell } from "@/lib/request-command";
@@ -374,6 +374,7 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
   // up to the minimum automatically, so Default is the safe fallback.
   const nodeCount = withinCapInt(nodes, cap.maxNodes);
   const coreCount = withinCapInt(cores, cap.maxCores, cap.minCores);
+  const multiNodePolicy = allowsMultiNode(cap, pool.nodes ? pool.cpus_total / pool.nodes : undefined);
   // Same rule for -t vs the partition wall (mirrors --mem's memTooHigh).
   const wallSec = parseWallMinutes(cap.wall) * 60;
   const timeSel = time.trim() && (!wallSec || parseWalltimeSec(time) <= wallSec) ? time : "";
@@ -443,6 +444,7 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
         groupRunning,
         nodeCount,
         coreCount,
+        multiNode: multiNodePolicy,
         isGpu,
         poolFree: snap ? poolCapacity(snap, pool.id) : null,
         queueFact,
@@ -462,6 +464,7 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
     requiredFlags: [...(base.requiredFlags ?? []), ...(singleNodeFlag ? [singleNodeFlag] : [])],
     nodeCount,
     coreCount,
+    multiNode: multiNodePolicy,
     memValue,
     timeValue: timeSel,
     forcedInteractiveSeconds: forcedSec,
@@ -476,7 +479,7 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
   const policyLimit = limitText ? `${t("part.policyLimit")} ${limitText}` : "";
   // the scatter warning is about the implicit multi-node DEFAULT — once the
   // user pins -N themselves it describes a state they already left
-  const multiNodeCpuPolicy = !isGpu && (cap.maxNodes ?? 1) > 1 && !nodeCount;
+  const multiNodeCpuPolicy = !isGpu && multiNodePolicy && !nodeCount;
   const nodeOptions = numberOptions(cap.maxNodes, [1, 2, 3, 4, 8, 16, 32]);
   const coreOptions = numberOptions(cap.maxCores, [1, 2, 4, 8, 16, 26, 32, 52, 64, 96, 128, 208, 256, 512, 768, 1024, 2048, 4096, 8192], cap.minCores);
   const timeOptions = timeOptionsFor(cap.wall, t);
@@ -877,6 +880,7 @@ function requestQueueHint({
   groupRunning,
   nodeCount,
   coreCount,
+  multiNode,
   isGpu,
   poolFree,
   queueFact,
@@ -890,6 +894,7 @@ function requestQueueHint({
   groupRunning: number;
   nodeCount: number;
   coreCount: number;
+  multiNode: boolean;
   isGpu: boolean;
   poolFree: ReturnType<typeof poolCapacity> | null;
   queueFact: QueueFact | null;
@@ -918,7 +923,9 @@ function requestQueueHint({
     return warn(gpuFitShortText(gpuFit, t));
   }
   if (isGpu && queueFact && queueFact.free <= 0 && (part.gpu?.free ?? 0) > 0) return warn(t("pool.queueReasonGpuFit"));
-  if (!isGpu && coreCount > 0 && poolFree && coreCount > poolFree.emptiestNodeFree) return warn(t("pool.queueReasonCores"));
+  // one task's CPUs must sit on one node; N tasks may scatter across nodes
+  if (!isGpu && coreCount > 0 && poolFree
+      && coreCount > (multiNode ? poolFree.freeCores : poolFree.emptiestNodeFree)) return warn(t("pool.queueReasonCores"));
 
   if (queueFact && queueFact.pending > 0) {
     // The request fits a free slot AND no queued job can take that slot first
@@ -1125,6 +1132,7 @@ function partitionRequestSummary(
     groupRunning,
     nodeCount: 0,
     coreCount: 0,
+    multiNode: false,
     isGpu,
     poolFree: poolCapacity(snap, pool.id),
     queueFact,

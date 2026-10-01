@@ -207,6 +207,15 @@ class Store:
         with c:
             c.execute("DELETE FROM samples WHERE ts < ?", (cutoff,))
             c.execute("DELETE FROM login_samples WHERE ts < ?", (login_cutoff,))
+            # "累计访问次数" is all-time: bank pruned hits before deleting them,
+            # or the total silently becomes a trailing-365-day count
+            c.execute(
+                """INSERT INTO app_meta (key, value)
+                   SELECT 'pruned_visit_hits', CAST(coalesce(sum(hits), 0) AS TEXT)
+                   FROM visits WHERE day < ?
+                   ON CONFLICT(key) DO UPDATE SET
+                     value = CAST(CAST(value AS INTEGER) + CAST(excluded.value AS INTEGER) AS TEXT)""",
+                (visit_cutoff,))
             c.execute("DELETE FROM visits WHERE day < ?", (visit_cutoff,))
 
     # ---- read --------------------------------------------------------------
@@ -272,11 +281,15 @@ class Store:
                       coalesce(sum(hits), 0) AS hits
                FROM visits WHERE day >= ?""", (first_day,)).fetchone()
         today_row = by_day.get(today)
+        pruned = c.execute(
+            "SELECT value FROM app_meta WHERE key = 'pruned_visit_hits'").fetchone()
+        totals = dict(totals)
+        totals["hits"] += int(pruned["value"]) if pruned else 0
         return {"days": days, "daily": daily,
                 "today": {"visitors": today_row["visitors"] if today_row else 0,
                           "hits": today_row["hits"] if today_row else 0},
                 "window": dict(window),
-                "total": dict(totals)}
+                "total": totals}
 
     def usage_pattern(self, days=30):
         """Peak/trough analysis from the hourly rollup, in **local** time.
@@ -286,9 +299,12 @@ class Store:
         utilization. Hour buckets are weighted by their raw sample count.
         """
         c = self._conn()
-        latest = c.execute("SELECT max(hour) AS h FROM samples_hourly").fetchone()["h"]
-        until = latest or 0
-        since = until - days * 86400 if until else 0
+        # Exactly days*24 hour buckets ending at the current hour. The window
+        # used to be anchored to the newest stored hour with an inclusive
+        # lower bound — 25 buckets for "1 day", and frozen in place during a
+        # collection outage instead of following the clock.
+        now_hour = int(time.time()) // 3600 * 3600
+        since = now_hour - days * 86400 + 3600
         rows = c.execute(
             """SELECT
                  hour,
@@ -301,6 +317,7 @@ class Store:
         by_wd = {d: {"cpu": 0.0, "gpu": 0.0, "pending": 0.0, "samples": 0, "hours": 0} for d in range(7)}
         heat = {}
         first = min((r["hour"] for r in rows), default=0)
+        last = max((r["hour"] for r in rows), default=0)
         total_samples = 0
         for r in rows:
             samples = int(r["n"] or 0)
@@ -338,7 +355,9 @@ class Store:
         return {"days": days, "by_hour": hours, "by_weekday": weekdays,
                 "heatmap": heatmap, "busiest_hour": busiest, "quietest_hour": quietest,
                 "total_hours": len(rows), "total_samples": total_samples,
-                "since": first, "until": until + 3599 if until else 0,
+                # coverage actually observed: never past "now" (the current
+                # hour's bucket is still filling)
+                "since": first, "until": min(last + 3599, int(time.time())) if last else 0,
                 "timezone": os.environ.get("TZ") or time.tzname[0] or "localtime"}
 
     def stats(self):

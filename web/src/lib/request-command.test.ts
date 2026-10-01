@@ -14,7 +14,25 @@ describe("buildRequestCommand", () => {
       pty: false,
       ptyTime: "1:00:00",
       scriptFile: "job.sh",
-    })).toBe("salloc -p GPU-1 -N 1 -c 26 --mem=200G");
+    })).toBe("salloc -p GPU-1 -N 1 -n 1 -c 26 --mem=200G");
+  });
+
+  it("spells a core count so Slurm allocates exactly that many CPUs", () => {
+    const base = {
+      forcedInteractiveSeconds: null,
+      mode: "interactive" as const,
+      pty: false,
+      ptyTime: "1:00:00",
+      scriptFile: "job.sh",
+    };
+    // a bare -c multiplies by the plugin's pinned task count: DEF -c 8 asked
+    // 16 x 8 = 128 CPUs and was rejected; -n 1 -c 8 got 8 (2026-10-01)
+    expect(buildRequestCommand({ ...base, partition: "DEF", coreCount: 8 })).toBe("salloc -p DEF -n 1 -c 8");
+    // multi-node partitions take N tasks, replacing the overflow -n
+    expect(buildRequestCommand({ ...base, partition: "SMALL", coreCount: 512, multiNode: true }))
+      .toBe("salloc -p SMALL -n 512");
+    expect(buildRequestCommand({ ...base, partition: "VM-CPU", requiredFlags: ["-n 31"], coreCount: 8 }))
+      .toBe("salloc -p VM-CPU -n 1 -c 8");
   });
 
   it("keeps walltime for batch and builds the requested script path", () => {

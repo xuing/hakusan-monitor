@@ -104,6 +104,10 @@ class StoreHistoryTests(unittest.TestCase):
         self.assertEqual(c.execute("SELECT count(*) FROM samples").fetchone()[0], 1)
         self.assertEqual(c.execute("SELECT count(*) FROM login_samples").fetchone()[0], 1)
         self.assertEqual(c.execute("SELECT count(*) FROM visits").fetchone()[0], 1)
+        # the pruned day's hit still counts toward the all-time total
+        self.assertEqual(self.store.visit_stats(days=30, now=now)["total"]["hits"], 2)
+        self.store.prune(now)   # pruning again must not double-bank
+        self.assertEqual(self.store.visit_stats(days=30, now=now)["total"]["hits"], 2)
 
     def test_visitor_id_is_stable_but_keyed(self):
         first = self.store.visitor_id("192.0.2.1", "browser")

@@ -609,7 +609,7 @@ export function parseGpuCount(text: string, type: string) {
   if (!text) return 0;
   const esc = type.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const typed = new RegExp(`gpu:${esc}:?(\\d+)|gres/gpu:${esc}=(\\d+)`);
-  const m = text.match(typed) ?? text.match(/gpu:[A-Za-z0-9_-]+:?(\d+)|gres\/gpu:[A-Za-z0-9_-]+=(\d+)|gpu:(\d+)/);
+  const m = text.match(typed) ?? text.match(/gpu:[A-Za-z0-9_.-]+:?(\d+)|gres\/gpu:[A-Za-z0-9_.-]+=(\d+)|gpu:(\d+)/);
   if (!m) return 0;
   return Number(m[1] ?? m[2] ?? m[3] ?? 0);
 }

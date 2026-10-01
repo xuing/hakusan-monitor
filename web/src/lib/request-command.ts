@@ -3,6 +3,9 @@ export interface RequestCommandInput {
   requiredFlags?: string[];
   nodeCount?: number;
   coreCount?: number;
+  /** Partition lets a job span nodes (allowsMultiNode). Decides how a core
+   *  count is spelled: N tasks across nodes, or 1 task with N CPUs. */
+  multiNode?: boolean;
   memValue?: string;
   timeValue?: string;
   forcedInteractiveSeconds: number | null;
@@ -31,9 +34,17 @@ export function shouldShowGapShell(input: {
 
 /** Pure, testable Slurm command builder used by the quick-request UI. */
 export function buildRequestCommand(input: RequestCommandInput) {
-  const flags = [`-p ${input.partition}`, ...(input.requiredFlags ?? [])];
+  // An explicit core count replaces any -n the default-overflow fix added.
+  const required = (input.requiredFlags ?? []).filter((f) => !(input.coreCount && /^-n\s/.test(f)));
+  const flags = [`-p ${input.partition}`, ...required];
   if (input.nodeCount) flags.push(`-N ${input.nodeCount}`);
-  if (input.coreCount) flags.push(`-c ${input.coreCount}`);
+  // Never a bare -c: hakusan's submit plugin pins the task count (DEF 16,
+  // GPU-x 26, SMALL-class 256) unless -n is given, so -c N means N CPUs PER
+  // TASK — `salloc -p DEF -c 8` asked 128 CPUs and was rejected
+  // (QOSMaxCpuPerJobLimit); `-n 1 -c 8` gets 8 (measured 2026-10-01).
+  if (input.coreCount) {
+    flags.push(input.multiNode ? `-n ${input.coreCount}` : `-n 1 -c ${input.coreCount}`);
+  }
   if (input.memValue) flags.push(`--mem=${input.memValue}`);
   // A -t on a plugin-forced plain salloc is silently ignored. The pty recipe
   // rides on sbatch, so its walltime remains explicit and effective.

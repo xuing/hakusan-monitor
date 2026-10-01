@@ -16,8 +16,10 @@ GPU_CATALOG = {
 }
 GPU_ORDER = ["nvidia_a40", "nvidia_a100", "h100-80c", "h100-20c"]
 
-_GRES_RE = re.compile(r"gpu:([A-Za-z0-9_\-]+):(\d+)")
-_TRES_GPU_RE = re.compile(r"gres/gpu:?([A-Za-z0-9_\-]*)=(\d+)")
+# GPU model names may contain dots (QoS seminar: gres/gpu:nvidia_rtx_pro_6000_
+# blackwell_server_edition_1g.24gb) — a class without "." parsed them as 0.
+_GRES_RE = re.compile(r"gpu:([A-Za-z0-9_.\-]+):(\d+)")
+_TRES_GPU_RE = re.compile(r"gres/gpu:?([A-Za-z0-9_.\-]*)=(\d+)")
 
 
 def num(v, default=0):
@@ -178,9 +180,10 @@ RELEASE_SOON_S = 2 * 3600   # a running job "releases soon" if it ends within 2h
 
 
 def expand_hostlist(text):
-    """Slurm hostlist -> names: "lcpcc-[002-003,005],gl01" -> 4 names.
+    """Slurm hostlist -> names: "lcpcc-[002-003,005],gl01" -> 4 names; every
+    bracket group expands, so "rack[1-2]n[01-02]" -> 4 hosts.
     Mirrors the frontend's expandHostlist (web/src/lib/derive.ts)."""
-    names, depth, start = [], 0, 0
+    items, depth, start = [], 0, 0
     text = str(text or "")
     for i, ch in enumerate(text + ","):
         if ch == "[":
@@ -188,22 +191,29 @@ def expand_hostlist(text):
         elif ch == "]":
             depth -= 1
         elif ch == "," and depth == 0:
-            item = text[start:i].strip()
+            if text[start:i].strip():
+                items.append(text[start:i].strip())
             start = i + 1
-            m = re.fullmatch(r"(.*?)\[([^\]]+)\](.*)", item)
-            if not m:
-                if item:
-                    names.append(item)
-                continue
-            prefix, ranges, suffix = m.groups()
-            for r in ranges.split(","):
-                lo, _, hi = r.partition("-")
-                if not hi:
-                    names.append(f"{prefix}{lo}{suffix}")
-                    continue
-                for n in range(int(lo), int(hi) + 1):
-                    names.append(f"{prefix}{str(n).zfill(len(lo))}{suffix}")
+    names = []
+    for item in items:
+        names.extend(_expand_host(item))
     return names
+
+
+def _expand_host(item):
+    m = re.match(r"(.*?)\[([^\]]+)\](.*)", item)
+    if not m:
+        return [item]
+    prefix, ranges, rest = m.groups()
+    heads = []
+    for r in ranges.split(","):
+        lo, _, hi = r.partition("-")
+        if not hi:
+            heads.append(f"{prefix}{lo}")
+            continue
+        heads.extend(f"{prefix}{str(n).zfill(len(lo))}" for n in range(int(lo), int(hi) + 1))
+    tails = _expand_host(rest) if rest else [""]
+    return [h + t for h in heads for t in tails]
 
 
 def parse_duration(s):

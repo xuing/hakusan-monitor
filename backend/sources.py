@@ -151,6 +151,7 @@ def _wall_compact(s):
 
 def _parse_tres(text):
     out = {}
+    generic_gpus = None
     gpu_vals = []
     gpu_types = []
     for item in (text or "").split(","):
@@ -165,14 +166,18 @@ def _parse_tres(text):
             out["mem_mb"] = _mem_mb(val)
         elif key == "node":
             out["nodes"] = _int(val)
-        elif key.startswith("gres/gpu"):
+        elif key == "gres/gpu":
+            generic_gpus = _int(val)
+        elif key.startswith("gres/gpu:"):
             gpu_vals.append(_int(val))
-            if key.startswith("gres/gpu:"):
-                gpu_types.append(key.split(":", 1)[1])
-    if gpu_vals:
-        # Slurm may show both generic and typed GPU TRES. Treat that as the same
-        # limit rather than adding them together.
-        out["gpus"] = max(gpu_vals)
+            gpu_types.append(key.split(":", 1)[1])
+    # Slurm usually lists the generic total next to the typed ones
+    # (gres/gpu=2,gres/gpu:a40=2) — that total wins. Typed-only means one entry
+    # per model, so they add up: a40=2,a100=2 is 4 GPUs, not max() = 2.
+    if generic_gpus is not None:
+        out["gpus"] = generic_gpus
+    elif gpu_vals:
+        out["gpus"] = sum(gpu_vals)
     if gpu_types:
         out["gpu_type"] = "+".join(dict.fromkeys(gpu_types))
     return {k: v for k, v in out.items() if v}
@@ -313,7 +318,12 @@ def build_policy_snapshot(qos_text, partition_text, now, interval):
     caps = {}
     origins = {}
     for name in set(BUILTIN_PARTITION_CAPS) | set(live_caps):
-        caps[name] = {**BUILTIN_PARTITION_CAPS.get(name, {}), **live_caps.get(name, {})}
+        builtin = dict(BUILTIN_PARTITION_CAPS.get(name, {}))
+        if name in live_caps:
+            # a node limit is a QoS fact or nothing: when the live QoS has no
+            # node= term, the job may span any number of nodes
+            builtin.pop("maxNodes", None)
+        caps[name] = {**builtin, **live_caps.get(name, {})}
         origins[name] = "live" if name in live_caps else "builtin"
     policies = {}
     for name in set(BUILTIN_PARTITION_POLICIES) | set(live_policies):
@@ -390,7 +400,7 @@ def parse_queue(text, extras=None, pending_reqtres=None):
          req_nodes, exc_nodes) = p[:21]
         extra = extras.get(str(jid)) or {}
         alloc = _parse_tres(extra.get("tres", ""))
-        gm = re.search(r"gpu:(?:([A-Za-z0-9_\-]+):)?(\d+)", gres or "")
+        gm = re.search(r"gpu:(?:([A-Za-z0-9_.\-]+):)?(\d+)", gres or "")
         nnodes_i = int(nnodes) if nnodes.isdigit() else 0
         # GPUs: tres-alloc is authoritative (covers --gpus/--gpus-per-task jobs
         # that %b reports as N/A). Fallback: %b is GRES *per node*, so the job's
@@ -407,7 +417,11 @@ def parse_queue(text, extras=None, pending_reqtres=None):
         # tres-alloc's mem= is the job's real total for RUNNING jobs, but it's
         # null while pending — there sacct's ReqTRES holds the requested total.
         req = _parse_tres(pending_reqtres.get(str(jid), "")) if state == "PENDING" else {}
-        mem_mb = req.get("mem_mb") or alloc.get("mem_mb") or _mem_mb(min_mem)
+        # No total from either source (the enrichment command failed): %m alone
+        # is ambiguous — a --mem-per-cpu job prints its PER-CPU value, so a
+        # 64-CPU x 6000M job would read 6000 MB instead of 384000. Report
+        # unknown (0) rather than a number that can be 64x off.
+        mem_mb = req.get("mem_mb") or alloc.get("mem_mb") or 0
         jobs.append({
             "job_id": int(jid) if jid.isdigit() else jid,
             "user_name": user, "account": acct, "partition": part,
@@ -428,7 +442,7 @@ def parse_queue(text, extras=None, pending_reqtres=None):
             "time_used": _clean(used), "time_limit": _clean(timelimit),
             # keep the display string consistent with the corrected total so
             # the UI never shows a per-CPU "10000M" next to a 260000M verdict
-            "min_memory": f"{mem_mb}M" if mem_mb and mem_mb != _mem_mb(min_mem) else _clean(min_mem),
+            "min_memory": f"{mem_mb}M" if mem_mb else _clean(min_mem),
             "min_memory_mb": mem_mb,
         })
     return {"jobs": jobs}

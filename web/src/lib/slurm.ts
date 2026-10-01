@@ -49,6 +49,10 @@ export interface PartitionCap {
   maxGpus?: number;
   maxNodes?: number;
   wall?: string;
+  /** Partition MaxMemPerCPU (MB). Slurm meets a --mem above cores x this by
+   *  raising the CPU count, and the raised count is checked against maxCores
+   *  only at scheduling time — the job then pends forever. */
+  maxMemPerCpuMb?: number;
 }
 
 export interface PartitionPolicy {
@@ -66,15 +70,28 @@ export interface PartitionPolicy {
 /** Largest --mem (per node) a single node can actually grant. */
 export function effectiveMemPerNodeGb(cap: PartitionCap, nodeMemMb?: number): number | undefined {
   const hw = nodeMemMb ? Math.floor(nodeMemMb / 1024) : undefined;
-  if (hw && cap.maxMemGb) return Math.min(hw, cap.maxMemGb);
-  return hw ?? cap.maxMemGb;
+  const limits = [hw, cap.maxMemGb, cpuBoundMemGb(cap)].filter((v): v is number => !!v);
+  return limits.length ? Math.min(...limits) : undefined;
 }
 
-/** Job-total memory ceiling for the policy-limit line (spans maxNodes). */
+/** Job-total memory ceiling for the policy-limit line (spans maxNodes).
+ *  Without a node limit the job may span as many nodes as it likes, so only
+ *  the QoS total binds. */
 export function effectiveJobMemGb(cap: PartitionCap, nodeMemMb?: number): number | undefined {
   if (!cap.maxMemGb) return undefined;
-  const hw = nodeMemMb ? Math.floor(nodeMemMb / 1024) * (cap.maxNodes ?? 1) : undefined;
-  return hw ? Math.min(cap.maxMemGb, hw) : cap.maxMemGb;
+  const hw = cap.maxNodes && nodeMemMb ? Math.floor(nodeMemMb / 1024) * cap.maxNodes : undefined;
+  const limits = [cap.maxMemGb, hw, cpuBoundMemGb(cap)].filter((v): v is number => !!v);
+  return Math.min(...limits);
+}
+
+/** Can a job in this partition span nodes? An absent maxNodes means the QoS
+ *  sets no node limit (SMALL: cpu=768,mem=4.50T — a 512-core job ran on 20
+ *  nodes), NOT "one node". Without a node limit, a core cap that fits on one
+ *  node (VM-CPU: 32 cores on 32-core nodes) still keeps jobs single-node. */
+export function allowsMultiNode(cap: PartitionCap, coresPerNode?: number): boolean {
+  if (cap.maxNodes) return cap.maxNodes > 1;
+  if (!cap.maxCores || !coresPerNode) return true;
+  return cap.maxCores > coresPerNode;
 }
 
 export const PARTITION_DISPLAY_ORDER = [
@@ -124,8 +141,20 @@ export const MATERIALS_STUDIO_PARTITIONS = [
 
 export const isMaterialsStudioPartition = (name: string) => MATERIALS_STUDIO_PARTITIONS.includes(name);
 
-export const partitionCap = (name: string, policy?: PolicySnapshot): PartitionCap =>
-  policy?.partition_caps?.[name] ?? {};
+export const partitionCap = (name: string, policy?: PolicySnapshot): PartitionCap => {
+  const cap = policy?.partition_caps?.[name] ?? {};
+  const maxMemPerCpuMb = policy?.partition_defaults?.[name]?.max_mem_per_cpu_mb;
+  return maxMemPerCpuMb ? { ...cap, maxMemPerCpuMb } : cap;
+};
+
+/** Memory (GiB) beyond which Slurm must add CPUs past the QoS core cap:
+ *  maxCores x MaxMemPerCPU. Measured 2026-10-01: GPU-1 (26 x 9845 MB)
+ *  --mem=249G -> 26 CPUs and runs; --mem=250G -> 52 CPUs, pends on
+ *  QOSMaxCpuPerJobLimit forever. */
+function cpuBoundMemGb(cap: PartitionCap): number | undefined {
+  if (!cap.maxCores || !cap.maxMemPerCpuMb) return undefined;
+  return Math.floor((cap.maxCores * cap.maxMemPerCpuMb) / 1024);
+}
 
 /** QoS ceiling expressed per GPU, for narrowing the per-GPU need. Slurm quotes
  *  MaxTRES memory in binary GB (mem=256G = 256 GiB), so scale by 1024. */
