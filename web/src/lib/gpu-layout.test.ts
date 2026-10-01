@@ -5,7 +5,7 @@
  * cases are what the same code emits once gpu_request_respected flips.
  */
 import { describe, expect, it } from "vitest";
-import { gpuLayouts, type GpuNodeShape } from "./gpu-layout";
+import { gpuLayouts, maxJobGpus, type GpuNodeShape } from "./gpu-layout";
 
 const A40: GpuNodeShape = { gpus: 2, cores: 52, memMb: 515306, count: 20 };
 const A100: GpuNodeShape = { gpus: 2, cores: 52, memMb: 515306, count: 10 };
@@ -79,5 +79,27 @@ describe("after the plugin fix: --gres works again", () => {
   it("multi-node packs pin one task per GPU", () => {
     const l = gpuLayouts(GPU_L, FIXED, A40, true).layouts.find((x) => x.key === "p2");
     expect(l?.flags).toEqual(["-N 2", "--ntasks-per-node=2", "-c 26", "--gres=gpu:2"]);
+  });
+});
+
+describe("policy-limit GPU number = most GPUs one job can really get", () => {
+  it("states 2 for GPU-S (QoS 2, reachable via --exclusive), not the plugin's 1", () => {
+    // the limit line once read "1 GPU / 52c / 499GiB" — 52c and 499GiB are a
+    // whole node, which is exactly the --exclusive request that gets 2 A40s
+    expect(maxJobGpus(GPU_S, FORCED, A40, false)).toBe(2);
+  });
+
+  it("matches the largest choice under 高级参数 for every GPU partition", () => {
+    const cases: Array<[string, object, GpuNodeShape, boolean, number]> = [
+      ["GPU-1", GPU_1, A40, false, 1],
+      ["GPU-S", GPU_S, A40, false, 2],
+      ["GPU-L", GPU_L, A40, true, 8],
+      ["GPU-1A", GPU_1A, A100, false, 1],
+      ["GPU-LA", GPU_LA, A100, true, 8],
+      ["VM-GPU-L", VM_GPU_L, H100, false, 1],
+    ];
+    for (const [, cap, shape, multi, want] of cases) {
+      expect(maxJobGpus(cap, FORCED, shape, multi)).toBe(want);
+    }
   });
 });

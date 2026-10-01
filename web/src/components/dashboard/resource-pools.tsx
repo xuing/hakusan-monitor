@@ -517,7 +517,7 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
   const policyDescBase = trMaybe(t, `policy.${partition}.desc`, "");
   // Multi-GPU is a rare need: everything about it lives under 高级参数.
   const policyDesc = policyDescBase;
-  const limitText = fmtPolicyLimit(cap, isGpu, t, partition, undefined, snap?.policy);
+  const limitText = fmtPolicyLimit(cap, isGpu, t, partition, undefined, snap?.policy, isGpu ? gpuShape : undefined);
   const policyLimit = limitText ? `${t("part.policyLimit")} ${limitText}` : "";
   // the scatter warning is about the implicit multi-node DEFAULT — once the
   // user pins -N themselves it describes a state they already left
@@ -534,7 +534,7 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
         return {
           partition: p,
           policy: trMaybe(t, `policy.${p}`, p),
-          limit: fmtPolicyLimit(partitionCap(p, snap?.policy), true, t, p, undefined, snap?.policy),
+          limit: fmtPolicyLimit(partitionCap(p, snap?.policy), true, t, p, undefined, snap?.policy, gpuShape),
           verdict: partitionOptionVerdict(summary, t),
         };
       })

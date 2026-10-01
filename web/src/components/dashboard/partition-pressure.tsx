@@ -16,6 +16,7 @@ import type { TranslationKey } from "@/i18n/en";
 import { nodeIsSchedulerHeld, poolCapacity, type PoolCapacity } from "@/lib/derive";
 import { clockOf, fmtMB, nf } from "@/lib/format";
 import { contendersForPool, fitHasClearSlot, partitionGpuAvailability, poolGpuAvailability } from "@/lib/gpu-fit";
+import { maxJobGpus } from "@/lib/gpu-layout";
 import type { GpuAvailability } from "@/lib/gpu-availability";
 import { gpuPartitionAdvice, type GpuPartitionAdvice } from "@/lib/gpu-advice";
 import { cpuProbeForPartition, cpuProbeMaxAge, cpuProbeState, type CpuProbeRow } from "@/lib/cpu-probes";
@@ -534,14 +535,22 @@ function PartitionRow({
   const backfillTip = gpuAdvice?.backfillTip ?? null;
   const cap = partitionCap(p.name, policy);
   const defaults = partitionDefaults(p.name, policy);
-  const gpuLimit = effectiveGpuLimit(cap, defaults);
+  // the partition's node shape (scontrol) — with it, the GPU numbers count
+  // what a job can really get, --exclusive route included (maxJobGpus)
+  const gpuShape = isGpu && p.spec.gpu_per_node > 0
+    ? { gpus: p.spec.gpu_per_node, cores: p.spec.cores_per_node, memMb: p.spec.mem_per_node, count: p.nodes }
+    : undefined;
+  const jobGpus = gpuShape
+    ? maxJobGpus(cap, { gpusPerNode: defaults.gpus_per_node, gpuRequestRespected: defaults.gpu_request_respected,
+                        defaultCores: defaults.cores }, gpuShape, allowsMultiNode(cap, gpuShape.cores))
+    : effectiveGpuLimit(cap, defaults).total;
   const probeState = cpuProbe
     ? cpuProbeState(cpuProbe.probe, probeGeneratedAt, observedAt, probeMaxAge)
     : null;
   const hero = requestableNow(
     p, cap, isGpu, pc, gpuSchedulable,
     probeState === "now" ? cpuProbe?.cores : undefined,
-    isGpu ? gpuLimit.total : undefined,
+    isGpu ? jobGpus : undefined,
   );
   // gpuClear === false means every free GPU slot is claimed by queued jobs
   // (or the node is PLANNED) — "can allocate" would be a false promise.
@@ -604,7 +613,7 @@ function PartitionRow({
               )}
             </span>
             <span className="font-mono text-xs text-muted-foreground">
-              {t("part.policyLimit")} {fmtPolicyLimit(cap, isGpu, t, p.name, p.spec.mem_per_node, policy) || "—"}
+              {t("part.policyLimit")} {fmtPolicyLimit(cap, isGpu, t, p.name, p.spec.mem_per_node, policy, gpuShape) || "—"}
             </span>
             <span className={cn("font-mono text-xs", p.jobs.pending > 0 ? "text-warn-fg" : "text-muted-foreground")}>
               {t("part.run")}{nf(p.jobs.running)} {t("part.pend")}{nf(p.jobs.pending)}

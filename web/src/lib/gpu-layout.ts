@@ -111,3 +111,12 @@ export function gpuLayouts(cap: PartitionCap, facts: GpuLayoutFacts, shape: GpuN
   layouts.sort((a, b) => a.gpus - b.gpus || a.nodes - b.nodes);
   return { layouts, fullNodeBlocked };
 }
+
+/** Most GPUs one job in this partition can actually get — the largest layout
+ *  gpuLayouts() offers (so with the plugin pinning 1/node, GPU-S is 2 via
+ *  --exclusive, GPU-1 is 1). The policy-limit line states this number, which
+ *  keeps it equal to the biggest choice under 高级参数. */
+export function maxJobGpus(cap: PartitionCap, facts: GpuLayoutFacts, shape: GpuNodeShape,
+                           multiNode: boolean): number {
+  return Math.max(0, ...gpuLayouts(cap, facts, shape, multiNode).layouts.map((l) => l.gpus));
+}
