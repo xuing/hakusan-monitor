@@ -1,5 +1,5 @@
 import { BarChart } from "@/components/charts/simple-charts";
-import { ExternalLink } from "lucide-react";
+import { ChevronRight, ExternalLink } from "lucide-react";
 import { ChartPlaceholder } from "@/components/common/chart-placeholder";
 import { Empty } from "@/components/common/empty";
 import { PolicySourceSection } from "@/components/guide/policy-source";
@@ -8,18 +8,6 @@ import { useApi } from "@/hooks/use-api";
 import { useT, type TranslationKey } from "@/i18n";
 import { api } from "@/lib/api";
 
-const PROJECT_POLLING: TranslationKey[] = [
-  "guide.project.poll.1",
-  "guide.project.poll.2",
-  "guide.project.poll.3",
-  "guide.project.poll.4",
-];
-const PROJECT_LIGHT: TranslationKey[] = [
-  "guide.project.light.1",
-  "guide.project.light.2",
-  "guide.project.light.3",
-  "guide.project.light.4",
-];
 const PROJECT_URL = "https://github.com/xuing/hakusan-monitor";
 const SLURM_POLL_COMMAND =
   "# realtime snapshot: HM_SAMPLE_INTERVAL\n" +
@@ -38,7 +26,7 @@ const SLURM_POLL_COMMAND =
   "# static policy: HM_POLICY_INTERVAL\n" +
   "sacctmgr -n -P show qos format=Name,MaxTRES%200,MaxWall,GrpJobs,MaxJobsPU,MaxSubmitPU,MinTRES%200,Flags%100\n" +
   "scontrol -o show partition\n" +
-  "# submit plugin + its admin backups (job_submit.lua_YYMMDD) = change history\n" +
+  "# submit plugin (job_submit.lua) and when it last changed\n" +
   "cat /app/slurm/job_submit.lua\n" +
   "stat -c '%Y|%s|%n' /app/slurm/job_submit.lua /app/slurm/job_submit.lua_*\n" +
   "# container runtime; first successful sample only\n" +
@@ -62,8 +50,6 @@ const CADENCE_ROWS: { what: TranslationKey; every: string; cost: TranslationKey 
   { what: "guide.project.cad.probe.what", every: "900 s · HM_CPU_PROBE_INTERVAL", cost: "guide.project.cad.probe.cost" },
   { what: "guide.project.cad.policy.what", every: "24 h · HM_POLICY_INTERVAL", cost: "guide.project.cad.policy.cost" },
   { what: "guide.project.cad.login.what", every: "300 s · HM_LOGIN_INTERVAL", cost: "guide.project.cad.login.cost" },
-  { what: "guide.project.cad.sing.what", every: "—", cost: "guide.project.cad.sing.cost" },
-  { what: "guide.project.cad.sse.what", every: "—", cost: "guide.project.cad.sse.cost" },
 ];
 
 export default function ProjectGuidePage() {
@@ -71,6 +57,8 @@ export default function ProjectGuidePage() {
 
   return (
     <div className="space-y-4">
+      <VisitsCard />
+
       <SectionCard title={t("guide.projectTitle")}>
         <div className="space-y-3 text-sm">
           <a
@@ -82,47 +70,43 @@ export default function ProjectGuidePage() {
             <span className="font-mono text-xs">{PROJECT_URL}</span>
             <ExternalLink className="h-3.5 w-3.5" />
           </a>
-          <InfoList title={t("guide.project.pollTitle")} keys={PROJECT_POLLING} />
-        </div>
-      </SectionCard>
-
-      <SectionCard title={t("guide.project.cadenceTitle")}>
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-border text-left text-xs uppercase tracking-wide text-muted-foreground">
-                <th className="py-1.5 pr-3 font-medium">{t("guide.project.cad.what")}</th>
-                <th className="py-1.5 pr-3 font-medium">{t("guide.project.cad.every")}</th>
-                <th className="py-1.5 font-medium">{t("guide.project.cad.cost")}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {CADENCE_ROWS.map((row) => (
-                <tr key={row.what} className="border-b border-border/50 align-top last:border-0">
-                  <td className="py-2 pr-3">{t(row.what)}</td>
-                  <td className="whitespace-nowrap py-2 pr-3 font-mono text-xs text-muted-foreground">{row.every}</td>
-                  <td className="py-2 text-muted-foreground">{t(row.cost)}</td>
+          {/* what is collected, how often, what it costs the login node — the
+              "why it's light" facts are this table's footnote, not a card */}
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-border text-left text-xs uppercase tracking-wide text-muted-foreground">
+                  <th className="py-1.5 pr-3 font-medium">{t("guide.project.cad.what")}</th>
+                  <th className="py-1.5 pr-3 font-medium">{t("guide.project.cad.every")}</th>
+                  <th className="py-1.5 font-medium">{t("guide.project.cad.cost")}</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </SectionCard>
-
-      <SectionCard title={t("guide.project.commandsTitle")}>
-        <div className="grid gap-3 lg:grid-cols-2">
-          <CommandSnippet title={t("guide.project.slurmCommands")} text={SLURM_POLL_COMMAND} />
-          <CommandSnippet title={t("guide.project.loginCommands")} text={LOGIN_POLL_COMMAND} />
+              </thead>
+              <tbody>
+                {CADENCE_ROWS.map((row) => (
+                  <tr key={row.what} className="border-b border-border/50 align-top last:border-0">
+                    <td className="py-2 pr-3">{t(row.what)}</td>
+                    <td className="whitespace-nowrap py-2 pr-3 font-mono text-xs text-muted-foreground">{row.every}</td>
+                    <td className="py-2 text-muted-foreground">{t(row.cost)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <p className="text-xs leading-relaxed text-muted-foreground">{t("guide.project.lightNote")}</p>
+          <details className="group rounded-lg border border-border">
+            <summary className="flex cursor-pointer list-none items-center gap-1.5 px-3 py-2 text-xs text-muted-foreground hover:text-foreground [&::-webkit-details-marker]:hidden">
+              <ChevronRight className="h-3.5 w-3.5 transition-transform group-open:rotate-90" />
+              {t("guide.project.commandsTitle")}
+            </summary>
+            <div className="grid gap-3 border-t border-border/60 p-3 lg:grid-cols-2">
+              <CommandSnippet title={t("guide.project.slurmCommands")} text={SLURM_POLL_COMMAND} />
+              <CommandSnippet title={t("guide.project.loginCommands")} text={LOGIN_POLL_COMMAND} />
+            </div>
+          </details>
         </div>
       </SectionCard>
 
       <PolicySourceSection />
-
-      <SectionCard title={t("guide.project.lightTitle")}>
-        <InfoList keys={PROJECT_LIGHT} />
-      </SectionCard>
-
-      <VisitsCard />
     </div>
   );
 }
@@ -174,20 +158,6 @@ function VisitStat({ label, value }: { label: string; value: number }) {
     <div className="rounded-lg border border-border px-3 py-2">
       <div className="text-xs text-muted-foreground">{label}</div>
       <div className="mt-0.5 font-mono text-xl font-semibold tabular-nums">{value.toLocaleString()}</div>
-    </div>
-  );
-}
-
-function InfoList({ title, keys }: { title?: string; keys: TranslationKey[] }) {
-  const t = useT();
-  return (
-    <div>
-      {title && <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">{title}</div>}
-      <ul className="space-y-1.5 text-sm text-muted-foreground">
-        {keys.map((key) => (
-          <li key={key} className="rounded-md bg-muted/30 px-2.5 py-1.5">{t(key)}</li>
-        ))}
-      </ul>
     </div>
   );
 }
