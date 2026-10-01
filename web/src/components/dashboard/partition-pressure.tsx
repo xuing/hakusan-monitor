@@ -15,8 +15,8 @@ import { poolLabel, useT, type TFn } from "@/i18n";
 import type { TranslationKey } from "@/i18n/en";
 import { poolCapacity, type PoolCapacity } from "@/lib/derive";
 import { clockOf, fmtMB, nf } from "@/lib/format";
-import { contendersForPool, fitHasClearSlot, gpuNodeFacts, gpuStrandedCount } from "@/lib/gpu-fit";
-import { gpuAvailability, type GpuAvailability } from "@/lib/gpu-availability";
+import { contendersForPool, fitHasClearSlot, partitionGpuAvailability, poolGpuAvailability } from "@/lib/gpu-fit";
+import type { GpuAvailability } from "@/lib/gpu-availability";
 import { gpuPartitionAdvice, type GpuPartitionAdvice } from "@/lib/gpu-advice";
 import { cpuProbeForPartition, cpuProbeMaxAge, cpuProbeState, type CpuProbeRow } from "@/lib/cpu-probes";
 import {
@@ -27,12 +27,10 @@ import {
   policyLimitRows,
 } from "@/lib/policy-hints";
 import {
-  capPerGpu,
   isMaterialsStudioPartition,
   interactiveForcedSec,
   matchPartition,
   partitionCap,
-  partitionDefaultRequest,
   partitionPolicy as slurmPartitionPolicy,
   type PartitionCap,
 } from "@/lib/slurm";
@@ -206,25 +204,20 @@ export function PartitionPressure() {
                   ] as const)
                 : [],
             );
-            // "green" for the pool bar = the best any single sibling policy could
-            // actually grant right now — matches the per-row rule: one partition
-            // able to default-request it is enough to count it as available.
-            const gpuSchedulableMax = isGpu && pool
-              ? Math.max(0, ...parts.map((sp) => gpuAdviceByPartition.get(sp.name)?.fit.schedulable ?? 0))
-              : undefined;
-            // Same classifier as the Overview pool cards, so a GPU cannot be
-            // "available" on one page and reserved/short on the other. Sibling
-            // policies share the pool's hardware: the most permissive one wins,
-            // matching the per-row rule right below.
-            const gpuAvail = isGpu && pool
-              ? parts
-                  .map((sp) => gpuAvailability(
-                    gpuNodeFacts(snap.nodes, pool, pendingActive, nowMs),
-                    partitionDefaultRequest(sp.name, snap.policy),
-                    capPerGpu(partitionCap(sp.name, snap.policy)),
-                  ))
-                  .reduce<GpuAvailability | null>((best, next) => (!best || next.ready > best.ready ? next : best), null)
-              : null;
+            // Same verdict as the Overview pool cards, filter chips and KPIs
+            // (most permissive sibling policy wins), so a GPU cannot be
+            // "available" on one page and reserved/short/queued on another.
+            const gpuAvail = isGpu && pool ? poolGpuAvailability(snap, pool, nowMs, pendingActive) : null;
+            // Each row reads its own partition's view of the same verdict
+            // (queue claims included), never the contention-blind fit count.
+            const gpuAvailByPartition = new Map(
+              isGpu && pool
+                ? parts.map((p) => [p.name, partitionGpuAvailability(snap, pool, p.name, nowMs, pendingActive)] as const)
+                : [],
+            );
+            const idleNotReady = (a: GpuAvailability) =>
+              a.segments.filter((s) => s.kind !== "ready" && s.kind !== "down" && s.kind !== "full")
+                .reduce((sum, s) => sum + s.count, 0);
             return (
               <div key={group.key}>
                 <PoolHeader
@@ -233,7 +226,6 @@ export function PartitionPressure() {
                   spec={spec}
                   isGpu={isGpu}
                   pc={pc}
-                  gpuSchedulable={gpuSchedulableMax}
                   gpuAvail={gpuAvail}
                   generatedAt={snap.generated_at}
                   t={t}
@@ -247,17 +239,15 @@ export function PartitionPressure() {
                       isGpu={isGpu}
                       pc={pc}
                       cpuProbeFor={(p) => (!isGpu ? cpuProbeForPartition(snap, p.name) : null)}
-                      gpuSlotsFor={(p) =>
-                        gpuAdviceByPartition.get(p.name)?.fit.schedulable ?? null
-                      }
+                      gpuSlotsFor={(p) => gpuAvailByPartition.get(p.name)?.ready ?? null}
                       gpuClearFor={(p) =>
                         gpuAdviceByPartition.has(p.name)
                           ? fitHasClearSlot(gpuAdviceByPartition.get(p.name)!.fit, pendingActive, nowMs, 720 * 60)
                           : null
                       }
                       gpuStrandedFor={(p) => {
-                        const advice = gpuAdviceByPartition.get(p.name);
-                        return advice ? gpuStrandedCount(advice.fit) : 0;
+                        const avail = gpuAvailByPartition.get(p.name);
+                        return avail ? idleNotReady(avail) : 0;
                       }}
                       gpuAdviceFor={(p) => gpuAdviceByPartition.get(p.name) ?? null}
                       probeGeneratedAt={snap.cpu_submit_probes_generated_at || snap.generated_at}
@@ -373,7 +363,6 @@ function PoolHeader({
   spec,
   isGpu,
   pc,
-  gpuSchedulable,
   gpuAvail,
   generatedAt,
   t,
@@ -383,7 +372,6 @@ function PoolHeader({
   spec: Partition["spec"];
   isGpu: boolean;
   pc: PoolCapacity;
-  gpuSchedulable?: number;
   gpuAvail?: GpuAvailability | null;
   generatedAt: number;
   t: TFn;
@@ -432,7 +420,7 @@ function PoolHeader({
         {isGpu && <GpuReleaseHint next={pool?.gpu?.next_free} generatedAt={generatedAt} />}
       </div>
       <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
-        <UnitBlocks {...blocks} schedulable={isGpu ? gpuSchedulable : undefined} />
+        <UnitBlocks {...blocks} schedulable={isGpu ? gpuReady : undefined} />
         {maint ? (
           <>
             <Tag tone="neutral">{t("pool.maint")}</Tag>
@@ -549,8 +537,10 @@ function PartitionRow({
         : null;
   // "Available" reads wrong next to a queued/failed verdict — and next to a zero —
   // swap to a fitting label, or drop it when the override/tag already speaks.
+  // "可申请" only where the status tag agrees — a contested or capped slot
+  // must not read "can request" beside "will queue".
   const heroLabel = !heroOverride
-    ? hero.n > 0
+    ? hero.n > 0 && canRun
       ? t("part.requestNow")
       : null
     : heroHasEstimate

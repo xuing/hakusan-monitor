@@ -2,10 +2,16 @@
 // start right now, or are the free GPUs stranded on nodes whose leftover
 // CPU/memory can't host it? Pure computation — no React, no i18n — so both the
 // Overview pool cards and the Partitions page share one verdict.
-import { expandHostlist, nodeIsSchedulable } from "@/lib/derive";
-import { gpuPerGpuNeed, type GpuDefaultRequest, type GpuNodeFacts } from "@/lib/gpu-availability";
-import { capPerGpu, partitionDefaultRequest, partitionPolicy, type PartitionCap } from "@/lib/slurm";
-import type { PolicySnapshot, Pool, RawJob, RawNode, Snapshot } from "@/types/snapshot";
+import { expandHostlist, nodeIsSchedulable, nodeIsSchedulerHeld, nodeNeedsAttention } from "@/lib/derive";
+import {
+  gpuAvailability,
+  gpuPerGpuNeed,
+  type GpuAvailability,
+  type GpuDefaultRequest,
+  type GpuNodeFacts,
+} from "@/lib/gpu-availability";
+import { capPerGpu, partitionCap, partitionDefaultRequest, partitionPolicy, type PartitionCap } from "@/lib/slurm";
+import type { Pool, RawJob, RawNode, Snapshot } from "@/types/snapshot";
 
 export interface GpuFitNeed {
   partition: string;
@@ -40,12 +46,6 @@ export interface GpuFitInfo {
 export interface GpuFitTipData {
   mem: string;
   node: string;
-}
-
-export function schedulableGpuSlots(nodes: RawNode[], pool: Pool, cap: PartitionCap,
-                                    partition: string, policy?: PolicySnapshot) {
-  return gpuFitFromNodes(nodes, [], pool, cap, partition,
-                         partitionDefaultRequest(partition, policy)).schedulable;
 }
 
 export function gpuFitSnapshot(snap: Snapshot, pool: Pool, cap: PartitionCap, partition: string): GpuFitInfo {
@@ -138,42 +138,66 @@ export function gpuFitWithMemOverride(fit: GpuFitInfo, memMb: number): GpuFitInf
   };
 }
 
-// Kept in sync with backend/normalize.py needs_attention(): these states mean
-// "operator problem", every other non-schedulable state is a scheduler hold.
-const ATTENTION_STATES = ["DOWN", "NOT_RESPONDING", "DRAIN", "DRAINING", "FAIL", "FAILING",
-  "MAINT", "POWER_DOWN", "POWERING_DOWN", "POWERED_DOWN", "REBOOT_ISSUED", "REBOOT_REQUESTED"];
-
 /** Adapt a pool's raw nodes into the plain records gpu-availability classifies.
  *  Every node of the pool is included — a drained node's idle GPUs are part of
  *  the picture ("down"), they are just not capacity. */
 export function gpuNodeFacts(nodes: RawNode[], pool: Pool, pendingActive: RawJob[], nowMs: number): GpuNodeFacts[] {
   const type = pool.gpu?.type ?? "";
-  return nodes
-    .filter((node) => node.pool === pool.id)
-    .map((node) => {
-      const states = new Set(node.state.map((state) => String(state).toUpperCase()));
-      const offline = ATTENTION_STATES.some((state) => states.has(state));
-      const held = !offline && !nodeIsSchedulable(node);
-      const freeGpu = Math.max(0, parseGpuCount(node.gres, type) - parseGpuCount(node.gres_used, type));
-      const freeCores = Math.max(0, node.cpus - node.alloc_cpus);
-      const freeMemMb = Math.max(0, node.real_memory - node.alloc_memory);
-      // Contention only decides the verdict for nodes that are otherwise
-      // takeable; an offline or held node is already spoken for.
-      const contested = !offline && !held && freeGpu > 0
-        && slotContention({ node, freeGpu, freeCores, freeMemMb } as GpuFitNode, pendingActive, nowMs).contenders > 0;
-      return {
-        name: node.name,
-        gpusTotal: parseGpuCount(node.gres, type),
-        gpusUsed: parseGpuCount(node.gres_used, type),
-        coresTotal: node.cpus,
-        coresFree: freeCores,
-        memTotalMb: node.real_memory,
-        memFreeMb: freeMemMb,
-        offline,
-        held,
-        contested,
-      };
-    });
+  const poolNodes = nodes.filter((node) => node.pool === pool.id);
+  // Only in-service nodes can be claimed by a waiter; an offline or held node
+  // is already spoken for.
+  const open: GpuFitNode[] = poolNodes
+    .filter((node) => nodeIsSchedulable(node))
+    .map((node) => ({
+      node,
+      freeGpu: Math.max(0, parseGpuCount(node.gres, type) - parseGpuCount(node.gres_used, type)),
+      freeCores: Math.max(0, node.cpus - node.alloc_cpus),
+      freeMemMb: Math.max(0, node.real_memory - node.alloc_memory),
+    }) as GpuFitNode)
+    .filter((row) => row.freeGpu > 0);
+  const claims = queueClaims(open, pendingActive, nowMs);
+  return poolNodes.map((node) => ({
+    name: node.name,
+    gpusTotal: parseGpuCount(node.gres, type),
+    gpusUsed: parseGpuCount(node.gres_used, type),
+    coresTotal: node.cpus,
+    coresFree: Math.max(0, node.cpus - node.alloc_cpus),
+    memTotalMb: node.real_memory,
+    memFreeMb: Math.max(0, node.real_memory - node.alloc_memory),
+    offline: nodeNeedsAttention(node),
+    held: nodeIsSchedulerHeld(node),
+    claim: claims.get(node.name),
+  }));
+}
+
+/** The pool's GPU verdict, judged against the most permissive of its sibling
+ *  partitions (they share the hardware, so one policy able to default-request a
+ *  GPU is enough to call it available). The ONE entry point for every GPU
+ *  number, colour and "available" flag — pool cards, Partitions headers,
+ *  filter chips, group headers and KPIs all read this, so a pool can never be
+ *  green in one place and amber in the next. */
+export function poolGpuAvailability(snap: Snapshot, pool: Pool, nowMs: number,
+                                    pendingActive = contendersForPool(snap, pool.id)): GpuAvailability {
+  const facts = gpuNodeFacts(snap.nodes, pool, pendingActive, nowMs);
+  const parts = snap.partitions.filter((p) => p.pool === pool.id).map((p) => p.name);
+  const verdicts = (parts.length ? parts : [""]).map((name) => partitionVerdict(facts, snap, name));
+  return verdicts.reduce((best, next) => (next.ready > best.ready ? next : best));
+}
+
+/** One partition's view of the shared pool verdict — the per-row number on
+ *  the Partitions page, queue claims included, so a row can never promise
+ *  more GPUs than the header it sits under. */
+export function partitionGpuAvailability(snap: Snapshot, pool: Pool, partition: string, nowMs: number,
+                                         pendingActive = contendersForPool(snap, pool.id)): GpuAvailability {
+  return partitionVerdict(gpuNodeFacts(snap.nodes, pool, pendingActive, nowMs), snap, partition);
+}
+
+function partitionVerdict(facts: GpuNodeFacts[], snap: Snapshot, partition: string) {
+  return gpuAvailability(
+    facts,
+    partitionDefaultRequest(partition, snap.policy),
+    capPerGpu(partitionCap(partition, snap.policy)),
+  );
 }
 
 /** PLANNED is a future scheduler reservation, not an outage. Such a node must
@@ -260,30 +284,95 @@ export interface SlotContention {
 }
 
 export function slotContention(row: GpuFitNode, pendingActive: RawJob[], nowMs = 0): SlotContention {
-  const planned = row.node.state.some((s) => String(s).toUpperCase() === "PLANNED");
-  const win = planned && nowMs ? backfillWindow(row, pendingActive, nowMs) : null;
-  const windowSec = win ? Math.max(0, Math.floor((win.untilMs - nowMs) / 1000)) : null;
+  const { planned, windowSec } = plannedWindow(row, pendingActive, nowMs);
   let contenders = 0;
   for (const job of pendingActive) {
     if (!pendingJobMayUseNode(job, row.node.name)) continue;
-    // min_memory_mb / cpus / gpus are job totals; a multi-node job claims this
-    // node with its per-node share. A waiter in a GPU pool with no parsed GPU
-    // count still wants one — counting it keeps us on the "says queue" side.
-    const nodes = Math.max(1, job.node_count || 1);
-    const gpus = Math.ceil((job.gpus || 0) / nodes) || 1;
-    const cpus = Math.ceil((job.cpus || 0) / nodes);
-    const memMb = Math.ceil((job.min_memory_mb || 0) / nodes);
-    if (gpus > row.freeGpu || cpus > row.freeCores || memMb > row.freeMemMb) continue;
-    if (windowSec !== null) {
-      // reservation fences the gap: only waiters whose walltime ends inside
-      // it can start here now (verified live: a 24h waiter sat pending while
-      // a 5-minute job started instantly on the "reserved" node)
-      const tl = parseWalltimeSec(job.time_limit || "");
-      if (tl <= 0 || tl > windowSec) continue;
-    }
+    const share = waiterShare(job);
+    if (share.gpus > row.freeGpu || share.cores > row.freeCores || share.memMb > row.freeMemMb) continue;
+    if (!waiterFitsWindow(job, windowSec)) continue;
     contenders += 1;
   }
   return { contenders, planned, windowSec };
+}
+
+/** min_memory_mb / cpus / gpus are job totals; a multi-node job claims each
+ *  node with its per-node share. A waiter in a GPU pool with no parsed GPU
+ *  count still wants one — counting it keeps us on the "says queue" side. */
+function waiterShare(job: RawJob) {
+  const nodes = Math.max(1, job.node_count || 1);
+  return {
+    nodes,
+    gpus: Math.ceil((job.gpus || 0) / nodes) || 1,
+    cores: Math.ceil((job.cpus || 0) / nodes),
+    memMb: Math.ceil((job.min_memory_mb || 0) / nodes),
+  };
+}
+
+/** A reservation fences the gap: only waiters whose walltime ends inside it
+ *  can start there now (verified live: a 24h waiter sat pending while a
+ *  5-minute job started instantly on the "reserved" node). */
+function waiterFitsWindow(job: RawJob, windowSec: number | null) {
+  if (windowSec === null) return true;
+  const tl = parseWalltimeSec(job.time_limit || "");
+  return tl > 0 && tl <= windowSec;
+}
+
+export interface QueueClaim {
+  gpus: number;
+  cores: number;
+  memMb: number;
+}
+
+/**
+ * What the queue takes before a new request gets a turn. Each now-startable
+ * waiter is placed on the node(s) its per-node share fits, consuming those
+ * leftovers; best fit (fewest spare GPUs first) keeps the widest gaps open,
+ * as Slurm's own packing does. A waiter that cannot be placed in full right
+ * now is not about to start and claims nothing.
+ *
+ * This replaces "any waiter fits this node → the node is taken", which let a
+ * single one-GPU job claim every idle node in the pool.
+ */
+export function queueClaims(rows: GpuFitNode[], pendingActive: RawJob[], nowMs: number): Map<string, QueueClaim> {
+  const left = rows.map((row) => ({
+    row,
+    gpus: row.freeGpu,
+    cores: row.freeCores,
+    memMb: row.freeMemMb,
+    windowSec: plannedWindow(row, pendingActive, nowMs).windowSec,
+  }));
+  const claims = new Map<string, QueueClaim>();
+  for (const job of pendingActive) {
+    const share = waiterShare(job);
+    const fits = (n: (typeof left)[number]) => pendingJobMayUseNode(job, n.row.node.name)
+      && share.gpus <= n.gpus && share.cores <= n.cores && share.memMb <= n.memMb
+      && waiterFitsWindow(job, n.windowSec);
+    // --nodelist hosts are mandatory: every one must fit (and be in this
+    // pool's open set), or the job cannot start and claims nothing. Only the
+    // remaining node count is filled by best fit.
+    const required = new Set(expandHostlist(job.req_nodes || ""));
+    const pinned = left.filter((n) => required.has(n.row.node.name));
+    if (pinned.length < Math.min(required.size, share.nodes) || !pinned.every(fits)) continue;
+    const extra = left
+      .filter((n) => !required.has(n.row.node.name) && fits(n))
+      .sort((a, b) => a.gpus - b.gpus || a.cores - b.cores || a.row.node.name.localeCompare(b.row.node.name))
+      .slice(0, Math.max(0, share.nodes - pinned.length));
+    const fit = [...pinned.slice(0, share.nodes), ...extra];
+    if (fit.length < share.nodes) continue;
+    for (const n of fit) {
+      n.gpus -= share.gpus;
+      n.cores -= share.cores;
+      n.memMb -= share.memMb;
+      const prev = claims.get(n.row.node.name) ?? { gpus: 0, cores: 0, memMb: 0 };
+      claims.set(n.row.node.name, {
+        gpus: prev.gpus + share.gpus,
+        cores: prev.cores + share.cores,
+        memMb: prev.memMb + share.memMb,
+      });
+    }
+  }
+  return claims;
 }
 
 /** Apply Slurm's explicit host constraints before calling a queued job a
@@ -311,18 +400,26 @@ export function slotBlocked(c: SlotContention | null | undefined, requiredSec: n
   return requiredSec > c.windowSec;
 }
 
+/** Is a default-request slot still open once the queue has taken its share?
+ *  Waiters are placed pool-wide (`queueClaims`), so two waiters in front of
+ *  nine idle nodes leave seven open — not zero. A PLANNED node additionally
+ *  needs a known idle gap that holds the request's walltime. */
 export function fitHasClearSlot(fit: GpuFitInfo, pendingActive: RawJob[], nowMs: number, requiredSec: number): boolean {
-  return fit.fitNodes.some((row) => !slotBlocked(slotContention(row, pendingActive, nowMs), requiredSec));
+  const claims = queueClaims([...fit.fitNodes, ...fit.stranded], pendingActive, nowMs);
+  return fit.fitNodes.some((row) => {
+    const claim = claims.get(row.node.name);
+    const gpus = row.freeGpu - (claim?.gpus ?? 0);
+    const cores = row.freeCores - (claim?.cores ?? 0);
+    const memMb = row.freeMemMb - (claim?.memMb ?? 0);
+    if (gpus < fit.need.gpus || cores < fit.need.cores || memMb < fit.need.memMb) return false;
+    return !slotBlocked({ contenders: 0, ...plannedWindow(row, pendingActive, nowMs) }, requiredSec);
+  });
 }
 
-/** Physically-idle GPUs in this pool that THIS partition's default request
- *  can't have right now: nodes short on leftover CPU/mem, plus cards the
- *  scheduler holds for a future reservation. Both kinds stay reachable via
- *  tweaks or the timed backfill gap, so the UI shows their count in amber
- *  instead of a bare "0". */
-export function gpuStrandedCount(fit: GpuFitInfo): number {
-  const reserved = fit.reservedNodes.reduce((sum, row) => sum + row.freeGpu, 0);
-  return Math.max(0, fit.rawFree - fit.schedulable) + reserved;
+function plannedWindow(row: GpuFitNode, pendingActive: RawJob[], nowMs: number) {
+  const planned = row.node.state.some((s) => String(s).toUpperCase() === "PLANNED");
+  const win = planned && nowMs ? backfillWindow(row, pendingActive, nowMs) : null;
+  return { planned, windowSec: win ? Math.max(0, Math.floor((win.untilMs - nowMs) / 1000)) : null };
 }
 
 export function pendingForPool(jobs: RawJob[], partPool: Record<string, string>, poolId: string) {
@@ -341,7 +438,10 @@ export function isLimitBlocked(job: RawJob) {
     reason.startsWith("QOSGrp") ||
     reason.startsWith("AssocMax") ||
     reason.startsWith("AssocGrp") ||
-    reason === "Dependency" ||
+    // Dependency, and DependencyNeverSatisfied: the latter can never start
+    // at all. Missing it let two dead jobs paint all 15 idle A40s "queued"
+    // (live, 2026-10-01).
+    reason.startsWith("Dependency") ||
     reason === "JobArrayTaskLimit" ||
     reason === "BeginTime" ||
     reason.startsWith("JobHeld")
@@ -371,8 +471,13 @@ export function contendersForPool(snap: Snapshot, poolId: string): RawJob[] {
     const pol = partitionPolicy(p, snap.policy);
     return !(pol.grpJobs && (running.get(p) ?? 0) >= pol.grpJobs);
   };
+  // A job submitted to several pools ("-p GPU-1,GPU-1A") starts in only one;
+  // count it in its first-listed pool so two pools never both lose a GPU to it.
+  const homePool = (j: RawJob) =>
+    String(j.partition || "").split(",").map((p) => snap.part_pool[p]).find(Boolean);
   return activePendingForPool(snap.jobs, snap.part_pool, poolId).filter((j) =>
-    String(j.partition || "").split(",").some((p) => snap.part_pool[p] === poolId && groupOpen(p)),
+    homePool(j) === poolId
+      && String(j.partition || "").split(",").some((p) => snap.part_pool[p] === poolId && groupOpen(p)),
   );
 }
 

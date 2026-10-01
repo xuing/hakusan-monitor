@@ -36,6 +36,19 @@
  *    unusable". A node with a free GPU and 12 spare cores still runs a
  *    `-n 12` job; the label says the default request queues, and the card's
  *    tip offers the flag that fits.
+ *
+ * 4. A waiter claims what it asks for, not the whole node. One queued
+ *    single-GPU job in front of nine idle A40 nodes takes one GPU; the other
+ *    fourteen stay `ready`. Marking every node a waiter *could* use as
+ *    contested turned two never-startable jobs into "all 15 GPUs queue"
+ *    (measured 2026-10-01). The adapter places waiters (`queueClaims` in
+ *    gpu-fit.ts) and hands each node its claimed share.
+ *
+ * 5. "Idle" is not "free". `physicalIdle` counts every unused GPU, including
+ *    ones on drained/down nodes and scheduler-held ones — it exists so the
+ *    segments provably add up. Anything a user reads as "N GPUs free" must use
+ *    `free` (in-service, not held), which is what the backend reports as
+ *    `gpu.free`. Showing physicalIdle as "空闲" called a drained H100 idle.
  */
 
 export type GpuAvailabilityKind =
@@ -78,8 +91,9 @@ export interface GpuNodeFacts {
   /** Scheduler holds the node for a future job (PLANNED / RESERVED). Idle,
    *  but only reachable through a backfill window short enough to fit. */
   held: boolean;
-  /** A queued job that could start right now would claim this node's GPUs. */
-  contested: boolean;
+  /** What queued jobs that could start right now would take from this node
+   *  first (GPUs, cores, MB). Absent or zero when no waiter is placed here. */
+  claim?: { gpus: number; cores: number; memMb: number };
 }
 
 /** What a request with no resource flags asks Slurm for, per partition.
@@ -102,7 +116,12 @@ export interface GpuPerGpuNeed {
 
 export interface GpuNodeVerdict extends GpuNodeFacts {
   idleGpu: number;
+  /** The node's dominant state (first non-empty in display order). */
   kind: GpuAvailabilityKind;
+  /** This node's idle GPUs split by state; a node can hold a waiter's GPU
+   *  and a ready one at the same time. Counts add up to idleGpu. */
+  counts: Partial<Record<GpuAvailabilityKind, number>>;
+  /** What the next default request is short of on this node, 0 when it fits. */
   missingCores: number;
   missingMemMb: number;
 }
@@ -113,7 +132,12 @@ export interface GpuAvailability {
   nodes: GpuNodeVerdict[];
   /** GPUs the default request can take right now, on nobody else's terms. */
   ready: number;
-  /** Every physically idle GPU, whatever is blocking it. */
+  /** Idle GPUs on in-service nodes that the scheduler is not holding: ready,
+   *  queue-claimed or resource-short. The number to label "free/空闲"; it
+   *  matches the backend's `gpu.free`. */
+  free: number;
+  /** Every physically idle GPU, whatever is blocking it — including down and
+   *  reserved ones. An invariant anchor, never a user-facing "free" count. */
   physicalIdle: number;
 }
 
@@ -156,21 +180,46 @@ export function gpuPerGpuNeed(
 /** Why this node's idle GPUs are (or are not) takeable right now. */
 export function classifyGpuNode(node: GpuNodeFacts, need: GpuPerGpuNeed): GpuNodeVerdict {
   const idleGpu = Math.max(0, (node.gpusTotal || 0) - (node.gpusUsed || 0));
-  const missingCores = Math.max(0, need.cores - node.coresFree);
-  const missingMemMb = Math.max(0, need.memMb - node.memFreeMb);
-  return { ...node, idleGpu, missingCores, missingMemMb, kind: nodeKind(node, missingCores, missingMemMb) };
-}
-
-function nodeKind(node: GpuNodeFacts, missingCores: number, missingMemMb: number): GpuAvailabilityKind {
+  const counts: Partial<Record<GpuAvailabilityKind, number>> = {};
+  const add = (kind: GpuAvailabilityKind, n: number) => {
+    if (n > 0) counts[kind] = (counts[kind] ?? 0) + n;
+  };
+  let missingCores = Math.max(0, need.cores - node.coresFree);
+  let missingMemMb = Math.max(0, need.memMb - node.memFreeMb);
   // Ownership first: a broken or already-promised node is not "your request
   // doesn't fit", however much room is left on it.
-  if (node.offline) return "down";
-  if (node.held) return "reserved";
+  if (node.offline) add("down", idleGpu);
+  else if (node.held) add("reserved", idleGpu);
+  else {
+    // Queued jobs that can start now take their share first; what they leave
+    // is judged GPU by GPU against the default request's per-GPU footprint.
+    const claimed = Math.min(idleGpu, Math.max(0, node.claim?.gpus ?? 0));
+    const rest = idleGpu - claimed;
+    const coresLeft = Math.max(0, node.coresFree - (claimed ? node.claim?.cores ?? 0 : 0));
+    const memLeft = Math.max(0, node.memFreeMb - (claimed ? node.claim?.memMb ?? 0 : 0));
+    const fits = Math.min(
+      rest,
+      Math.floor(coresLeft / Math.max(1, need.cores)),
+      need.memMb > 0 ? Math.floor(memLeft / need.memMb) : rest,
+    );
+    add("contested", claimed);
+    add("ready", fits);
+    missingCores = 0;
+    missingMemMb = 0;
+    if (rest > fits) {
+      missingCores = Math.max(0, need.cores - (coresLeft - fits * need.cores));
+      missingMemMb = Math.max(0, need.memMb - (memLeft - fits * need.memMb));
+      add(shortKind(missingCores, missingMemMb), rest - fits);
+    }
+  }
+  const kind = KIND_ORDER.find((k) => (counts[k] ?? 0) > 0) ?? "full";
+  return { ...node, idleGpu, counts, kind, missingCores, missingMemMb };
+}
+
+function shortKind(missingCores: number, missingMemMb: number): GpuAvailabilityKind {
   if (missingCores > 0 && missingMemMb > 0) return "cpu-memory";
   if (missingCores > 0) return "cpu";
-  if (missingMemMb > 0) return "memory";
-  if (node.contested) return "contested";
-  return "ready";
+  return "memory";
 }
 
 /**
@@ -185,19 +234,24 @@ export function gpuAvailability(
 ): GpuAvailability {
   const need = gpuPerGpuNeed(request, poolShape(nodes, request), cap);
   const verdicts = nodes.map((node) => classifyGpuNode(node, need));
-  const idle = verdicts.filter((v) => v.idleGpu > 0);
   const counts = new Map<GpuAvailabilityKind, number>();
-  for (const v of idle) counts.set(v.kind, (counts.get(v.kind) ?? 0) + v.idleGpu);
+  for (const v of verdicts) {
+    for (const [kind, n] of Object.entries(v.counts) as Array<[GpuAvailabilityKind, number]>) {
+      counts.set(kind, (counts.get(kind) ?? 0) + n);
+    }
+  }
   const segments = KIND_ORDER
     .filter((kind) => (counts.get(kind) ?? 0) > 0)
     .map((kind) => ({ kind, count: counts.get(kind) as number }));
   if (segments.length === 0) segments.push({ kind: "full", count: 0 });
+  const physicalIdle = verdicts.reduce((sum, v) => sum + v.idleGpu, 0);
   return {
     need,
     segments,
     nodes: verdicts,
     ready: counts.get("ready") ?? 0,
-    physicalIdle: idle.reduce((sum, v) => sum + v.idleGpu, 0),
+    free: physicalIdle - (counts.get("down") ?? 0) - (counts.get("reserved") ?? 0),
+    physicalIdle,
   };
 }
 

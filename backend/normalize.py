@@ -100,6 +100,24 @@ def is_schedulable(states):
     return bool(s & {"IDLE", "MIXED"}) and not bool(s & _BLOCKING_STATES)
 
 
+def idle_gpu_bucket(states):
+    """Where a node's idle GPUs go when they are not free capacity.
+
+    "down": an operator took the node out (needs_attention). "reserved": the
+    scheduler is holding an in-service node (PLANNED/RESERVED/...). None: the
+    GPUs count as free — either the node is schedulable, or it is merely
+    ALLOCATED/COMPLETING with no blocking flag, so its idle GPU is short on
+    CPU rather than held by a reservation that does not exist. Keep in sync
+    with the frontend's nodeIsSchedulerHeld (web/src/lib/derive.ts).
+    """
+    if is_schedulable(states):
+        return None
+    if needs_attention(states):
+        return "down"
+    s = {str(state).upper() for state in states}
+    return "reserved" if s & _BLOCKING_STATES else None
+
+
 def needs_attention(states):
     s = {str(state).upper() for state in states}
     return bool(s & {
@@ -227,8 +245,9 @@ def normalize(nodes_json, squeue_json, *, cluster="hakusan", slurm_version="",
         for k, v in g_use.items():
             gpu_used[k] += v
         node_up = is_schedulable(states)
-        if not node_up:
-            unavailable = gpu_down if needs_attention(states) else gpu_reserved
+        gpu_bucket_name = idle_gpu_bucket(states)
+        if gpu_bucket_name:
+            unavailable = gpu_down if gpu_bucket_name == "down" else gpu_reserved
             for k, v in g_tot.items():
                 unavailable[k] += max(v - g_use.get(k, 0), 0)
         if g_tot:
@@ -261,10 +280,11 @@ def normalize(nodes_json, squeue_json, *, cluster="hakusan", slurm_version="",
                 pa["available_nodes"] += 1
             elif not g_tot and (cpus - acpu) > 0:
                 pa["available_nodes"] += 1
-        if not node_up:
-            gpu_bucket = pa["gpu_down"] if needs_attention(states) else pa["gpu_reserved"]
+        if gpu_bucket_name:
+            gpu_bucket = pa["gpu_down"] if gpu_bucket_name == "down" else pa["gpu_reserved"]
             gpu_bucket += Counter({k: max(v - g_use.get(k, 0), 0)
                                    for k, v in g_tot.items()})
+        if not node_up:
             pa["other_cores"] += cpus - acpu
             other_cpu += cpus - acpu
         if needs_attention(states):
@@ -410,12 +430,12 @@ def normalize(nodes_json, squeue_json, *, cluster="hakusan", slurm_version="",
         gpu_down_part = sum(
             max(sum(g_tot.values()) - sum(g_use.values()), 0)
             for nd_m, _b, _cpus, _acpu, g_tot, g_use in members
-            if not is_schedulable(state_list(nd_m)) and needs_attention(state_list(nd_m))
+            if idle_gpu_bucket(state_list(nd_m)) == "down"
         )
         gpu_reserved_part = sum(
             max(sum(g_tot.values()) - sum(g_use.values()), 0)
             for nd_m, _b, _cpus, _acpu, g_tot, g_use in members
-            if not is_schedulable(state_list(nd_m)) and not needs_attention(state_list(nd_m))
+            if idle_gpu_bucket(state_list(nd_m)) == "reserved"
         )
         cpu_util = (ca / ct) if ct else 0.0
         gpu_util = (gu / gt) if gt else 0.0

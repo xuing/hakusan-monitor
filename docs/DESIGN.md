@@ -254,9 +254,26 @@ commands recorded there). They ship as `policy.partition_defaults`.
 Together they give the invariant the test suite asserts directly: **a fully
 idle, schedulable node's GPUs are always `ready`.**
 
+**Two more rules from the 2026-10-01 audit.**
+
+3. *A waiter claims what it asks for, not the whole node.* Startable queued
+   jobs are placed pool-wide (`queueClaims` in `gpu-fit.ts`, best fit); each
+   takes its per-node share and the rest of the node is judged GPU by GPU.
+   The old per-node check let one single-GPU waiter mark every idle node
+   "contested" — two `DependencyNeverSatisfied` jobs (also now treated as
+   limit-blocked) turned 15 free A40s into "15 GPUs queue".
+4. *"Idle" is not "free".* `physicalIdle` counts every unused GPU, drained and
+   scheduler-held ones included; it only anchors the sum invariant. Anything
+   labelled free/空闲 uses `free` (in-service, not held = backend `gpu.free`).
+   Showing `physicalIdle` as "2 张 GPU 空闲" called a drained H100 idle.
+
+One entry point, `poolGpuAvailability(snap, pool)` (most permissive sibling
+partition wins), feeds the pool cards, Partitions headers, filter chips, group
+headers and pool KPIs, so no screen can colour a pool differently from another.
+
 **Tests are real data, one case per display mode.**
 `web/src/lib/gpu-availability.fixtures.ts` holds cluster records captured on
-2026-07-29 (with the commands used to capture them), and
+2026-07-29 and 2026-10-01 (with the commands used to capture them), and
 `gpu-availability.test.ts` pins each display mode to one of them, running the
 real adapter → classifier path. Nothing is hand-tuned to make a rule pass; a
 failure means the rules changed, not that a fixture drifted.

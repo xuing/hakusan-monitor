@@ -10,9 +10,9 @@ import { Card, CardContent } from "@/components/ui/card";
 import { useLive } from "@/hooks/live-context";
 import { useResourceFilter } from "@/hooks/resource-filter-context";
 import { poolLabel, reasonLabel, useT, type TFn, type TranslationKey } from "@/i18n";
-import { occupantsForPool, poolCapacity } from "@/lib/derive";
+import { nodeIsSchedulable, nodeIsSchedulerHeld, nodeNeedsAttention, occupantsForPool, poolCapacity } from "@/lib/derive";
 import { fmtCountdown, fmtDur, fmtMB, nf, parseDur } from "@/lib/format";
-import { gpuAvailability, type GpuAvailabilitySegment } from "@/lib/gpu-availability";
+import type { GpuAvailabilitySegment } from "@/lib/gpu-availability";
 import { gpuSegmentLabel, gpuSegmentTextClass } from "@/components/common/gpu-status";
 import {
   cpuProbeDetail,
@@ -26,13 +26,12 @@ import {
   fitHasClearSlot,
   gpuBackfillTipCommand,
   gpuFitSnapshot,
-  gpuNodeFacts,
   gpuFitTipCommand,
   gpuFitWithMemOverride,
   isLimitBlocked,
   parseWalltimeSec,
   pendingForPool,
-  schedulableGpuSlots,
+  poolGpuAvailability,
   slotBlocked,
   slotContention,
   withinBackfillWindow,
@@ -42,7 +41,7 @@ import {
   type GpuFitNode,
   type GpuFitTipData,
 } from "@/lib/gpu-fit";
-import { capPerGpu, effectiveMemPerNodeGb, interactiveForcedSec, isMaterialsStudioPartition, matchPool, partitionCap, partitionDefaultRequest, partitionPolicy, type PartitionPolicy, type Tone } from "@/lib/slurm";
+import { effectiveMemPerNodeGb, interactiveForcedSec, isMaterialsStudioPartition, matchPool, partitionCap, partitionDefaultRequest, partitionPolicy, type PartitionPolicy, type Tone } from "@/lib/slurm";
 import { cn } from "@/lib/utils";
 import { cpuProbeMaxAge, cpuProbeRows, cpuProbeState, type CpuProbeRow } from "@/lib/cpu-probes";
 import { buildRequestCommand, shouldShowGapShell } from "@/lib/request-command";
@@ -119,31 +118,28 @@ function PoolCard({ pool, snap, t }: { pool: Pool; snap: Snapshot; t: TFn }) {
   const isGpu = pool.kind === "gpu";
   const maint = isMaintPool(pool);
   const availableNodes = pool.available_nodes ?? pool.idle_nodes ?? 0;
-  const samplePartition = SAMPLE[pool.id]?.partition ?? "";
   const pendingActive = isGpu ? contendersForPool(snap, pool.id) : [];
-  // One classifier decides every GPU number on this card: each physically
-  // idle GPU lands in exactly one state, and the states sum to the headline.
-  const avail = isGpu
-    ? gpuAvailability(
-        gpuNodeFacts(snap.nodes, pool, pendingActive, Date.now()),
-        partitionDefaultRequest(samplePartition, snap.policy),
-        capPerGpu(partitionCap(samplePartition, snap.policy)),
-      )
-    : null;
+  // One classifier decides every GPU number on this card — the same verdict
+  // the filter chips, group header, KPIs and Partitions page read.
+  const avail = isGpu ? poolGpuAvailability(snap, pool, Date.now(), pendingActive) : null;
   const readyGpu = avail?.ready ?? 0;
-  // The header is the overview: all physically idle GPUs. The body then
-  // partitions that same total into peer status blocks (ready, constrained,
-  // or reserved) instead of presenting one subset as a second headline.
-  const idleGpu = avail?.physicalIdle ?? 0;
+  // The header says "N GPUs free": idle GPUs on in-service nodes (= backend
+  // gpu.free). Never physicalIdle — that also counts drained and
+  // scheduler-held cards, which the body lists as their own segments.
+  const freeGpu = avail?.free ?? 0;
   const hasAvailable = (isGpu ? readyGpu > 0 : availableNodes > 0) && !maint;
-  const hasStrandedGpu = isGpu && idleGpu > 0 && readyGpu <= 0 && !maint;
+  // Idle but not directly takeable (queue-claimed, short, or held for a
+  // backfill window) reads amber; only broken or busy hardware is red.
+  const hasStrandedGpu = isGpu && !maint && readyGpu <= 0
+    && (avail?.segments ?? []).some((s) => s.kind !== "ready" && s.kind !== "down" && s.kind !== "full");
   const availableNodesLabel = isGpu
-    ? t("pool.gpuFreePhysical", { n: idleGpu })
+    ? t("pool.gpuFreePhysical", { n: freeGpu })
     : t("pool.availableNodes", { n: availableNodes });
-  const free = isGpu ? idleGpu : pool.cores.free;
+  const free = isGpu ? freeGpu : pool.cores.free;
   const total = isGpu && pool.gpu ? pool.gpu.total : pool.cores.total;
   const used = isGpu && pool.gpu ? pool.gpu.used : pool.cores.alloc;
   const freeRatio = total ? free / total : 0;
+  const cpuHeld = isGpu ? { reserved: 0, down: 0 } : unschedulableCores(snap, pool.id);
   // colour by how much is free: none = red, scarce (<10%) = amber, plenty = green
   const freeColor = maint
     ? "text-muted-foreground"
@@ -227,8 +223,8 @@ function PoolCard({ pool, snap, t }: { pool: Pool; snap: Snapshot; t: TFn }) {
           <UnitBlocks
             free={free}
             used={used}
-            reserved={0}
-            down={Math.max(0, total - free - used)}
+            reserved={cpuHeld.reserved}
+            down={cpuHeld.down}
             total={total}
             unit={t("unit.cores")}
             className="mt-2 w-full"
@@ -1516,16 +1512,28 @@ function GpuBlocks({ gpu, schedulableFree, className }: { gpu: PoolGpu; schedula
   );
 }
 
+/** Unallocated cores the pool's free count leaves out, split by why: on
+ *  nodes an operator took out (down/drain) vs nodes the scheduler is holding
+ *  (PLANNED…). Painting both as "down" called 366 healthy cores broken. */
+function unschedulableCores(snap: Snapshot, poolId: string) {
+  let reserved = 0;
+  let down = 0;
+  for (const n of snap.nodes) {
+    if (n.pool !== poolId || nodeIsSchedulable(n)) continue;
+    const idle = Math.max(0, n.cpus - n.alloc_cpus);
+    if (nodeNeedsAttention(n)) down += idle;
+    else if (nodeIsSchedulerHeld(n)) reserved += idle;
+  }
+  return { reserved, down };
+}
+
 function isMaintPool(pool: Pool) {
   return pool.kind === "gpu" && !!pool.gpu?.maint;
 }
 
 function hasAvailableNodes(pool: Pool, snap: Snapshot) {
   if (isMaintPool(pool)) return false;
-  if (pool.kind === "gpu") {
-    const partition = SAMPLE[pool.id]?.partition ?? "";
-    return schedulableGpuSlots(snap.nodes, pool, partitionCap(partition, snap.policy), partition, snap.policy) > 0;
-  }
+  if (pool.kind === "gpu") return poolGpuAvailability(snap, pool, Date.now()).ready > 0;
   return (pool.available_nodes ?? pool.idle_nodes ?? 0) > 0;
 }
 

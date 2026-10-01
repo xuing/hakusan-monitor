@@ -3,7 +3,9 @@ import { Card, CardContent } from "@/components/ui/card";
 import { useLive } from "@/hooks/live-context";
 import { useResourceFilter } from "@/hooks/resource-filter-context";
 import { poolLabel, useT, type TFn } from "@/i18n";
+import { nodeIsSchedulable } from "@/lib/derive";
 import { nf, pct } from "@/lib/format";
+import { poolGpuAvailability } from "@/lib/gpu-fit";
 import { utilTone } from "@/lib/slurm";
 import type { Pool, Snapshot } from "@/types/snapshot";
 
@@ -15,7 +17,7 @@ export function KpiCards() {
   const pool = filter === "all" ? null : snap.pools.find((p) => p.id === filter);
   return (
     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-      {pool ? <PoolKpis pool={pool} t={t} /> : <ClusterKpis snap={snap} t={t} />}
+      {pool ? <PoolKpis pool={pool} snap={snap} t={t} /> : <ClusterKpis snap={snap} t={t} />}
     </div>
   );
 }
@@ -58,14 +60,18 @@ function BarKpi({ label, free, total }: { label: string; free: number; total: nu
   );
 }
 
-function PoolKpis({ pool, t }: { pool: Pool; t: TFn }) {
+function PoolKpis({ pool, snap, t }: { pool: Pool; snap: Snapshot; t: TFn }) {
   const isGpu = pool.kind === "gpu";
   const g = pool.gpu;
   const used = isGpu && g ? g.used : pool.cores.alloc;
   const total = isGpu && g ? g.total : pool.cores.total;
-  const free = isGpu && g ? g.free : pool.cores.free;
+  // "可用" GPUs = what the pool card calls ready (shared verdict), not every
+  // idle card — queue-claimed or resource-short ones are not available.
+  const free = isGpu && g ? poolGpuAvailability(snap, pool, Date.now()).ready : pool.cores.free;
+  // Same rule as the cluster card's total: in service and not held by the
+  // scheduler (idle+mixed would count MIXED+PLANNED nodes too).
+  const schedulable = snap.nodes.filter((n) => n.pool === pool.id && nodeIsSchedulable(n)).length;
   const unit = isGpu ? t("unit.gpu") : t("unit.cores");
-  const st = pool.nodes_state;
   return (
     <>
       <GaugeKpi label={poolLabel(t, pool.id)} util={pool.util} value={nf(used)}
@@ -74,12 +80,12 @@ function PoolKpis({ pool, t }: { pool: Pool; t: TFn }) {
         [free, unit, "text-ok-fg"],
         [
           isGpu ? pool.available_nodes : pool.idle_nodes,
-          isGpu ? t("kpi.gpuNodesWithFree") : t("kpi.nodes"),
+          isGpu ? t("kpi.gpuNodes") : t("kpi.nodes"),
           "text-muted-foreground",
         ],
       ]} />
       <SplitCard label={t("kpi.nodes")} stats={[
-        [(st.idle ?? 0) + (st.mixed ?? 0), t("kpi.schedulable"), "text-ok-fg"],
+        [schedulable, t("kpi.schedulable"), "text-ok-fg"],
         [pool.down_nodes, t("kpi.down"), "text-bad-fg"],
         [pool.nodes, t("kpi.total"), "text-muted-foreground"],
       ]} />

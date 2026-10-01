@@ -8,7 +8,7 @@
  */
 import { describe, expect, it } from "vitest";
 import { gpuAvailability, gpuPerGpuNeed, type GpuAvailabilitySegment } from "./gpu-availability";
-import { gpuNodeFacts } from "./gpu-fit";
+import { activePendingForPool, gpuNodeFacts } from "./gpu-fit";
 import { capPerGpu } from "./slurm";
 import {
   A100_DRAIN,
@@ -22,8 +22,11 @@ import {
   CAP_VM_GPU_L,
   H100_ALLOCATED,
   H100_IDLE,
+  NODES_A40_OCT,
   NODES_H100,
+  NODES_H100_OCT,
   PENDING_A40_CONTENDER,
+  PENDING_A40_NEVER,
   PENDING_H100_LIMIT_BLOCKED,
   POOL_A100,
   POOL_A40,
@@ -197,5 +200,67 @@ describe("invariant: idle hardware is never called resource-short", () => {
 
     expect(idle.nodes.every((n) => n.missingMemMb === 0 && n.missingCores === 0)).toBe(true);
     expect(H100_ALLOCATED.real_memory).toBeLessThan(REQUEST_VM_GPU_L.cores * REQUEST_VM_GPU_L.memPerCoreMb);
+  });
+});
+
+describe("2026-10-01 audit: headline counts match what they say", () => {
+  it("h100-80: a drained node's GPU is down, not free — header reads 1, not 2", () => {
+    const result = display(NODES_H100_OCT, POOL_H100, REQUEST_VM_GPU_L, CAP_VM_GPU_L);
+
+    expect(segments(result)).toEqual([
+      { kind: "ready", count: 1 },
+      { kind: "down", count: 1 },
+    ]);
+    // `free` is the user-facing "N 张 GPU 空闲" (= backend gpu.free);
+    // physicalIdle also counts gl02 and must never be shown as free.
+    expect(result.free).toBe(1);
+    expect(result.physicalIdle).toBe(2);
+  });
+
+  it("a40: DependencyNeverSatisfied waiters are limit-blocked, so all 15 GPUs are ready", () => {
+    const partPool = { "GPU-1": "a40" };
+    const active = activePendingForPool(PENDING_A40_NEVER, partPool, "a40");
+    const result = display(NODES_A40_OCT, POOL_A40, REQUEST_GPU_1, CAP_GPU_1, active);
+
+    expect(active).toEqual([]);
+    expect(segments(result)).toEqual([{ kind: "ready", count: 15 }]);
+    expect(result.free).toBe(15);
+  });
+
+  it("a40: one startable waiter claims one GPU, not every node it could use", () => {
+    // Derived: job 644817 with Reason=Resources instead, i.e. a waiter that
+    // really can start. It takes one GPU; the other fourteen stay ready.
+    const waiter = { ...PENDING_A40_NEVER[1], state_reason: "Resources" };
+    const result = display(NODES_A40_OCT, POOL_A40, REQUEST_GPU_1, CAP_GPU_1, [waiter]);
+
+    expect(segments(result)).toEqual([
+      { kind: "ready", count: 14 },
+      { kind: "contested", count: 1 },
+    ]);
+  });
+
+  it("an idle GPU on an ALLOCATED node is CPU-short, not scheduler-reserved", () => {
+    // Derived: spcc-a40g15 at 13:41 (ALLOCATED, 52/52 cores, 128264 MB left)
+    // with one of its two GPUs released. Nothing reserves it; the default
+    // request just has no cores (or memory) left there.
+    const node = { ...A40_FULL, name: "spcc-a40g15", state: ["ALLOCATED"], schedulable: false,
+                   cpus: 52, alloc_cpus: 52, alloc_memory: 387042, gres_used: "gpu:nvidia_a40:1" };
+    const result = display([node], POOL_A40);
+
+    expect(segments(result)).toEqual([{ kind: "cpu-memory", count: 1 }]);
+    expect(result.free).toBe(1);
+  });
+
+  it("keeps a node's GPUs split when only one of two fits the default", () => {
+    // Derived from the live a40g11 record (2 idle GPUs) with a CPU-only job
+    // holding 22 cores: 30 cores left fit one 26-core default request, not
+    // two. Before, any fit painted both GPUs ready.
+    const node = { ...NODES_A40_OCT[0], state: ["MIXED"], alloc_cpus: 22, alloc_memory: 0 };
+    const result = display([node], POOL_A40);
+
+    expect(segments(result)).toEqual([
+      { kind: "ready", count: 1 },
+      { kind: "cpu", count: 1 },
+    ]);
   });
 });

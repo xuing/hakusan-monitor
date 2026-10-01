@@ -32,6 +32,28 @@ const BLOCKING_STATES = new Set([
   "POWERING_DOWN", "POWERED_DOWN", "POWERING_UP", "REBOOT_ISSUED", "REBOOT_REQUESTED",
 ]);
 
+// Kept in sync with backend/normalize.py needs_attention(): these states mean
+// "operator problem", every other non-schedulable state is a scheduler hold.
+const ATTENTION_STATES = new Set([
+  "DOWN", "NOT_RESPONDING", "DRAIN", "DRAINING", "FAIL", "FAILING",
+  "MAINT", "POWER_DOWN", "POWERING_DOWN", "POWERED_DOWN", "REBOOT_ISSUED", "REBOOT_REQUESTED",
+]);
+
+/** Node is out of service and needs an operator (down, drained, rebooting). */
+export function nodeNeedsAttention(n: RawNode): boolean {
+  return n.state.some((s) => ATTENTION_STATES.has(String(s).toUpperCase()));
+}
+
+/** In service, but its idle resources are held back by the scheduler (a
+ *  future reservation, a powering-up node…). A plain ALLOCATED/COMPLETING
+ *  node is NOT held: whatever it has left is simply too small, and saying
+ *  "reserved" there would send users looking for a reservation that does
+ *  not exist (keep in sync with backend/normalize.py idle_gpu_bucket). */
+export function nodeIsSchedulerHeld(n: RawNode): boolean {
+  if (nodeNeedsAttention(n) || nodeIsSchedulable(n)) return false;
+  return n.state.some((s) => BLOCKING_STATES.has(String(s).toUpperCase()));
+}
+
 /** Backend-owned scheduling verdict, with a strict fallback for older snapshots. */
 export function nodeIsSchedulable(n: RawNode): boolean {
   if (typeof n.schedulable === "boolean") return n.schedulable;

@@ -1,14 +1,17 @@
 import { describe, expect, it } from "vitest";
 import {
   activePendingForPool,
+  contendersForPool,
   fitHasClearSlot,
   gpuBackfillTipCommand,
   gpuFitFromNodes,
-  gpuStrandedCount,
+  gpuNodeFacts,
+  queueClaims,
   slotContention,
 } from "./gpu-fit";
+import { gpuAvailability } from "./gpu-availability";
 import { REQUEST_GPU_1 } from "./gpu-availability.fixtures";
-import type { Pool, RawJob, RawNode } from "@/types/snapshot";
+import type { Pool, RawJob, RawNode, Snapshot } from "@/types/snapshot";
 
 const pool = {
   id: "a40",
@@ -77,7 +80,8 @@ describe("planned GPU backfill", () => {
     expect(fit.schedulable).toBe(0);
     expect(fit.reservedNodes).toHaveLength(1);
     // the reserved idle card must surface as an amber count, not a bare "0"
-    expect(gpuStrandedCount(fit)).toBe(1);
+    expect(gpuAvailability(gpuNodeFacts([plannedNode], pool, [], Date.now()), REQUEST_GPU_1).segments)
+      .toEqual([{ kind: "reserved", count: 1 }]);
     expect(gpuBackfillTipCommand(
       fit,
       pool,
@@ -156,7 +160,36 @@ describe("pending GPU job node eligibility", () => {
 
     expect(slotContention(row("spcc-cld-gl02"), [planned]).contenders).toBe(1);
     expect(slotContention(row("spcc-cld-gl03"), [planned]).contenders).toBe(1);
-    expect(fitHasClearSlot(fit, [planned], Date.now(), 12 * 60 * 60)).toBe(false);
+  });
+
+  it("claims nothing for a waiter whose required host is full", () => {
+    // --nodelist spcc-a40g01 (both GPUs busy) -N 2: the job cannot start, so
+    // it must not take GPUs from the idle nodes either.
+    const pinnedToFull = waiter({ req_nodes: "spcc-a40g01", node_count: 2, gpus: 2, cpus: 52, min_memory_mb: 512_000 });
+
+    expect(queueClaims(fit.fitNodes, [pinnedToFull], Date.now()).size).toBe(0);
+  });
+
+  it("places a pinned waiter on its required host first", () => {
+    const pinned = waiter({ req_nodes: "spcc-cld-gl03" });
+
+    expect([...queueClaims(fit.fitNodes, [pinned], Date.now()).keys()]).toEqual(["spcc-cld-gl03"]);
+  });
+
+  it("lets one waiter claim one node, not every node it could use", () => {
+    // Two idle 2-GPU nodes = four default-request slots. Every waiter fits
+    // either node, but each takes one slot; a new request queues only once
+    // all four are claimed. The old per-node check called both nodes taken
+    // after ONE waiter — two dead jobs in front of nine idle A40 nodes read
+    // "all 15 GPUs queue" (live, 2026-10-01).
+    const waiters = [1, 2, 3, 4].map((id) => waiter({ job_id: id }));
+    const now = Date.now();
+
+    expect(fitHasClearSlot(fit, waiters.slice(0, 1), now, 12 * 60 * 60)).toBe(true);
+    expect(fitHasClearSlot(fit, waiters.slice(0, 3), now, 12 * 60 * 60)).toBe(true);
+    expect(fitHasClearSlot(fit, waiters, now, 12 * 60 * 60)).toBe(false);
+    const claims = queueClaims(fit.fitNodes, waiters.slice(0, 1), now);
+    expect([...claims.values()].reduce((sum, c) => sum + c.gpus, 0)).toBe(1);
   });
 
   it("honors explicit exclusions without hiding contention on eligible siblings", () => {
@@ -182,5 +215,17 @@ describe("pending GPU job node eligibility", () => {
     const limited = waiter({ state_reason: "QOSMaxJobsPerUserLimit" });
 
     expect(activePendingForPool([limited], { "GPU-1": "a40" }, "a40")).toEqual([]);
+  });
+});
+
+describe("multi-pool waiters", () => {
+  it("count only in the first-listed pool", () => {
+    // -p GPU-1,GPU-1A starts in one pool; both pools losing a GPU to it
+    // would undercount free capacity twice.
+    const job = waiter({ partition: "GPU-1,GPU-1A" });
+    const snap = { jobs: [job], part_pool: { "GPU-1": "a40", "GPU-1A": "a100" }, policy: undefined } as unknown as Snapshot;
+
+    expect(contendersForPool(snap, "a40")).toHaveLength(1);
+    expect(contendersForPool(snap, "a100")).toHaveLength(0);
   });
 });

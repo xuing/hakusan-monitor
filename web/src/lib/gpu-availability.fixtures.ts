@@ -282,3 +282,43 @@ export const PENDING_H100_LIMIT_BLOCKED = job({
   min_memory_mb: 438272,
   time_limit: "12:00:00",
 });
+
+// ---------------------------------------------------------------------------
+// Capture session 2: 2026-10-01 13:41 JST, GET localhost:8787/api/snapshot.
+// The two bugs found in the audit that day, as the cluster showed them.
+// ---------------------------------------------------------------------------
+
+/** h100-80 at 13:41: gl01 MIXED (its GPU in use), gl02 IDLE+DRAIN
+ *  ("Maintenance [root@2026-08-20T15:17:00]"), gl03 IDLE, gl04 ALLOCATED.
+ *  Backend: gpu.free=1, gpu.down=1. The card header read "2 张 GPU 空闲". */
+export const NODES_H100_OCT = [
+  node({ name: "spcc-cld-gl01", pool: "h100-80", state: ["MIXED"], state_bucket: "mixed", cpus: 32, alloc_cpus: 16,
+         real_memory: 469070, alloc_memory: 196608, gres: "gpu:h100-80c:1", gres_used: "gpu:h100-80c:1" }),
+  node({ name: "spcc-cld-gl02", pool: "h100-80", state: ["IDLE", "DRAIN"], state_bucket: "drain", schedulable: false,
+         cpus: 32, real_memory: 469070, gres: "gpu:h100-80c:1", reason: "Maintenance [root@2026-08-20T15:17:00]" }),
+  node({ name: "spcc-cld-gl03", pool: "h100-80", cpus: 32, real_memory: 469070, gres: "gpu:h100-80c:1" }),
+  node({ name: "spcc-cld-gl04", pool: "h100-80", state: ["ALLOCATED"], state_bucket: "allocated", schedulable: false,
+         cpus: 32, alloc_cpus: 32, real_memory: 469070, alloc_memory: 468992,
+         gres: "gpu:h100-80c:1", gres_used: "gpu:h100-80c:1" }),
+];
+
+/** The nine a40 nodes with an idle GPU at 13:41 (the other eleven had both
+ *  GPUs in use): six fully IDLE, three MIXED with one GPU and 26 cores left.
+ *  15 idle GPUs; every one fits GPU-1's default request. */
+export const NODES_A40_OCT = [
+  ...["11", "12", "16", "18", "19", "20"].map((n) =>
+    node({ name: `spcc-a40g${n}`, pool: "a40", cpus: 52, real_memory: 515306, gres: "gpu:nvidia_a40:2(S:0-1)" })),
+  ...([["03", 255970], ["13", 131072], ["14", 131072]] as const).map(([n, mem]) =>
+    node({ name: `spcc-a40g${n}`, pool: "a40", state: ["MIXED"], state_bucket: "mixed", cpus: 52, alloc_cpus: 26,
+           real_memory: 515306, alloc_memory: mem, gres: "gpu:nvidia_a40:2(S:0-1)", gres_used: "gpu:nvidia_a40:1" })),
+];
+
+/** The only GPU-1 waiters not already filtered as limit-blocked at 13:41.
+ *  Both are DependencyNeverSatisfied — they will never start — yet they made
+ *  the card read "15 张 GPU 排队作业优先，新请求需排队". */
+export const PENDING_A40_NEVER = [
+  job({ job_id: 507501, partition: "GPU-1", job_state: "PENDING", state_reason: "DependencyNeverSatisfied",
+        cpus: 4, gpus: 1, min_memory_mb: 32768, time_limit: "30:00" }),
+  job({ job_id: 644817, partition: "GPU-1", job_state: "PENDING", state_reason: "DependencyNeverSatisfied",
+        cpus: 26, gpus: 1, min_memory_mb: 65536, time_limit: "8:00:00" }),
+];

@@ -3,10 +3,10 @@ import { useLive } from "@/hooks/live-context";
 import { useResourceFilter } from "@/hooks/resource-filter-context";
 import { poolLabel, useT } from "@/i18n";
 import { poolCapacity } from "@/lib/derive";
-import { schedulableGpuSlots } from "@/lib/gpu-fit";
-import { partitionCap } from "@/lib/slurm";
+import { poolGpuAvailability } from "@/lib/gpu-fit";
+import type { GpuAvailability } from "@/lib/gpu-availability";
 import { cn } from "@/lib/utils";
-import type { Pool, Snapshot } from "@/types/snapshot";
+import type { Pool } from "@/types/snapshot";
 
 /** "All / GPU group / CPU group" — one chip per hardware pool. */
 export function ResourceFilterChips() {
@@ -15,9 +15,10 @@ export function ResourceFilterChips() {
   const t = useT();
   if (!snap) return null;
 
+  const now = Date.now();
   const options = snap.pools
-    .map((p, i) => ({ pool: p, i }))
-    .sort((a, b) => Number(!hasAvailableNodes(a.pool)) - Number(!hasAvailableNodes(b.pool)) || a.i - b.i);
+    .map((p, i) => ({ pool: p, i, gpuAvail: p.kind === "gpu" ? poolGpuAvailability(snap, p, now) : undefined }))
+    .sort((a, b) => Number(!hasAvailable(a)) - Number(!hasAvailable(b)) || a.i - b.i);
   const gpu = options.filter(({ pool }) => pool.kind === "gpu");
   const cpu = options.filter(({ pool }) => pool.kind === "cpu");
 
@@ -37,14 +38,14 @@ export function ResourceFilterChips() {
         {t("filter.all")}
       </button>
       <FilterGroup label={t("kpi.gpu")}>
-        {gpu.map(({ pool }) => (
+        {gpu.map(({ pool, gpuAvail }) => (
           <FilterButton
             key={pool.id}
             pool={pool}
             active={filter === pool.id}
             label={poolLabel(t, pool.id)}
             onClick={() => setFilter(pool.id)}
-            gpuSchedulable={gpuPoolSchedulableMax(snap, pool)}
+            gpuAvail={gpuAvail}
           />
         ))}
       </FilterGroup>
@@ -78,16 +79,16 @@ function FilterButton({
   active,
   label,
   onClick,
-  gpuSchedulable,
+  gpuAvail,
   cpuFreeCores,
 }: {
   pool: Pool;
   active: boolean;
   label: string;
   onClick: () => void;
-  /** GPU pools only: the best any single partition could grant right now —
-   *  same "one grantable policy = green" rule as the Partitions page. */
-  gpuSchedulable?: number;
+  /** GPU pools only: the shared pool verdict (poolGpuAvailability) — the
+   *  same one the pool card and Partitions page colour themselves by. */
+  gpuAvail?: GpuAvailability;
   /** CPU pools only: idle cores scattered on non-fully-idle nodes. */
   cpuFreeCores?: number;
 }) {
@@ -99,9 +100,9 @@ function FilterButton({
   const dot = maint
     ? "bg-muted-foreground/45"
     : pool.kind === "gpu"
-      ? (gpuSchedulable ?? 0) > 0
+      ? (gpuAvail?.ready ?? 0) > 0
         ? "bg-ok"
-        : (pool.gpu?.free ?? 0) > 0 || (pool.gpu?.reserved ?? 0) > 0
+        : (gpuAvail?.segments ?? []).some((s) => s.kind !== "down" && s.kind !== "full")
           // scheduler-reserved idle cards are still reachable via the
           // backfill window — "nothing here" (red) would contradict the
           // gap-shell tip shown two clicks away
@@ -133,13 +134,8 @@ function FilterButton({
   );
 }
 
-function hasAvailableNodes(pool: Pool) {
+function hasAvailable({ pool, gpuAvail }: { pool: Pool; gpuAvail?: GpuAvailability }) {
+  if (gpuAvail) return gpuAvail.ready > 0;
   return (pool.available_nodes ?? pool.idle_nodes ?? 0) > 0;
 }
 
-function gpuPoolSchedulableMax(snap: Snapshot, pool: Pool): number {
-  if (pool.kind !== "gpu") return 0;
-  const parts = snap.partitions.filter((p) => p.pool === pool.id);
-  return Math.max(0, ...parts.map((p) =>
-    schedulableGpuSlots(snap.nodes, pool, partitionCap(p.name, snap.policy), p.name, snap.policy)));
-}

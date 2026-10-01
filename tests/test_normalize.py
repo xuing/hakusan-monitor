@@ -118,6 +118,23 @@ class NodeAvailabilityTests(unittest.TestCase):
         self.assertEqual(gpu["free"], 0)
         self.assertEqual(snap["totals"]["nodes"]["down"], 0)
 
+    def test_idle_gpu_on_allocated_node_is_free_not_reserved(self):
+        # Every core taken, one GPU idle: nothing reserves that GPU, it is just
+        # CPU-short. "reserved" would send users looking for a reservation.
+        snap = normalize(
+            {"nodes": [raw_node(
+                state=["ALLOCATED"], cpus=52, alloc=52,
+                gres="gpu:nvidia_a40:2", gres_used="gpu:nvidia_a40:1",
+            )]},
+            {"jobs": []},
+        )
+
+        gpu = snap["pools"][0]["gpu"]
+        self.assertEqual(gpu["reserved"], 0)
+        self.assertEqual(gpu["down"], 0)
+        self.assertEqual(gpu["free"], 1)
+        self.assertEqual(snap["partitions"][0]["gpu"]["reserved"], 0)
+
     def test_schedulable_state_matrix(self):
         self.assertTrue(is_schedulable(["IDLE"]))
         self.assertTrue(is_schedulable(["MIXED"]))
