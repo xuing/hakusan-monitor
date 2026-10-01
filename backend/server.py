@@ -92,6 +92,11 @@ CFG = {
     "interval":   float(env("HM_SAMPLE_INTERVAL", "300")),   # 5 min — gentle on the login node
     "cpu_probe_interval": float(env("HM_CPU_PROBE_INTERVAL", "900")),
     "policy_interval": float(env("HM_POLICY_INTERVAL", "86400")),
+    # last good policy reading (survives restarts) and the verification report
+    # written by scripts/check_cluster_policy.py
+    "policy_cache": env("HM_POLICY_CACHE", os.path.join(ROOT, "data", "cluster_policy.json")),
+    "policy_check": env("HM_POLICY_CHECK", os.path.join(ROOT, "data", "policy_check.json")),
+    "job_submit_lua": env("HM_JOB_SUBMIT_LUA", "/app/slurm/job_submit.lua"),
     "mask_users": env("HM_MASK_USERS", "0") in ("1", "true", "yes"),
     "mock_dir":   env("HM_MOCK_DIR", os.path.join(ROOT, "mock")),
     "db":         env("HM_DB", os.path.join(ROOT, "data", "hakusan.sqlite")),
@@ -129,7 +134,9 @@ class Engine:
         self.src = Source(cfg["source"], cfg["ssh_host"], cfg["ssh_opts"],
                           cfg["mock_dir"], timeout=cfg["source_timeout"],
                           cpu_probe_interval=cfg["cpu_probe_interval"],
-                          policy_interval=cfg["policy_interval"])
+                          policy_interval=cfg["policy_interval"],
+                          policy_cache=cfg["policy_cache"], policy_check=cfg["policy_check"],
+                          lua_path=cfg["job_submit_lua"])
         self.login = LoginNodeCollector(
             mode=cfg["source"], nodes=cfg["login_nodes"], ssh_opts=cfg["ssh_opts"],
             mock_dir=cfg["mock_dir"], interval=cfg["login_interval"],
@@ -319,6 +326,21 @@ class Engine:
         return {"ok": ok, "source": self.cfg["source"], "error": self.error,
                 "stale": bool(self.latest and self.latest.get("stale")), "age_s": age}
 
+    def policy_source(self):
+        """Raw cluster policy texts (job_submit.lua, sacctmgr QoS, scontrol
+        partitions) plus our reading of them and the last verification run —
+        the project page shows these side by side. Large, so never part of
+        the snapshot."""
+        src = self.src.policy_sources or {}
+        pol = self.src.policy_snapshot or {}
+        return {"fetched_at": src.get("fetched_at", 0),
+                "interval": self.cfg["policy_interval"],
+                "lua_text": src.get("lua", ""),
+                "qos_text": src.get("qos", ""),
+                "partitions_text": src.get("partitions", ""),
+                "lua": pol.get("lua") or {},
+                "check": self.src._read_check()}
+
     def login_snapshot(self):
         if self.login_nodes is None:
             # Never multiply SSH work by request count. The background sampler is
@@ -457,6 +479,8 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/visits":
             days = query_int(q, "days", 30, 1, 365)
             return self._json(200, eng.store.visit_stats(days))
+        if path == "/api/policy-source":
+            return self._json(200, eng.policy_source())
         if path == "/api/meta":
             return self._json(200, eng.meta())
         if path == "/api/health":

@@ -2,6 +2,7 @@ import { BarChart } from "@/components/charts/simple-charts";
 import { ExternalLink } from "lucide-react";
 import { ChartPlaceholder } from "@/components/common/chart-placeholder";
 import { Empty } from "@/components/common/empty";
+import { PolicySourceSection } from "@/components/guide/policy-source";
 import { SectionCard } from "@/components/common/section-card";
 import { useApi } from "@/hooks/use-api";
 import { useT, type TranslationKey } from "@/i18n";
@@ -29,13 +30,17 @@ const SLURM_POLL_COMMAND =
   "# pending jobs' true requested totals (squeue %m prints per-CPU memory)\n" +
   "sacct -aX --state=PENDING -o JobID,ReqTRES -P -n\n" +
   "# CPU prediction: HM_CPU_PROBE_INTERVAL; no job submitted.\n" +
-  "# -t = the walltime the submit plugin forces onto CPU salloc (TINY exempt)\n" +
+  "# -t = the interactive walltime job_submit.lua pins on that partition\n" +
+  "#      (read from the Lua; omitted where the partition honours -t)\n" +
   "for p in TINY DEF SINGLE SMALL LARGE XLARGE X2LARGE LONG LONG-L; do\n" +
-  '  sbatch --test-only -p "$p" $([ "$p" = TINY ] || echo -t 2-00:00:00) --wrap=hostname\n' +
+  '  sbatch --test-only -p "$p" ${LUA_T[$p]:+-t ${LUA_T[$p]}} --wrap=hostname\n' +
   "done\n" +
   "# static policy: HM_POLICY_INTERVAL\n" +
   "sacctmgr -n -P show qos format=Name,MaxTRES%200,MaxWall,GrpJobs,MaxJobsPU,MaxSubmitPU,MinTRES%200,Flags%100\n" +
   "scontrol -o show partition\n" +
+  "# submit plugin + its admin backups (job_submit.lua_YYMMDD) = change history\n" +
+  "cat /app/slurm/job_submit.lua\n" +
+  "stat -c '%Y|%s|%n' /app/slurm/job_submit.lua /app/slurm/job_submit.lua_*\n" +
   "# container runtime; first successful sample only\n" +
   "singularity --version";
 const LOGIN_POLL_COMMAND =
@@ -110,6 +115,8 @@ export default function ProjectGuidePage() {
           <CommandSnippet title={t("guide.project.loginCommands")} text={LOGIN_POLL_COMMAND} />
         </div>
       </SectionCard>
+
+      <PolicySourceSection />
 
       <SectionCard title={t("guide.project.lightTitle")}>
         <InfoList keys={PROJECT_LIGHT} />
@@ -187,7 +194,7 @@ function InfoList({ title, keys }: { title?: string; keys: TranslationKey[] }) {
 
 function CommandSnippet({ title, text }: { title: string; text: string }) {
   return (
-    <div>
+    <div className="min-w-0">
       <div className="mb-1 text-xs font-medium text-muted-foreground">{title}</div>
       <pre className="max-h-56 overflow-auto rounded-md bg-background p-3 font-mono text-xs text-foreground/90">
         {text}

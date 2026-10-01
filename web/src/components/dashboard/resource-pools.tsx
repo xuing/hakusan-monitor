@@ -19,6 +19,7 @@ import {
   cpuProbeLabel,
   cpuProbeTone,
   fmtPolicyLimit,
+  gpuPluginNote,
   policyLimitRows,
 } from "@/lib/policy-hints";
 import {
@@ -41,7 +42,7 @@ import {
   type GpuFitNode,
   type GpuFitTipData,
 } from "@/lib/gpu-fit";
-import { allowsMultiNode, effectiveMemPerNodeGb, interactiveForcedSec, isMaterialsStudioPartition, matchPool, partitionCap, partitionDefaultRequest, partitionPolicy, type PartitionPolicy, type Tone } from "@/lib/slurm";
+import { allowsMultiNode, defaultRequestSec, effectiveGpuLimit, effectiveMemPerNodeGb, interactiveForcedLabel, interactiveForcedSec, isMaterialsStudioPartition, matchPool, minutesToSlurmTime, partitionCap, partitionDefaultRequest, partitionDefaults, partitionPolicy, type PartitionPolicy, type Tone } from "@/lib/slurm";
 import { cn } from "@/lib/utils";
 import { cpuProbeMaxAge, cpuProbeRows, cpuProbeState, type CpuProbeRow } from "@/lib/cpu-probes";
 import { buildRequestCommand, shouldShowGapShell } from "@/lib/request-command";
@@ -351,6 +352,10 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
   // refuses it. Pin it back to one node and say why.
   const nodeShape = { cores: poolCoresPerNode(pool), memMb: pool.mem_per_node };
   const defaultFit = defaultRequestFit(partitionDefaultRequest(partition, snap?.policy), nodeShape);
+  // every extra node the split lands on takes the plugin's per-node GPUs with it
+  const overflowExtraGpus = isGpu && defaultFit
+    ? (partitionDefaults(partition, snap?.policy).gpus_per_node ?? 0) * Math.max(0, defaultFit.nodesNeeded - 1)
+    : 0;
   const singleNodeFlag = singleNodeCoreFlag(defaultFit);
   const effMemGb = effectiveMemPerNodeGb(cap, pool.mem_per_node);
   const maxMemMb = effMemGb ? effMemGb * 1024 : 0;
@@ -388,10 +393,13 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
   // command's effective walltime decides what a tip may promise. The pty
   // variant of interactive rides on sbatch, so its -t is honored.
   const ptyActive = mode === "interactive" && isGpu && ptyOn;
-  const forcedSec = mode === "interactive" && !ptyActive ? interactiveForcedSec(partition, isGpu) : null;
-  // pty defaults to the 12h an interactive session would have had — pick a
-  // shorter -t to slip into a gap
-  const ptyTime = timeSel || "12:00:00";
+  // the walltime job_submit.lua pins on salloc in this partition (null = -t honoured)
+  const pinnedSec = interactiveForcedSec(partition, snap?.policy);
+  const pinnedLabel = interactiveForcedLabel(partition, snap?.policy) ?? "";
+  const forcedSec = mode === "interactive" && !ptyActive ? pinnedSec : null;
+  // pty defaults to the walltime a plain interactive session would have had
+  // (none pinned -> leave -t to Slurm) — pick a shorter -t to slip into a gap
+  const ptyTime = timeSel || (pinnedSec ? minutesToSlurmTime(pinnedSec / 60) : "");
   const requestSec = forcedSec
     ?? (parseWalltimeSec(ptyActive ? ptyTime : timeSel) || Number.POSITIVE_INFINITY);
   const nowMs = Date.now();
@@ -406,8 +414,8 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
     ? gpuBackfillTipCommand(gpuFit, pool, pendingActive, nowMs, requestSec)
     : null;
   // Interactive mode: the tip must either say "switch to script mode" or,
-  // when the gap already holds the forced 12h, reduce to the --mem part.
-  // mem-less + gap ≥ 12h needs no tip — the verdict flips to "can start".
+  // when the gap already holds the pinned walltime, reduce to the --mem part.
+  // mem-less + gap ≥ pinned needs no tip — the verdict flips to "can start".
   const bfWindowSec = bfTip ? parseWalltimeSec(bfTip.t) : 0;
   const bfVariant: "script" | "switch" | "fits" | null = !bfTip
     ? null
@@ -474,8 +482,14 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
     scriptFile: script,
   });
   const policyName = trMaybe(t, `policy.${partition}`, partition);
-  const policyDesc = trMaybe(t, `policy.${partition}.desc`, "");
-  const limitText = fmtPolicyLimit(cap, isGpu, t, partition);
+  const policyDescBase = trMaybe(t, `policy.${partition}.desc`, "");
+  // what the plugin does to GPU requests today, from the cluster's job_submit.lua
+  const gpuLimit = effectiveGpuLimit(cap, partitionDefaults(partition, snap?.policy));
+  const gpuNote = isGpu && gpuLimit.forced && gpuLimit.perNode
+    ? gpuPluginNote(gpuLimit.perNode, selectedPart?.spec.gpu_per_node ?? 0, t)
+    : "";
+  const policyDesc = [policyDescBase, gpuNote].filter(Boolean).join(" ");
+  const limitText = fmtPolicyLimit(cap, isGpu, t, partition, undefined, snap?.policy);
   const policyLimit = limitText ? `${t("part.policyLimit")} ${limitText}` : "";
   // the scatter warning is about the implicit multi-node DEFAULT — once the
   // user pins -N themselves it describes a state they already left
@@ -492,7 +506,7 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
         return {
           partition: p,
           policy: trMaybe(t, `policy.${p}`, p),
-          limit: fmtPolicyLimit(partitionCap(p, snap?.policy), true, t, p),
+          limit: fmtPolicyLimit(partitionCap(p, snap?.policy), true, t, p, undefined, snap?.policy),
           verdict: partitionOptionVerdict(summary, t),
         };
       })
@@ -636,8 +650,8 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
                     pool has nowhere to spill and Slurm refuses the job */}
                 {pool.nodes < defaultFit.nodesNeeded
                   ? t("pool.defaultOverflowRefused", { n: defaultFit.maxCoresOnOneNode })
-                  : isGpu
-                    ? t("pool.defaultOverflowSplitGpu", { n: defaultFit.maxCoresOnOneNode, nodes: defaultFit.nodesNeeded })
+                  : overflowExtraGpus > 0
+                    ? t("pool.defaultOverflowSplitGpu", { n: defaultFit.maxCoresOnOneNode, nodes: defaultFit.nodesNeeded, gpus: overflowExtraGpus })
                     : t("pool.defaultOverflowSplit", { n: defaultFit.maxCoresOnOneNode, nodes: defaultFit.nodesNeeded })}
               </div>
             )}
@@ -661,6 +675,7 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
               <GpuBackfillQuickTip
                 tip={bfTip}
                 variant={bfVariant}
+                forced={pinnedLabel}
                 applied={
                   bfVariant === "fits"
                     ? memValue === bfTip.mem
@@ -695,14 +710,14 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
             )}
             {/* active-recipe box only: usage note + the sole restore control.
                 The pre-activation entry is the bf tip's "switch" button — a
-                standalone pitch would either duplicate it or (gap ≥ 12 h)
+                standalone pitch would either duplicate it or (gap ≥ pinned walltime)
                 contradict the tip above, where plain salloc already fits. */}
             {shouldShowGapShell({ isGpu, mode, ptyActive }) && (
               <div className="mt-2 rounded-md border border-info/40 bg-info-soft/45 px-2 py-1.5 text-xs leading-relaxed">
                 <div className="flex flex-wrap items-center gap-1.5">
                   <Tag tone="info">{t("pool.ptyTag")}</Tag>
                   <span className="text-foreground">
-                    {t("pool.ptyNote")}{!timeSel && <> {t("pool.ptyNoteDefaultTime")}</>}
+                    {t("pool.ptyNote")}{!timeSel && <> {pinnedLabel ? t("pool.ptyNoteDefaultTime", { t: pinnedLabel }) : t("pool.ptyNoteNoTime")}</>}
                   </span>
                   <button
                     type="button"
@@ -726,7 +741,7 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
             )}
             {/* diagnostic detail below the fix-it row: when applying the tip makes
                 this block disappear, nothing above the clicked button moves */}
-            {showGpuFitDetails && gpuFit && <GpuFitExplanation fit={gpuFit} pendingActive={pendingActive} t={t} />}
+            {showGpuFitDetails && gpuFit && <GpuFitExplanation fit={gpuFit} pendingActive={pendingActive} requestSec={requestSec} t={t} />}
             <PolicyLimitChips rows={limits} />
             {groupLimitReached && <div className="mt-1 text-xs leading-relaxed text-bad-fg">{t("pool.limitReached")}</div>}
           </div>
@@ -773,7 +788,7 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
                   {forcedSec !== null ? (
                     // the plugin pins interactive walltime; a select would lie
                     <div className={cn(fieldCls, "flex items-center truncate text-muted-foreground")}>
-                      {t("pool.timeForcedInteractive", { t: forcedSec === 720 * 60 ? "12h" : "2d" })}
+                      {t("pool.timeForcedInteractive", { t: pinnedLabel })}
                     </div>
                   ) : (
                     <select value={timeSel} onChange={(e) => setTime(e.target.value)} className={fieldCls}>
@@ -1119,7 +1134,7 @@ function partitionRequestSummary(
   if (!part) return null;
   const policy = partitionPolicy(partition, snap.policy);
   // default: preview the interactive command with its plugin-forced walltime
-  const requestSec = requestSecOverride ?? interactiveForcedSec(partition, isGpu) ?? Number.POSITIVE_INFINITY;
+  const requestSec = requestSecOverride ?? defaultRequestSec(partition, snap.policy);
   const advice = isGpu ? gpuPartitionAdvice(snap, pool, partition, pendingActive, nowMs, requestSec) : null;
   const groupRunning = advice?.groupRunning ?? partitionRunningJobs(snap.jobs, partition);
   const gpuFit = advice?.fit ?? null;
@@ -1217,13 +1232,16 @@ function GpuFitQuickTip({
 function GpuBackfillQuickTip({
   tip,
   variant,
+  forced,
   applied,
   onApply,
   t,
 }: {
   tip: GpuBackfillTipData;
-  /** script: normal -t advice · switch: salloc can't -t, offer script mode · fits: gap ≥ forced 12h, only --mem needed */
+  /** script: normal -t advice · switch: salloc can't -t, offer script mode · fits: gap ≥ the pinned walltime, only --mem needed */
   variant: "script" | "switch" | "fits";
+  /** the plugin-pinned interactive walltime label ("12h"), from the policy */
+  forced: string;
   applied: boolean;
   onApply: () => void;
   t: TFn;
@@ -1232,10 +1250,10 @@ function GpuBackfillQuickTip({
   const text =
     variant === "switch"
       ? tip.mem
-        ? t("pool.bfTipSalloc", { node: tip.node, until, mem: tip.mem, t: tip.t })
-        : t("pool.bfTipSallocTime", { node: tip.node, until, t: tip.t })
+        ? t("pool.bfTipSalloc", { node: tip.node, until, mem: tip.mem, t: tip.t, forced })
+        : t("pool.bfTipSallocTime", { node: tip.node, until, t: tip.t, forced })
       : variant === "fits"
-        ? t("pool.bfTipFits", { node: tip.node, until, mem: tip.mem })
+        ? t("pool.bfTipFits", { node: tip.node, until, mem: tip.mem, forced })
         : tip.mem
           ? t("pool.bfTipText", { node: tip.node, until, mem: tip.mem, t: tip.t })
           : t("pool.bfTipTextTime", { node: tip.node, until, t: tip.t });
@@ -1356,10 +1374,6 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
   );
 }
 
-// The pool card previews the interactive default, which GPU salloc pins to
-// 12h — a slot (or its reservation gap) must hold that much to claim "free".
-const CARD_REQUEST_SEC = 720 * 60;
-
 function GpuAvailabilityBreakdown({
   segments,
   t,
@@ -1387,7 +1401,10 @@ function strandedTipNode(fit: GpuFitInfo | null) {
   return fit?.stranded.find((row) => row.freeGpu >= 1 && row.freeCores >= fit.need.cores && row.freeMemMb > 1024) ?? null;
 }
 
-function GpuFitExplanation({ fit, pendingActive, t }: { fit: GpuFitInfo; pendingActive: RawJob[]; t: TFn }) {
+/** `requestSec`: how long the previewed request holds its slot (the plugin-
+ *  pinned interactive walltime, or the chosen -t) — a slot or reservation gap
+ *  must hold that much to count as free. */
+function GpuFitExplanation({ fit, pendingActive, requestSec, t }: { fit: GpuFitInfo; pendingActive: RawJob[]; requestSec: number; t: TFn }) {
   const rows = fit.stranded.slice(0, 4);
   if (rows.length === 0) return null;
   const more = Math.max(0, fit.stranded.length - rows.length);
@@ -1399,7 +1416,7 @@ function GpuFitExplanation({ fit, pendingActive, t }: { fit: GpuFitInfo; pending
         <Tag tone="warn">{t("pool.fitBlocked")}</Tag>
         <span className="text-foreground">{t("pool.fitNeed", { partition: fit.need.partition, need: resourceText(fit.need, t) })}</span>
       </div>
-      {contention && slotBlocked(contention, CARD_REQUEST_SEC) && (
+      {contention && slotBlocked(contention, requestSec) && (
         <div className="mt-1 font-medium text-warn-fg">
           {contention.contenders > 0
             ? t("pool.fitContestedNote", { n: contention.contenders })

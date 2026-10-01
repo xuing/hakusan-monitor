@@ -1,0 +1,14 @@
+# Verifies the dashboard's reading of job_submit.lua / QoS against Slurm with
+# held probe jobs (scripts/check_cluster_policy.py). Triggered by the .timer.
+[Unit]
+Description=Hakusan Monitor: verify cluster policy against Slurm
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/temp/hakusan-monitor
+EnvironmentFile=-%h/temp/hakusan-monitor/.env
+Environment=HM_SOURCE=ssh
+Environment=TZ=Asia/Tokyo
+# exit 1 = a partition disagrees; the report is written either way
+SuccessExitStatus=1
+ExecStart=/usr/bin/python3 scripts/check_cluster_policy.py

@@ -1,0 +1,203 @@
+#!/usr/bin/env python3
+"""Verify the dashboard's reading of the cluster policy against Slurm itself.
+
+The dashboard takes every limit and default from the cluster: QoS caps from
+sacctmgr, memory defaults from scontrol, and the submit plugin's rules from
+job_submit.lua (backend/lua_policy.py). Reading Lua is still interpretation,
+so this script checks it the only reliable way: it submits one HELD job per
+partition (`sbatch -H`, never runs, cancelled at once), reads back what Slurm
+made of it, and compares that with what the dashboard expects.
+
+  * default request — CPUs, tasks, memory per CPU, GPUs per node
+  * GPU partitions  — a second held job with --gres=gpu:2, to confirm whether
+                      the plugin respects or overwrites the GPU count
+
+Result: data/policy_check.json (the backend picks it up within one sample and
+the project page shows it); exit status 1 when any partition disagrees.
+Run it daily (deploy/hakusan-monitor-policy-check.timer) or by hand:
+
+    python3 scripts/check_cluster_policy.py            # check and write report
+    python3 scripts/check_cluster_policy.py --dry-run  # print only
+"""
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+import re
+import shlex
+import sys
+import time
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(ROOT, "backend"))
+
+from server import CFG  # noqa: E402  (loads .env, same SSH settings as the service)
+from sources import Source, parse_partition_policies  # noqa: E402
+from lua_policy import parse_job_submit_lua  # noqa: E402
+
+JOB_NAME = "hm-policy-check"
+MARK = "@@HM-CHECK@@"
+
+
+def remote_probe_script(partitions: list[tuple[str, str]], lua_path: str) -> str:
+    """One SSH round: sources, then a held job per (partition, extra flags)."""
+    lua_q = shlex.quote(lua_path)
+    lines = [
+        f"cat {lua_q} 2>/dev/null; echo {MARK}",
+        "scontrol -o show partition 2>/dev/null; echo " + MARK,
+    ]
+    for part, extra in partitions:
+        p = shlex.quote(part)
+        lines.append(
+            f"out=$(sbatch -H --parsable -J {JOB_NAME} -p {p} {extra} -t 1 -o /dev/null --wrap 'true' 2>&1); "
+            f"id=${{out%%;*}}; "
+            f"if [[ \"$id\" =~ ^[0-9]+$ ]]; then echo \"PROBE|{part}|{extra}|$(scontrol -o show job $id)\"; scancel $id; "
+            f"else echo \"PROBE|{part}|{extra}|ERROR $(echo $out | tr '\\n' ' ')\"; fi"
+        )
+    lines.append(f"sleep 1; echo LEFT=$(squeue -h -u $USER -n {JOB_NAME} | wc -l)")
+    return "\n".join(lines)
+
+
+def _kv(line: str, key: str) -> str:
+    m = re.search(rf"(?:^|\s){re.escape(key)}=(\S+)", line)
+    return m.group(1) if m else ""
+
+
+def _mem_mb(raw: str) -> int:
+    m = re.match(r"^(\d+(?:\.\d+)?)([KMGT]?)$", raw or "")
+    if not m:
+        return 0
+    mult = {"": 1, "K": 1 / 1024, "M": 1, "G": 1024, "T": 1024 * 1024}[m.group(2)]
+    return round(float(m.group(1)) * mult)
+
+
+def measure(job_line: str) -> dict:
+    gres = _kv(job_line, "TresPerNode")
+    gm = re.search(r"gpu(?::[^:=,]+)?[:=](\d+)", gres)
+    out = {
+        "cpus": int(_kv(job_line, "NumCPUs") or 0),
+        "tasks": int(_kv(job_line, "NumTasks") or 0),
+        "cpus_per_task": int(_kv(job_line, "CPUs/Task") or 0),
+        "gpus_per_node": int(gm.group(1)) if gm else 0,
+    }
+    if _kv(job_line, "MinMemoryCPU"):
+        out["mem_per_cpu_mb"] = _mem_mb(_kv(job_line, "MinMemoryCPU"))
+    if _kv(job_line, "MinMemoryNode"):
+        out["mem_per_node_mb"] = _mem_mb(_kv(job_line, "MinMemoryNode"))
+    return out
+
+
+def expected_for(name: str, lua: dict, part: dict) -> dict:
+    f = lua.get(name) or {}
+    exp = {}
+    if f.get("default_cpus"):
+        exp["cpus"] = f["default_cpus"]
+    if part.get("def_mem_per_cpu_mb"):
+        exp["mem_per_cpu_mb"] = part["def_mem_per_cpu_mb"]
+    if f.get("default_gpus_per_node"):
+        exp["gpus_per_node"] = f["default_gpus_per_node"]
+    return exp
+
+
+def run(dry_run: bool) -> int:
+    src = Source(CFG["source"], CFG["ssh_host"], CFG["ssh_opts"], CFG["mock_dir"],
+                 timeout=180, lua_path=CFG["job_submit_lua"])
+    if src.mode != "ssh":
+        print("HM_SOURCE is not ssh — nothing to verify against.", file=sys.stderr)
+        return 2
+    # round 1: read sources to decide what to probe
+    first = src._exec(f"cat {shlex.quote(src.lua_path)}; echo {MARK}; scontrol -o show partition")
+    lua_text, _, part_text = first.partition(MARK)
+    lua = parse_job_submit_lua(lua_text)
+    parts = parse_partition_policies(part_text)
+    probe = []
+    skipped = {}
+    for name in sorted(set(lua) & set(parts)):
+        if parts[name].get("state") != "UP":
+            skipped[name] = f"partition state {parts[name].get('state')}"
+        elif (lua[name] or {}).get("requires_license"):
+            skipped[name] = "requires -L license"
+        else:
+            probe.append((name, ""))
+            if lua[name].get("default_gpus_per_node"):
+                probe.append((name, "--gres=gpu:2"))
+    out = src._exec(remote_probe_script(probe, src.lua_path), timeout=300)
+    results: dict = {}
+    for line in out.splitlines():
+        if not line.startswith("PROBE|"):
+            continue
+        _, name, extra, rest = line.split("|", 3)
+        r = results.setdefault(name, {"expected": expected_for(name, lua, parts[name]),
+                                      "notes": []})
+        if rest.startswith("ERROR"):
+            r.setdefault("errors", []).append(f"{extra or 'default'}: {rest[6:].strip()[:200]}")
+            continue
+        m = measure(rest)
+        if extra:
+            r["gres2_gpus_per_node"] = m["gpus_per_node"]
+        else:
+            r["measured"] = m
+    left = re.search(r"LEFT=(\d+)", out)
+    for name, r in results.items():
+        exp, got = r["expected"], r.get("measured") or {}
+        diffs = [f"{k}: expected {v}, Slurm gave {got.get(k)}"
+                 for k, v in exp.items() if got and got.get(k) != v]
+        f = lua.get(name) or {}
+        if "gres2_gpus_per_node" in r:
+            honoured = r["gres2_gpus_per_node"] == 2
+            r["gpu_request_honoured"] = honoured
+            if honoured != bool(f.get("gpu_request_respected")):
+                diffs.append(f"--gres=gpu:2 gave {r['gres2_gpus_per_node']} GPU/node; "
+                             f"Lua reading says respected={bool(f.get('gpu_request_respected'))}")
+            elif not honoured:
+                r["notes"].append(f"--gres=gpu:2 is overwritten to {r['gres2_gpus_per_node']} GPU/node "
+                                  "(plugin checks only " + ", ".join(f.get("gpu_request_fields") or []) + ")")
+        lua_mem = f.get("default_mem_per_node_mb")
+        if lua_mem and got.get("mem_per_cpu_mb") and got.get("cpus"):
+            if got["mem_per_cpu_mb"] * got["cpus"] != lua_mem:
+                r["notes"].append(f"Lua pn_min_memory {lua_mem} MB is not applied; "
+                                  f"DefMemPerCPU gives {got['mem_per_cpu_mb']} MB x {got['cpus']} CPUs")
+        r["diffs"] = diffs
+        r["ok"] = not diffs and not r.get("errors")
+    report = {
+        "checked_at": int(time.time()),
+        "host": src.ssh_hosts[0] if src.ssh_hosts else "",
+        "lua_path": src.lua_path,
+        "lua_sha": hashlib.sha256(lua_text.encode()).hexdigest()[:12],
+        "probe_jobs_left": int(left.group(1)) if left else None,
+        "partitions": results,
+        "skipped": skipped,
+    }
+    print_report(report)
+    if not dry_run:
+        path = CFG["policy_check"]
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        with open(path + ".tmp", "w") as fh:
+            json.dump(report, fh, indent=1, ensure_ascii=False)
+        os.replace(path + ".tmp", path)
+        print(f"\nwrote {path}")
+    return 0 if all(r["ok"] for r in results.values()) else 1
+
+
+def print_report(report: dict) -> None:
+    print(f"job_submit.lua sha {report['lua_sha']}  ·  held probe jobs left: {report['probe_jobs_left']}")
+    for name, r in sorted(report["partitions"].items()):
+        m = r.get("measured") or {}
+        flag = "OK " if r["ok"] else "BAD"
+        gpu = f" gpu {m.get('gpus_per_node')}" if m.get("gpus_per_node") else ""
+        mem = m.get("mem_per_cpu_mb") or m.get("mem_per_node_mb")
+        print(f"  {flag} {name:12} cpus {m.get('cpus')} tasks {m.get('tasks')} mem {mem}{gpu}")
+        for d in r.get("diffs", []) + r.get("errors", []):
+            print(f"        ! {d}")
+        for n in r.get("notes", []):
+            print(f"        · {n}")
+    for name, why in sorted(report["skipped"].items()):
+        print(f"  --  {name:12} skipped ({why})")
+
+
+if __name__ == "__main__":
+    ap = argparse.ArgumentParser(description=(__doc__ or "").split("\n\n")[0])
+    ap.add_argument("--dry-run", action="store_true", help="print the report, do not write it")
+    sys.exit(run(ap.parse_args().dry_run))

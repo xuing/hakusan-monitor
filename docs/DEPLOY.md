@@ -52,6 +52,20 @@ long-running Python process must also be restarted. The frontend accepts the
 immediately preceding unversioned snapshot during this short hand-off, but a
 restart is still required to activate backend fixes.
 
+### Daily cluster-policy verification
+
+Partition limits and defaults are read from the cluster (QoS, partitions,
+`job_submit.lua`) — see DESIGN.md §11. A daily timer checks that reading
+against Slurm with held probe jobs and writes `data/policy_check.json`, which
+the service picks up on its next sample:
+
+```bash
+cp deploy/hakusan-monitor-policy-check.{service,timer} ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now hakusan-monitor-policy-check.timer
+python3 scripts/check_cluster_policy.py --dry-run   # run once by hand
+```
+
 ## Option B — Docker Compose
 
 ```bash

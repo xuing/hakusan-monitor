@@ -64,6 +64,21 @@ describe("buildRequestCommand", () => {
   });
 });
 
+describe("buildRequestCommand pty walltime", () => {
+  it("leaves -t to Slurm when no walltime is known for the placeholder", () => {
+    const command = buildRequestCommand({
+      partition: "GPU-S",
+      forcedInteractiveSeconds: null,
+      mode: "interactive",
+      pty: true,
+      ptyTime: "",
+      scriptFile: "job.sh",
+    });
+    expect(command).toContain("sbatch --parsable -p GPU-S --wrap 'sleep infinity'");
+    expect(command).not.toContain(" -t ");
+  });
+});
+
 describe("shouldShowGapShell", () => {
   it("never pitches before activation — the backfill tip's switch button is the entry", () => {
     // when the gap already holds the pinned 12 h, plain salloc fits it and a

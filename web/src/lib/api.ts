@@ -5,6 +5,7 @@ import type {
   LoginHistoryPoint,
   LoginNodesResponse,
   Meta,
+  PolicySource,
   Snapshot,
   UsagePattern,
   VisitStats,
@@ -25,6 +26,8 @@ export const api = {
   usage: (days = 30) => get<UsagePattern>(`/api/usage?days=${days}`),
   visits: (days = 30) => get<VisitStats>(`/api/visits?days=${days}`),
   loginNodes: () => get<LoginNodesResponse>("/api/login-nodes"),
+  /** raw job_submit.lua / sacctmgr / scontrol texts + verification report (large; on demand) */
+  policySource: () => get<PolicySource>("/api/policy-source"),
   loginHistory: (hours = 24) =>
     get<{ since: number; until: number; points: LoginHistoryPoint[] }>(
       `/api/login-nodes/history?hours=${hours}`,

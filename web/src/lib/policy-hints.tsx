@@ -5,7 +5,8 @@
 import type { TFn } from "@/i18n";
 import { cleanCpuProbeRaw, type CpuProbeRow, type CpuProbeState } from "@/lib/cpu-probes";
 import { clockOf, nf } from "@/lib/format";
-import { effectiveJobMemGb, interactiveForcedLabel, type PartitionCap, type PartitionPolicy, type Tone } from "@/lib/slurm";
+import { effectiveGpuLimit, effectiveJobMemGb, interactiveForcedLabel, partitionDefaults, type PartitionCap, type PartitionPolicy, type Tone } from "@/lib/slurm";
+import type { PolicySnapshot } from "@/types/snapshot";
 
 export interface PolicyLimitRow {
   key: string;
@@ -68,10 +69,17 @@ export function fmtCapMem(gb?: number) {
 /** "8 GPU / 208c / 2TiB / 4 nodes / 3d" — no label prefix, "" when the cap is empty.
  * Cores render as a range ("256–2,048c") where the QOS enforces a minimum
  * (submitting below it is rejected outright — measured on LARGE), and memory
- * is clamped to what the nodes can physically grant. */
-export function fmtPolicyLimit(cap: PartitionCap, isGpu: boolean, t: TFn, partition?: string, nodeMemMb?: number) {
+ * is clamped to what the nodes can physically grant. The GPU term is the
+ * count a job really gets: where the submit plugin pins GPUs per node the
+ * line says so, and a partition with neither a QoS GPU cap nor a plugin rule
+ * gets no GPU term at all rather than an invented one. */
+export function fmtPolicyLimit(cap: PartitionCap, isGpu: boolean, t: TFn, partition?: string, nodeMemMb?: number,
+                               policy?: PolicySnapshot) {
   const parts: string[] = [];
-  if (isGpu && cap.maxGpus) parts.push(`${cap.maxGpus} GPU`);
+  if (isGpu) {
+    const gpu = fmtGpuLimit(cap, partition ? partitionDefaults(partition, policy) : undefined, t);
+    if (gpu) parts.push(gpu);
+  }
   if (cap.maxCores) {
     parts.push(cap.minCores ? `${nf(cap.minCores)}–${nf(cap.maxCores)}c` : `${nf(cap.maxCores)}c`);
   }
@@ -81,12 +89,30 @@ export function fmtPolicyLimit(cap: PartitionCap, isGpu: boolean, t: TFn, partit
   if (cap.wall) {
     // the QOS wall only binds sbatch; salloc gets a plugin-forced walltime —
     // showing "7d" alone reads as a promise interactive can't keep
-    const forced = partition ? interactiveForcedLabel(partition, isGpu) : null;
+    const forced = partition ? interactiveForcedLabel(partition, policy) : null;
     parts.push(forced && forced !== cap.wall
       ? t("pool.wallSplit", { wall: cap.wall, forced })
       : cap.wall);
   }
   return parts.join(" / ");
+}
+
+/** The GPU term of the policy line, "" when nothing can be stated. */
+export function fmtGpuLimit(cap: PartitionCap, defaults: ReturnType<typeof partitionDefaults> | undefined, t: TFn) {
+  const limit = effectiveGpuLimit(cap, defaults);
+  if (!limit.forced) return limit.total ? `${limit.total} GPU` : "";
+  const n = limit.perNode!;
+  if (limit.total && limit.total > n) return t("pool.limitGpuForcedMulti", { total: limit.total, n });
+  if (limit.total) return t("pool.limitGpuForced", { n });
+  return t("pool.limitGpuPerNodeForced", { n });
+}
+
+/** "The plugin pins N GPU(s) per node; --exclusive takes the node's M."
+ *  Verified live 2026-10-01: GPU-S + --exclusive got both A40s. */
+export function gpuPluginNote(perNode: number, nodeGpus: number, t: TFn): string {
+  return nodeGpus > perNode
+    ? t("pool.gpuPluginPinnedExclusive", { n: perNode, total: nodeGpus })
+    : t("pool.gpuPluginPinned", { n: perNode });
 }
 
 export function cpuProbeLabel(state: CpuProbeState, t: TFn) {

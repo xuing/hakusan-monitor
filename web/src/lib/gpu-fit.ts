@@ -10,7 +10,7 @@ import {
   type GpuDefaultRequest,
   type GpuNodeFacts,
 } from "@/lib/gpu-availability";
-import { capPerGpu, partitionCap, partitionDefaultRequest, partitionPolicy, type PartitionCap } from "@/lib/slurm";
+import { capPerGpu, effectiveGpuLimit, partitionCap, partitionDefaultRequest, partitionDefaults, partitionPolicy, type PartitionCap } from "@/lib/slurm";
 import type { Pool, RawJob, RawNode, Snapshot } from "@/types/snapshot";
 
 export interface GpuFitNeed {
@@ -50,12 +50,16 @@ export interface GpuFitTipData {
 
 export function gpuFitSnapshot(snap: Snapshot, pool: Pool, cap: PartitionCap, partition: string): GpuFitInfo {
   return gpuFitFromNodes(snap.nodes, snap.jobs, pool, cap, partition,
-                         partitionDefaultRequest(partition, snap.policy));
+                         partitionDefaultRequest(partition, snap.policy),
+                         effectiveGpuLimit(cap, partitionDefaults(partition, snap.policy)).total);
 }
 
+/** `jobGpus`: GPUs one job really holds (effectiveGpuLimit), which divides
+ *  the QoS cap into a per-GPU share; defaults to the QoS gres cap. */
 export function gpuFitFromNodes(nodes: RawNode[], jobs: RawJob[], pool: Pool, cap: PartitionCap,
-                                partition: string, request: GpuDefaultRequest): GpuFitInfo {
-  const need = gpuFitNeed(nodes, pool, cap, partition, request);
+                                partition: string, request: GpuDefaultRequest,
+                                jobGpus: number | undefined = cap.maxGpus): GpuFitInfo {
+  const need = gpuFitNeed(nodes, pool, cap, partition, request, jobGpus);
   const byNode = jobs.length ? runningJobsByNode(jobs) : new Map<string, RawJob[]>();
   const stranded: GpuFitNode[] = [];
   const fitNodes: GpuFitNode[] = [];
@@ -198,10 +202,11 @@ export function partitionGpuAvailability(snap: Snapshot, pool: Pool, partition: 
 }
 
 function partitionVerdict(facts: GpuNodeFacts[], snap: Snapshot, partition: string) {
+  const cap = partitionCap(partition, snap.policy);
   return gpuAvailability(
     facts,
     partitionDefaultRequest(partition, snap.policy),
-    capPerGpu(partitionCap(partition, snap.policy)),
+    capPerGpu(cap, effectiveGpuLimit(cap, partitionDefaults(partition, snap.policy)).total),
   );
 }
 
@@ -229,14 +234,14 @@ function nodeIsBackfillCandidate(node: RawNode) {
  *    made every idle H100 node read "memory insufficient" instead of "free".
  */
 function gpuFitNeed(nodes: RawNode[], pool: Pool, cap: PartitionCap, partition: string,
-                    request: GpuDefaultRequest): GpuFitNeed {
+                    request: GpuDefaultRequest, jobGpus: number | undefined): GpuFitNeed {
   const poolNodes = nodes.filter((node) => node.pool === pool.id);
   const shape = {
     gpus: Math.max(0, ...poolNodes.map((node) => parseGpuCount(node.gres, pool.gpu?.type ?? ""))),
     cores: Math.max(0, ...poolNodes.map((node) => node.cpus)),
     memMb: Math.max(0, ...poolNodes.map((node) => node.real_memory)),
   };
-  const need = gpuPerGpuNeed(request, shape, capPerGpu(cap));
+  const need = gpuPerGpuNeed(request, shape, capPerGpu(cap, jobGpus));
   return { partition, gpus: need.gpus, cores: need.cores, memMb: need.memMb };
 }
 

@@ -179,18 +179,72 @@ export interface DynamicPartitionPolicy {
   maxSubmitPerUser?: number;
 }
 
-/** What a flagless request actually asks Slurm for. NOT the QoS cap — see
- *  backend/cluster_policy.py BUILTIN_PARTITION_DEFAULTS for how it is measured. */
+/** What a flagless request actually asks Slurm for. NOT the QoS cap. Read
+ *  from the cluster's job_submit.lua (backend/lua_policy.py) plus `scontrol
+ *  show partition`; where scripts/check_cluster_policy.py has measured the
+ *  partition with a held job, the measured values win (`measured`). */
 export interface PartitionDefaults {
   /** cores the submit plugin puts on a request with no -n/-c */
   cores?: number;
+  /** tasks the plugin pins (a bare -c multiplies by this) */
+  tasks?: number;
   /** partition DefMemPerCPU, in MB (read live from `scontrol show partition`) */
   def_mem_per_cpu_mb?: number;
   max_mem_per_cpu_mb?: number;
   def_mem_per_node_mb?: number;
   max_mem_per_node_mb?: number;
+  /** the Lua's own pn_min_memory default (MB) — Slurm does NOT apply it,
+   *  DefMemPerCPU wins; kept so the UI can show the discrepancy */
+  lua_mem_per_node_mb?: number;
   /** GPUs per node the plugin adds on GPU partitions (TresPerNode=gres/gpu:N) */
   gpus_per_node?: number;
+  /** false = the plugin overwrites any --gres/--gpus-per-node with gpus_per_node */
+  gpu_request_respected?: boolean;
+  /** walltime (minutes) the plugin forces on salloc/srun jobs; absent = -t honoured */
+  interactive_time_min?: number;
+  /** the branch rejects jobs without -L */
+  requires_license?: boolean;
+  /** true when the verification script confirmed cores/memory with a held job */
+  measured?: boolean;
+}
+
+/** Raw facts parsed from one partition branch of job_submit.lua. */
+export interface LuaPartitionFacts {
+  line?: number;
+  default_tasks?: number;
+  default_cpus?: number;
+  default_cpus_per_task?: number;
+  default_mem_per_node_mb?: number;
+  default_gpus_per_node?: number;
+  /** job_desc fields the branch consults before applying its GPU default */
+  gpu_request_fields?: string[];
+  gpu_request_respected?: boolean;
+  interactive_time_min?: number;
+  requires_license?: boolean;
+}
+
+export interface LuaVersion {
+  name: string;
+  mtime: number;
+  size: number;
+  current: boolean;
+}
+
+export interface PolicyLua {
+  path?: string;
+  sha?: string;
+  mtime?: number;
+  versions?: LuaVersion[];
+  partitions?: Record<string, LuaPartitionFacts>;
+  parsed?: boolean;
+}
+
+/** Snapshot-sized summary of the last scripts/check_cluster_policy.py run. */
+export interface PolicyCheckSummary {
+  checked_at?: number;
+  lua_sha?: string;
+  ok?: boolean;
+  mismatches?: string[];
 }
 
 export interface PolicySnapshot {
@@ -199,10 +253,44 @@ export interface PolicySnapshot {
   partition_caps: Record<string, DynamicPartitionCap>;
   partition_policies: Record<string, DynamicPartitionPolicy>;
   partition_defaults?: Record<string, PartitionDefaults>;
-  /** per-partition provenance: "live" (sacctmgr) or "builtin" (fallback table) */
-  cap_origin?: Record<string, "live" | "builtin">;
+  /** per-partition provenance; every cap now comes from the live sacctmgr QoS */
+  cap_origin?: Record<string, "live">;
   qos?: Record<string, unknown>;
   partitions?: Record<string, unknown>;
+  lua?: PolicyLua;
+  check?: PolicyCheckSummary | null;
+}
+
+/** One partition's verification result (held-job probe vs. our reading). */
+export interface PolicyCheckPartition {
+  expected?: { cpus?: number; mem_per_cpu_mb?: number; gpus_per_node?: number };
+  measured?: { cpus?: number; tasks?: number; cpus_per_task?: number; gpus_per_node?: number; mem_per_cpu_mb?: number };
+  gres2_gpus_per_node?: number;
+  gpu_request_honoured?: boolean;
+  notes?: string[];
+  diffs?: string[];
+  ok?: boolean;
+}
+
+export interface PolicyCheckReport {
+  checked_at?: number;
+  host?: string;
+  lua_path?: string;
+  lua_sha?: string;
+  probe_jobs_left?: number;
+  partitions?: Record<string, PolicyCheckPartition>;
+  skipped?: Record<string, string>;
+}
+
+/** GET /api/policy-source — the raw cluster texts the policy block is read from. */
+export interface PolicySource {
+  fetched_at: number;
+  interval: number;
+  lua_text: string;
+  qos_text: string;
+  partitions_text: string;
+  lua: PolicyLua;
+  check: PolicyCheckReport | null;
 }
 
 export interface DownNode {

@@ -1,6 +1,6 @@
 // Slurm-domain helpers: load tones, chart color mapping, resource filtering.
 import type { GpuDefaultRequest } from "@/lib/gpu-availability";
-import type { Partition, PolicySnapshot, Pool, Release } from "@/types/snapshot";
+import type { Partition, PartitionDefaults, PolicySnapshot, Pool, Release } from "@/types/snapshot";
 
 export type Tone = "ok" | "warn" | "bad" | "info" | "neutral";
 
@@ -38,9 +38,11 @@ export function heatColor(v: number): string {
 }
 
 // ---- per-partition policy caps ------------------------------------------------
-// The snapshot's policy block is the single source of truth: the backend merges
-// its built-in tables (backend/cluster_policy.py) with the live sacctmgr QoS
-// collection, so the frontend never hardcodes cluster limits.
+// The snapshot's policy block is the single source of truth: caps and
+// concurrency come from the live sacctmgr QoS, request defaults from the
+// cluster's job_submit.lua (backend/lua_policy.py) and `scontrol show
+// partition`. The frontend never hardcodes a cluster limit — a value the
+// cluster doesn't state is absent here and shown as absent.
 export interface PartitionCap {
   minCores?: number;
   maxCores?: number;
@@ -157,13 +159,43 @@ function cpuBoundMemGb(cap: PartitionCap): number | undefined {
 }
 
 /** QoS ceiling expressed per GPU, for narrowing the per-GPU need. Slurm quotes
- *  MaxTRES memory in binary GB (mem=256G = 256 GiB), so scale by 1024. */
-export function capPerGpu(cap: PartitionCap): { cores?: number; memMb?: number } {
-  const maxGpus = Math.max(1, cap.maxGpus ?? 1);
+ *  MaxTRES memory in binary GB (mem=256G = 256 GiB), so scale by 1024.
+ *  `gpus` is how many GPUs one job can really hold (effectiveGpuLimit); it
+ *  defaults to the QoS gres cap, and to 1 when neither is known — then the
+ *  cap is not divided, i.e. it never pretends to be stricter than stated. */
+export function capPerGpu(cap: PartitionCap, gpus: number | undefined = cap.maxGpus): { cores?: number; memMb?: number } {
+  const maxGpus = Math.max(1, gpus ?? 1);
   return {
     cores: cap.maxCores ? Math.ceil(cap.maxCores / maxGpus) : undefined,
     memMb: cap.maxMemGb ? Math.ceil((cap.maxMemGb * 1024) / maxGpus) : undefined,
   };
+}
+
+/** How many GPUs a job in this partition can actually get.
+ *
+ *  Two independent limits apply: the QoS gres cap (`maxGpus`, when the QoS
+ *  states one) and the submit plugin. job_submit.lua sets `gres=gpu:N` on
+ *  every GPU-partition job and, since 2026-06-11, checks only job_desc.gpus /
+ *  gpus_per_node — fields Slurm never fills from --gres — so a user's GPU
+ *  request is overwritten (`gpu_request_respected === false`, verified live:
+ *  --gres=gpu:2 on GPU-S got 1 GPU). The job then holds N × nodes GPUs.
+ *  Nothing is invented: with no QoS cap and no node limit the total stays
+ *  undefined and only the per-node figure is reported. */
+export interface GpuLimit {
+  /** GPUs per node the plugin pins (only when it overrides the request) */
+  perNode?: number;
+  /** most GPUs one job can hold, when that is knowable */
+  total?: number;
+  /** true when the plugin, not the user, decides the GPU count */
+  forced: boolean;
+}
+
+export function effectiveGpuLimit(cap: PartitionCap, defaults?: PartitionDefaults): GpuLimit {
+  const perNode = defaults?.gpu_request_respected === false ? defaults.gpus_per_node : undefined;
+  if (!perNode) return { total: cap.maxGpus, forced: false };
+  const byNodes = cap.maxNodes ? perNode * cap.maxNodes : undefined;
+  const bounds = [cap.maxGpus, byNodes].filter((v): v is number => !!v);
+  return { perNode, total: bounds.length ? Math.min(...bounds) : undefined, forced: true };
 }
 
 /**
@@ -178,30 +210,71 @@ export function capPerGpu(cap: PartitionCap): { cores?: number; memMb?: number }
 export function partitionDefaultRequest(name: string, policy?: PolicySnapshot): GpuDefaultRequest {
   const d = policy?.partition_defaults?.[name] ?? {};
   // Zeroes mean "unknown" — gpuPerGpuNeed then falls back to the node's own
-  // per-GPU hardware share instead of inventing a request.
+  // per-GPU hardware share (and to one GPU) instead of inventing a request.
   return {
     partition: name,
     cores: d.cores ?? 0,
     memPerCoreMb: d.def_mem_per_cpu_mb ?? 0,
-    gpusPerNode: d.gpus_per_node ?? 1,
+    gpusPerNode: d.gpus_per_node ?? 0,
   };
 }
+
+export const partitionDefaults = (name: string, policy?: PolicySnapshot): PartitionDefaults =>
+  policy?.partition_defaults?.[name] ?? {};
 
 export const partitionPolicy = (name: string, policy?: PolicySnapshot): PartitionPolicy =>
   policy?.partition_policies?.[name] ?? {};
 
-/** Hakusan's job_submit.lua overrides -t on every interactive (salloc) job —
- *  set, not capped — to a per-partition-class constant (measured live
- *  2026-07): GPU partitions → 720 min, CPU/VM/LM → 2880 min, TINY alone
- *  honors -t. Batch (sbatch) keeps its -t everywhere. */
-export function interactiveForcedSec(partition: string, isGpu: boolean): number | null {
-  if (partition === "TINY") return null;
-  return (isGpu ? 720 : 2880) * 60;
+/** Hakusan's job_submit.lua overrides -t on every interactive (salloc/srun)
+ *  job — set, not capped — to a per-partition constant read from the Lua
+ *  (`partition_defaults[p].interactive_time_min`). A partition without that
+ *  rule (absent field) honours -t. Batch (sbatch) keeps its -t everywhere.
+ *  Unknown policy (mock mode, cold cache) reads as "not forced" rather than
+ *  falling back to a remembered number. */
+export function interactiveForcedSec(partition: string, policy?: PolicySnapshot): number | null {
+  const min = policy?.partition_defaults?.[partition]?.interactive_time_min;
+  return min && min > 0 ? min * 60 : null;
 }
 
-/** Compact label for the forced interactive walltime. */
-export function interactiveForcedLabel(partition: string, isGpu: boolean): string | null {
-  const sec = interactiveForcedSec(partition, isGpu);
-  if (sec === null) return null;
-  return sec === 720 * 60 ? "12h" : "2d";
+/** Compact label for the forced interactive walltime ("12h", "2d"). */
+export function interactiveForcedLabel(partition: string, policy?: PolicySnapshot): string | null {
+  const sec = interactiveForcedSec(partition, policy);
+  return sec === null ? null : fmtWallMinutes(sec / 60);
+}
+
+/** Minutes -> the compact walltime label used across the UI: whole days as
+ *  "2d", whole hours as "12h", otherwise "1h30m" / "45m". */
+export function fmtWallMinutes(min: number): string {
+  if (min <= 0) return "0m";
+  if (min % 1440 === 0) return `${min / 1440}d`;
+  if (min % 60 === 0) return `${min / 60}h`;
+  if (min < 60) return `${min}m`;
+  return `${Math.floor(min / 60)}h${min % 60}m`;
+}
+
+/** Minutes -> a Slurm -t value ("12:00:00", "2-00:00:00"). */
+export function minutesToSlurmTime(min: number): string {
+  const days = Math.floor(min / 1440);
+  const h = Math.floor((min % 1440) / 60);
+  const m = min % 60;
+  const hm = `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:00`;
+  return days > 0 ? `${days}-${hm}` : hm;
+}
+
+/** QoS MaxWall label ("7d", "30m") -> seconds; 0 when absent/unparseable. */
+export function wallLabelSec(wall: string | undefined): number {
+  if (!wall) return 0;
+  const m = wall.match(/^(\d+)([mhd])$/);
+  if (!m) return 0;
+  const n = Number(m[1]);
+  return n * (m[2] === "d" ? 86400 : m[2] === "h" ? 3600 : 60);
+}
+
+/** How long a flagless request in this partition will hold its slot: the
+ *  plugin-forced interactive walltime where there is one, else the QoS wall
+ *  (a job without -t runs up to it), else unbounded. Used to judge whether a
+ *  free GPU slot / backfill gap is long enough for the default request. */
+export function defaultRequestSec(partition: string, policy?: PolicySnapshot): number {
+  return interactiveForcedSec(partition, policy)
+    ?? (wallLabelSec(policy?.partition_caps?.[partition]?.wall) || Number.POSITIVE_INFINITY);
 }

@@ -11,6 +11,7 @@ export interface RequestCommandInput {
   forcedInteractiveSeconds: number | null;
   mode: "interactive" | "script";
   pty: boolean;
+  /** -t for the pty placeholder; "" leaves it to Slurm's partition default */
   ptyTime: string;
   scriptFile: string;
 }
@@ -20,10 +21,11 @@ export type BackfillVariant = "script" | "switch" | "fits" | null;
 /** The gap-shell box exists only while the recipe is active: it then holds
  * the usage note and the only restore control, and must survive tips
  * recomputing to null on a later poll. There is no standalone pre-activation
- * pitch — when the gap is shorter than the pinned 12 h, the backfill tip's
- * "switch" button is the entry; when the gap already holds 12 h, a plain
- * salloc fits it and the pitch's premise ("12 h rarely fits a gap") would
- * contradict the tip one line above. */
+ * pitch — when the gap is shorter than the plugin-pinned interactive
+ * walltime, the backfill tip's "switch" button is the entry; when the gap
+ * already holds that walltime, a plain salloc fits it and the pitch's premise
+ * ("the pinned walltime rarely fits a gap") would contradict the tip one line
+ * above. */
 export function shouldShowGapShell(input: {
   isGpu: boolean;
   mode: "interactive" | "script";
@@ -54,7 +56,7 @@ export function buildRequestCommand(input: RequestCommandInput) {
 
   if (input.pty) {
     return [
-      `JOB=$(sbatch --parsable ${[...flags, `-t ${input.ptyTime}`].join(" ")} --wrap 'sleep infinity')`,
+      `JOB=$(sbatch --parsable ${[...flags, ...(input.ptyTime ? [`-t ${input.ptyTime}`] : [])].join(" ")} --wrap 'sleep infinity')`,
       'echo "job $JOB submitted"',
       'while :; do S=$(squeue -h -j "$JOB" -o \'%T %r\'); case "$S" in RUNNING*|"") break;; esac; printf \'\\r%s waiting — %s   \' "$(date +%T)" "$S"; sleep 5; done',
       'printf \'\\rjob %s started — opening shell (exit releases it)\\n\' "$JOB"',

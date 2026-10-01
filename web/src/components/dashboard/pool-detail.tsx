@@ -30,10 +30,17 @@ export function PoolDetail() {
   if (!pool) return null;
 
   const nodes = nodesForPool(snap, filter);
-  const descKey = `pooldesc.${filter}` as TranslationKey;
-  const desc = t(descKey);
   const coresPerNode = nodes[0]?.cpus ?? Math.round(pool.cores.total / Math.max(1, pool.nodes));
   const gpuPerNode = pool.gpu ? Math.round(pool.gpu.total / Math.max(1, pool.nodes)) : 0;
+  // The prose never carries a number of its own: the node shape is read from
+  // the snapshot and dropped into the sentence.
+  const descKey = `pooldesc.${filter}` as TranslationKey;
+  const gpuShape = pool.gpu
+    ? pool.gpu.mem_gb
+      ? t("pooldesc.shape.gpu", { gpus: gpuPerNode, gpuMem: `${pool.gpu.mem_gb} GB` })
+      : t("pooldesc.shape.gpuNoMem", { gpus: gpuPerNode })
+    : "";
+  const desc = t(descKey, { cores: coresPerNode, mem: fmtMB(pool.mem_per_node), shape: gpuShape });
 
   return (
     <SectionCard title={t("section.poolDetail")}>

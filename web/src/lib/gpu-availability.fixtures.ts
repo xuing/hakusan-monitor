@@ -22,8 +22,9 @@ export const CAPTURED_AT = "2026-07-29T06:34:00+09:00";
 
 // ---------------------------------------------------------------------------
 // Measured request defaults. `scontrol show partition` gives DefMemPerCPU;
-// the core count comes from the held-job probe above. These are the numbers
-// backend/cluster_policy.py BUILTIN_PARTITION_DEFAULTS ships.
+// the core count comes from the held-job probe above. In production the same
+// numbers reach the UI as `policy.partition_defaults` (read from the
+// cluster's job_submit.lua + scontrol, verified by scripts/check_cluster_policy.py).
 // ---------------------------------------------------------------------------
 
 /** GPU-1: NumCPUs=26, MinMemoryCPU=9845M, TresPerNode=gres/gpu:1

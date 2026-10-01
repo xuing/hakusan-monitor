@@ -11,7 +11,7 @@ Output is shaped like the Slurm `--json` payloads (`{"nodes":[...]}`,
 fixtures.
 """
 from __future__ import annotations
-import math, os, re, json, time, shlex, subprocess
+import hashlib, math, os, re, json, time, shlex, subprocess
 from datetime import datetime
 
 try:
@@ -21,13 +21,12 @@ except Exception:          # unknown TZ name / missing tzdata -> host localtime
     CLUSTER_TZ = None
 
 try:                       # flat import when run as `python3 backend/server.py`
-    from cluster_policy import (BUILTIN_PARTITION_CAPS, BUILTIN_PARTITION_DEFAULTS,
-                                BUILTIN_PARTITION_POLICIES)
+    from lua_policy import parse_job_submit_lua
 except ImportError:        # package import in tests (`from backend.sources import …`)
-    from backend.cluster_policy import (BUILTIN_PARTITION_CAPS, BUILTIN_PARTITION_DEFAULTS,
-                                        BUILTIN_PARTITION_POLICIES)
+    from backend.lua_policy import parse_job_submit_lua
 
 MARK = "@@HM@@"
+LUA_MARK = "@@HM-LUA@@"
 SEP = "|@|"   # field separator unlikely to occur in any value (e.g. job names)
 # order matters — see parse_queue()
 SQUEUE_FIELDS = ["%i", "%u", "%a", "%P", "%T", "%r", "%D", "%C", "%b", "%V",
@@ -276,58 +275,92 @@ def parse_partition_policies(text):
     return parts
 
 
-def partition_defaults(partitions):
-    """Per-partition request defaults, live values over the built-in table.
+def partition_defaults(partitions, lua, check=None):
+    """What a request with no resource flags gets, per partition.
 
-    Only the memory defaults are collected from Slurm; the *core* default is
-    applied by hakusan's job_submit.lua and is not visible in any scontrol
-    output, so it lives in the built-in table (measured, see cluster_policy).
+    Two sources, neither hard-coded here:
+      * job_submit.lua (lua_policy) — default tasks/CPUs/GPUs, the interactive
+        time limit, whether a --gres request survives the plugin;
+      * scontrol partition — DefMemPerCPU / MaxMemPerCPU.
+    When scripts/check_cluster_policy.py has measured a partition with a held
+    job, the measured CPUs/memory win: Slurm, not our reading of the Lua, is
+    the ground truth (e.g. the Lua's pn_min_memory default is pre-empted by
+    DefMemPerCPU, which the measurement shows and the source does not).
     """
+    measured = ((check or {}).get("partitions") or {})
     out = {}
-    for name in set(BUILTIN_PARTITION_DEFAULTS) | set(partitions):
+    for name in set(lua) | set(partitions):
+        f = lua.get(name) or {}
         live = partitions.get(name) or {}
-        merged = dict(BUILTIN_PARTITION_DEFAULTS.get(name, {}))
+        d = {}
+        if f.get("default_cpus"):
+            d["cores"] = f["default_cpus"]
+        if f.get("default_tasks"):
+            d["tasks"] = f["default_tasks"]
+        if f.get("default_gpus_per_node"):
+            d["gpus_per_node"] = f["default_gpus_per_node"]
+            d["gpu_request_respected"] = bool(f.get("gpu_request_respected"))
+        if f.get("interactive_time_min"):
+            d["interactive_time_min"] = f["interactive_time_min"]
+        if f.get("requires_license"):
+            d["requires_license"] = True
+        if f.get("default_mem_per_node_mb"):
+            d["lua_mem_per_node_mb"] = f["default_mem_per_node_mb"]
         for key in ("def_mem_per_cpu_mb", "max_mem_per_cpu_mb",
                     "def_mem_per_node_mb", "max_mem_per_node_mb"):
             if live.get(key):
-                merged[key] = live[key]
-        if merged:
-            out[name] = merged
+                d[key] = live[key]
+        m = (measured.get(name) or {}).get("measured") or {}
+        if m.get("cpus"):
+            d["cores"] = m["cpus"]
+            d["measured"] = True
+        if m.get("mem_per_cpu_mb"):
+            d["def_mem_per_cpu_mb"] = m["mem_per_cpu_mb"]
+        if d:
+            out[name] = d
     return out
 
 
-def build_policy_snapshot(qos_text, partition_text, now, interval):
-    """Merge the live sacctmgr/scontrol policy over the built-in tables.
+def parse_lua_versions(stat_txt, lua_path):
+    """`stat -c '%Y|%s|%n' job_submit.lua job_submit.lua_*` -> newest first.
 
-    The snapshot always carries a complete caps/policies map (builtins fill any
-    gap), so the frontend never needs its own copy of cluster policy. Each
-    partition is tagged live/builtin so staleness is at least observable.
+    The admins keep the previous file as job_submit.lua_YYMMDD when they
+    change it; the file's own mtime is when that version was written, so the
+    list doubles as a change history (2026-06-11: the --gres check dropped).
+    """
+    out = []
+    for line in stat_txt.splitlines():
+        parts = line.split("|", 2)
+        if len(parts) != 3 or not parts[0].isdigit():
+            continue
+        name = os.path.basename(parts[2])
+        out.append({"name": name, "mtime": int(parts[0]), "size": _int(parts[1]),
+                    "current": parts[2] == lua_path})
+    out.sort(key=lambda v: -v["mtime"])
+    return out
+
+
+def build_policy_snapshot(qos_text, partition_text, now, interval, lua_text="", check=None,
+                          lua_meta=None):
+    """The cluster's partition policy, read only from the cluster.
+
+    Caps and per-user limits come from the partition's QoS (sacctmgr), request
+    defaults from job_submit.lua + scontrol (partition_defaults). Nothing is
+    filled in from built-in tables any more: a value Slurm doesn't state is
+    shown as absent, not guessed — the guesses (e.g. "SMALL: 3 nodes", "GPU-LA:
+    8 GPUs") were how wrong limits reached the UI.
     """
     qos = parse_qos_policies(qos_text)
     partitions = parse_partition_policies(partition_text)
-    live_caps = {}
-    live_policies = {}
+    lua = parse_job_submit_lua(lua_text)
+    caps, policies, origins = {}, {}, {}
     for name, part in partitions.items():
         q = qos.get(part.get("qos", ""))
         if not q:
             continue
-        if q.get("cap"):
-            live_caps[name] = q["cap"]
-        if q.get("policy"):
-            live_policies[name] = q["policy"]
-    caps = {}
-    origins = {}
-    for name in set(BUILTIN_PARTITION_CAPS) | set(live_caps):
-        builtin = dict(BUILTIN_PARTITION_CAPS.get(name, {}))
-        if name in live_caps:
-            # a node limit is a QoS fact or nothing: when the live QoS has no
-            # node= term, the job may span any number of nodes
-            builtin.pop("maxNodes", None)
-        caps[name] = {**builtin, **live_caps.get(name, {})}
-        origins[name] = "live" if name in live_caps else "builtin"
-    policies = {}
-    for name in set(BUILTIN_PARTITION_POLICIES) | set(live_policies):
-        policies[name] = {**BUILTIN_PARTITION_POLICIES.get(name, {}), **live_policies.get(name, {})}
+        caps[name] = dict(q.get("cap") or {})
+        policies[name] = dict(q.get("policy") or {})
+        origins[name] = "live"
     return {
         "generated_at": int(now),
         "interval": int(interval),
@@ -335,8 +368,23 @@ def build_policy_snapshot(qos_text, partition_text, now, interval):
         "partitions": partitions,
         "partition_caps": caps,
         "partition_policies": policies,
-        "partition_defaults": partition_defaults(partitions),
+        "partition_defaults": partition_defaults(partitions, lua, check),
         "cap_origin": origins,
+        "lua": {**(lua_meta or {}), "partitions": lua, "parsed": bool(lua)},
+        "check": _check_summary(check),
+    }
+
+
+def _check_summary(check):
+    """Small, snapshot-sized view of the last verification run."""
+    if not check:
+        return None
+    parts = check.get("partitions") or {}
+    return {
+        "checked_at": check.get("checked_at"),
+        "lua_sha": check.get("lua_sha"),
+        "ok": all(p.get("ok", True) for p in parts.values()),
+        "mismatches": sorted(n for n, p in parts.items() if p.get("ok") is False),
     }
 
 
@@ -495,7 +543,8 @@ def parse_cpu_submit_probes(text):
 class Source:
     def __init__(self, mode="mock", ssh_host="", ssh_opts="",
                  mock_dir="mock", timeout=25, cpu_probe_interval=900,
-                 policy_interval=86400):
+                 policy_interval=86400, policy_cache="", policy_check="",
+                 lua_path="/app/slurm/job_submit.lua"):
         self.mode = mode
         self.ssh_host = ssh_host
         # HM_SSH_HOST accepts a comma-separated preference list
@@ -511,11 +560,16 @@ class Source:
         self.singularity = None
         self.cpu_probes = []
         self.cpu_probe_at = 0
-        # start from the built-in tables so every snapshot carries a complete
-        # policy; the first live sacctmgr round overlays it (policy_at=0 keeps
-        # the collection due immediately)
-        self.policy_snapshot = build_policy_snapshot("", "", time.time(), policy_interval)
+        # Policy is read from the cluster once a day (policy_interval) and the
+        # last good reading is cached on disk, so a restart shows real limits
+        # at once instead of built-in guesses. policy_at=0 keeps a refresh due.
+        self.policy_cache = policy_cache
+        self.policy_check = policy_check
+        self.lua_path = lua_path
+        self.policy_sources = {}
+        self.policy_snapshot = None
         self.policy_at = 0
+        self._load_policy_cache()
 
     def _exec(self, script, timeout=None):
         """Run a shell snippet on the cluster (ssh) or locally."""
@@ -568,20 +622,24 @@ class Source:
         if self.mode == "mock":
             return self._mock("nodes.json"), self._mock("squeue.json")
         now = time.time()
+        check_mtime = self._check_mtime()
+        if check_mtime != getattr(self, "_check_seen", None):
+            self._check_seen = check_mtime
+            self.refresh_check()
         probe_due = not self.cpu_probes or now - self.cpu_probe_at >= self.cpu_probe_interval
         policy_due = self.policy_snapshot is None or now - self.policy_at >= self.policy_interval
         singularity_cmd = ("singularity --version 2>/dev/null || true"
                            if self.singularity is None else "true")
         sep_q = shlex.quote(SEP)
         # The probe's verdict is displayed next to a `salloc -p X` command, and
-        # job_submit.lua pins interactive walltime to 2880 min on every CPU/VM
-        # partition (TINY alone honors -t). Probe with that same walltime so
-        # "starts now" is a statement about the salloc the user will actually
-        # run — with reservations around, walltime decides backfill.
+        # job_submit.lua pins the walltime of interactive jobs per partition
+        # (read from the Lua; a partition without that rule honors -t). Probe
+        # with that same walltime so "starts now" is a statement about the
+        # salloc the user will actually run — walltime decides backfill.
         cpu_probes = "; ".join(
             "out=$(timeout 4s sbatch --test-only -p {p}{t} --wrap=hostname 2>&1); rc=$?; "
             "printf '%s%s%s%s%s\\n' {p} \"$SEP\" \"$rc\" \"$SEP\" \"$out\"".format(
-                p=shlex.quote(p), t="" if p == "TINY" else " -t 2-00:00:00")
+                p=shlex.quote(p), t=self._interactive_t_flag(p))
             for p in CPU_TEST_PARTITIONS)
         cpu_probe_cmd = f"SEP={sep_q}; {cpu_probes}" if probe_due else "true"
         qos_cmd = (
@@ -591,6 +649,13 @@ class Source:
         ) if policy_due else "true"
         partition_cmd = (
             "timeout 8s scontrol -o show partition 2>/dev/null || true"
+        ) if policy_due else "true"
+        # job_submit.lua and its admin backups (job_submit.lua_YYMMDD): the
+        # rules the submit plugin applies, plus when they last changed.
+        lua_q = shlex.quote(self.lua_path)
+        lua_cmd = (
+            f"(stat -c '%Y|%s|%n' {lua_q} {lua_q}_* 2>/dev/null || true); echo {LUA_MARK}; "
+            f"(cat {lua_q} 2>/dev/null || true)"
         ) if policy_due else "true"
         # Core reads must succeed: a later optional command must never turn a
         # controller failure into a healthy-looking empty cluster/queue.
@@ -609,21 +674,106 @@ class Source:
                          f"{singularity_cmd}; echo {MARK}; "
                          f"{cpu_probe_cmd}; echo {MARK}; "
                          f"{qos_cmd}; echo {MARK}; "
-                         f"{partition_cmd}")
-        sections = (out.split(MARK) + ["", "", "", "", "", "", ""])[:8]
-        nodes_txt, queue_txt, containers_txt, reqtres_txt, sing_txt, cpu_probe_txt, qos_txt, partition_txt = sections
+                         f"{partition_cmd}; echo {MARK}; "
+                         f"{lua_cmd}")
+        sections = (out.split(MARK) + [""] * 9)[:9]
+        (nodes_txt, queue_txt, containers_txt, reqtres_txt, sing_txt, cpu_probe_txt,
+         qos_txt, partition_txt, lua_section) = sections
         if self.singularity is None and "version" in sing_txt:
             self.singularity = sing_txt.split("version", 1)[-1].strip()
         if probe_due:
             self.cpu_probes = parse_cpu_submit_probes(cpu_probe_txt)
             self.cpu_probe_at = now
         if policy_due and (qos_txt.strip() or partition_txt.strip()):
-            self.policy_snapshot = build_policy_snapshot(qos_txt, partition_txt, now, self.policy_interval)
-            self.policy_at = now
+            stat_txt, _, lua_txt = lua_section.partition(LUA_MARK)
+            self._set_policy(qos_txt.strip("\n"), partition_txt.strip("\n"),
+                             lua_txt.lstrip("\n"), stat_txt.strip(), now)
         queue = parse_queue(queue_txt, parse_containers(containers_txt), parse_pending_reqtres(reqtres_txt))
         queue["cpu_submit_probes"] = self.cpu_probes
         queue["cpu_submit_probes_generated_at"] = int(self.cpu_probe_at) if self.cpu_probe_at else 0
         return parse_nodes(nodes_txt), queue
+
+    def _interactive_t_flag(self, partition):
+        d = ((self.policy_snapshot or {}).get("partition_defaults") or {}).get(partition) or {}
+        minutes = d.get("interactive_time_min")
+        return f" -t {minutes}" if minutes else ""
+
+    def _check_mtime(self):
+        try:
+            return os.path.getmtime(self.policy_check) if self.policy_check else 0
+        except OSError:
+            return 0
+
+    # ---- policy sources --------------------------------------------------
+    def _set_policy(self, qos_txt, partition_txt, lua_txt, stat_txt, now):
+        versions = parse_lua_versions(stat_txt, self.lua_path)
+        current = next((v for v in versions if v["current"]), None)
+        lua_meta = {
+            "path": self.lua_path,
+            "sha": hashlib.sha256(lua_txt.encode()).hexdigest()[:12] if lua_txt else "",
+            "mtime": current["mtime"] if current else 0,
+            "versions": versions,
+        }
+        self.policy_sources = {"qos": qos_txt, "partitions": partition_txt, "lua": lua_txt,
+                               "fetched_at": int(now)}
+        self.policy_snapshot = build_policy_snapshot(
+            qos_txt, partition_txt, now, self.policy_interval,
+            lua_text=lua_txt, check=self._read_check(), lua_meta=lua_meta)
+        self.policy_at = now
+        self._save_policy_cache()
+
+    def refresh_check(self):
+        """Re-apply the latest verification report without refetching."""
+        src = self.policy_sources
+        if not src or self.policy_snapshot is None:
+            return
+        meta = {k: v for k, v in (self.policy_snapshot.get("lua") or {}).items()
+                if k not in ("partitions", "parsed")}
+        self.policy_snapshot = build_policy_snapshot(
+            src.get("qos", ""), src.get("partitions", ""), self.policy_snapshot["generated_at"],
+            self.policy_interval, lua_text=src.get("lua", ""), check=self._read_check(),
+            lua_meta=meta)
+
+    def _read_check(self):
+        if not self.policy_check or not os.path.exists(self.policy_check):
+            return None
+        try:
+            with open(self.policy_check) as f:
+                return json.load(f)
+        except (OSError, ValueError):
+            return None
+
+    def _save_policy_cache(self):
+        if not self.policy_cache:
+            return
+        try:
+            os.makedirs(os.path.dirname(self.policy_cache) or ".", exist_ok=True)
+            tmp = self.policy_cache + ".tmp"
+            with open(tmp, "w") as f:
+                json.dump({"sources": self.policy_sources,
+                           "lua_meta": {k: v for k, v in self.policy_snapshot["lua"].items()
+                                        if k not in ("partitions", "parsed")}}, f)
+            os.replace(tmp, self.policy_cache)
+        except OSError:
+            pass
+
+    def _load_policy_cache(self):
+        if not self.policy_cache or not os.path.exists(self.policy_cache):
+            return
+        try:
+            with open(self.policy_cache) as f:
+                cached = json.load(f)
+        except (OSError, ValueError):
+            return
+        src = cached.get("sources") or {}
+        if not (src.get("qos") or src.get("partitions")):
+            return
+        self.policy_sources = src
+        self.policy_snapshot = build_policy_snapshot(
+            src.get("qos", ""), src.get("partitions", ""), src.get("fetched_at") or time.time(),
+            self.policy_interval, lua_text=src.get("lua", ""), check=self._read_check(),
+            lua_meta=cached.get("lua_meta"))
+        # cached data is shown immediately but still refreshed on the first cycle
 
     @staticmethod
     def slurm_version(nodes_json):

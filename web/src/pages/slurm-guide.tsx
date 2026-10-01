@@ -4,9 +4,11 @@ import { useCopied } from "@/hooks/use-copied";
 import { SectionCard } from "@/components/common/section-card";
 import { Tag } from "@/components/common/tag";
 import { Button } from "@/components/ui/button";
+import { useLive } from "@/hooks/live-context";
 import { useT, type TFn, type TranslationKey } from "@/i18n";
-import type { Tone } from "@/lib/slurm";
+import { interactiveForcedLabel, partitionDefaults, type Tone } from "@/lib/slurm";
 import { cn } from "@/lib/utils";
+import type { Snapshot } from "@/types/snapshot";
 
 // Language-neutral data: the shell text and tone are the same in every language.
 // All prose (titles, details, tips) lives in i18n under guide.* — see en.ts.
@@ -78,8 +80,31 @@ const PTY_STEPS: { key: "1" | "2" | "3"; command: string }[] = [
   { key: "3", command: "scancel $JOB" },
 ];
 
+/** The interactive walltime(s) job_submit.lua pins on the GPU partitions,
+ *  read from the live policy ("12h", or "12h / 2d" should they ever differ);
+ *  "" when the policy is not loaded. */
+function gpuForcedLabels(snap: Snapshot | null): string {
+  if (!snap) return "";
+  const labels = new Set<string>();
+  for (const p of snap.partitions) {
+    if (p.kind !== "gpu") continue;
+    const label = interactiveForcedLabel(p.name, snap.policy);
+    if (label) labels.add(label);
+  }
+  return [...labels].join(" / ");
+}
+
 export default function SlurmGuidePage() {
   const t = useT();
+  const { snap } = useLive();
+  const gpuForced = gpuForcedLabels(snap);
+  // the GPU template submits to GPU-1 — say what the plugin gives it today
+  const gpu1Gpus = partitionDefaults("GPU-1", snap?.policy).gpus_per_node;
+  const commandVars: Record<string, Record<string, string | number>> = {
+    gputpl: { n: gpu1Gpus ?? 0 },
+  };
+  const commandDetailKey = (key: string): TranslationKey =>
+    key === "gputpl" && !gpu1Gpus ? "guide.cmd.gputpl.detailNoData" : `guide.cmd.${key}.detail` as TranslationKey;
   // react-router doesn't scroll to #anchors on navigation
   useEffect(() => {
     const id = window.location.hash.slice(1);
@@ -122,14 +147,16 @@ export default function SlurmGuidePage() {
       <SectionCard title={t("guide.commandsTitle")}>
         <div className="grid items-start gap-3 lg:grid-cols-2">
           {COMMANDS.map((cmd) => (
-            <CommandCard key={cmd.key} item={cmd} t={t} />
+            <CommandCard key={cmd.key} item={cmd} t={t} detailKey={commandDetailKey(cmd.key)} vars={commandVars[cmd.key]} />
           ))}
         </div>
       </SectionCard>
 
       <div id="pty" className="scroll-mt-16">
         <SectionCard title={t("guide.pty.title")}>
-          <p className="max-w-4xl text-sm text-muted-foreground">{t("guide.pty.lead")}</p>
+          <p className="max-w-4xl text-sm text-muted-foreground">
+            {t("guide.pty.lead", { forced: gpuForced || t("guide.pty.forcedUnknown") })}
+          </p>
           <div className="mt-3 space-y-3">
             {PTY_STEPS.map((step) => (
               <PtyStep key={step.key} step={step} t={t} />
@@ -189,7 +216,12 @@ function PtyStep({ step, t }: { step: { key: "1" | "2" | "3"; command: string };
   );
 }
 
-function CommandCard({ item, t }: { item: Command; t: TFn }) {
+function CommandCard({ item, t, detailKey, vars }: {
+  item: Command;
+  t: TFn;
+  detailKey: TranslationKey;
+  vars?: Record<string, string | number>;
+}) {
   const [copied, copy] = useCopied();
 
   return (
@@ -197,7 +229,7 @@ function CommandCard({ item, t }: { item: Command; t: TFn }) {
       <div className="mb-2 flex items-start justify-between gap-2">
         <div>
           <div className="font-semibold">{t(`guide.cmd.${item.key}.title` as TranslationKey)}</div>
-          <p className="mt-0.5 text-xs text-muted-foreground">{t(`guide.cmd.${item.key}.detail` as TranslationKey)}</p>
+          <p className="mt-0.5 text-xs text-muted-foreground">{t(detailKey, vars)}</p>
         </div>
         {item.tone && <Tag tone={item.tone}>{item.tone}</Tag>}
       </div>

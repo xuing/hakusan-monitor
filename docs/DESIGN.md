@@ -236,9 +236,8 @@ mixing them up produced a shipped bug: three completely empty H100 nodes read
 | `VM-GPU-L` | 32 cores x 14900 MB = 476800 MB | `mem=480G` | 469070 MB / 1 GPU |
 
 The backend now collects both: `DefMemPerCPU` live from `scontrol show
-partition`, and the submit plugin's core count from the measured table in
-`backend/cluster_policy.py` (`BUILTIN_PARTITION_DEFAULTS`, with the exact probe
-commands recorded there). They ship as `policy.partition_defaults`.
+partition`, and the submit plugin's core count from `job_submit.lua` itself
+(§11). They ship as `policy.partition_defaults`.
 
 **Two rules keep the verdicts honest.**
 
@@ -277,3 +276,45 @@ headers and pool KPIs, so no screen can colour a pool differently from another.
 `gpu-availability.test.ts` pins each display mode to one of them, running the
 real adapter → classifier path. Nothing is hand-tuned to make a rule pass; a
 failure means the rules changed, not that a fixture drifted.
+
+## 11. v6 — cluster policy read from the cluster, never hard-coded
+
+No limit or default lives in this repository any more. Every number the UI
+states about a partition comes from one of three cluster sources, read once a
+day (`HM_POLICY_INTERVAL`) and cached in `data/cluster_policy.json` so a
+restart shows real values at once:
+
+| source | read with | gives |
+|---|---|---|
+| QoS | `sacctmgr show qos` | caps (cores, memory, GPUs, nodes, wall), per-user and group concurrency |
+| partitions | `scontrol show partition` | QoS wiring, DefMemPerCPU / MaxMemPerCPU |
+| submit plugin | `cat /app/slurm/job_submit.lua` (+ `stat` of its `_YYMMDD` backups) | default tasks/CPUs/GPUs, forced interactive walltime, license requirement, whether a GPU request survives |
+
+`backend/lua_policy.py` parses the Lua literally: comments are stripped first
+(they contradict the code — "-- 12 hours" above `max_time = 2880`), then only
+plain assignments inside each `job_desc.partition == "NAME"` branch count.
+A value no source states is absent, and the UI shows it as absent: the old
+built-in tables invented "SMALL: 3 nodes" and "GPU-LA: 8 GPUs", neither of
+which Slurm enforces.
+
+Reading Lua is still interpretation, so `scripts/check_cluster_policy.py`
+verifies it against Slurm every day (`deploy/hakusan-monitor-policy-check.timer`):
+one held job per partition (`sbatch -H`, cancelled at once) plus a
+`--gres=gpu:2` job on GPU partitions, compared with the expected values. The
+report (`data/policy_check.json`) feeds back into the snapshot — measured CPUs
+and memory win over the Lua reading — and is shown on the project page with
+the raw source texts (`GET /api/policy-source`).
+
+What the first run (2026-10-01) established:
+
+- All 17 probeable partitions match the reading (7 Materials Studio
+  partitions need `-L` and are skipped).
+- The Lua's `pn_min_memory` defaults are never applied: DefMemPerCPU is set
+  before the plugin runs, so its `== NO_VAL` test is false.
+- Every GPU partition overwrites the GPU count with 1 per node. The plugin
+  version of 2026-06-11 dropped `job_desc.gres ~= nil` from the "user asked
+  for GPUs" test; `job_desc.gpus` / `gpus_per_node`, which remain, are not
+  fields Slurm fills from `--gres` / `--gpus-per-node`. sacct shows 296 jobs
+  with >1 GPU/node before that date and one after (it used `--exclusive`,
+  which still gets the whole node).
+

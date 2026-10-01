@@ -100,7 +100,15 @@ class TresPolicyTests(unittest.TestCase):
             "DefMemPerCPU=14900 MaxMemPerCPU=14900"
         )
 
-        snap = build_policy_snapshot(qos_text, partition_text, now=123, interval=86400)
+        lua_text = (
+            'function slurm_job_submit(job_desc, part_list, submit_uid)\n'
+            '  if (job_desc.partition == "VM-GPU-L") then\n'
+            '    if (job_desc.min_cpus == slurm.NO_VAL) then job_desc.min_cpus = 32 end\n'
+            '    if not has_gpu then job_desc.gres = "gpu:1" end\n'
+            '  end\nend\n'
+        )
+
+        snap = build_policy_snapshot(qos_text, partition_text, now=123, interval=86400, lua_text=lua_text)
         defaults = snap["partition_defaults"]["VM-GPU-L"]
 
         self.assertEqual(defaults["cores"], 32)
@@ -110,12 +118,30 @@ class TresPolicyTests(unittest.TestCase):
         # 32 x 14900 = 476800 MB, more than a gl0x node's 469070 MB RealMemory.
         self.assertGreater(defaults["cores"] * defaults["def_mem_per_cpu_mb"], 469070)
 
-    def test_partition_defaults_fall_back_to_the_builtin_table(self):
-        # No live partition text at all (first cycle / scontrol timeout).
+    def test_no_source_means_no_invented_limits(self):
+        # Nothing read from the cluster yet: no caps, no defaults — the UI
+        # shows "unknown" rather than a built-in guess (the guesses were how
+        # "SMALL: 3 nodes" and "GPU-LA: 8 GPU" reached the page).
         snap = build_policy_snapshot("", "", now=1, interval=1)
 
-        self.assertEqual(snap["partition_defaults"]["GPU-1"],
-                         {"cores": 26, "def_mem_per_cpu_mb": 9845, "gpus_per_node": 1})
+        self.assertEqual(snap["partition_caps"], {})
+        self.assertEqual(snap["partition_defaults"], {})
+
+    def test_measured_defaults_override_the_lua_reading(self):
+        # The Lua sets pn_min_memory, but DefMemPerCPU is applied first, so the
+        # held-job measurement (check report) is what the UI must use.
+        lua_text = ('function slurm_job_submit(j)\n if (job_desc.partition == "DEF") then\n'
+                    '  job_desc.min_cpus = 16\n  job_desc.pn_min_memory = 98304\n end\nend\n')
+        partition_text = "PartitionName=DEF QoS=def DefMemPerCPU=6000 MaxMemPerCPU=6000"
+        check = {"checked_at": 5, "partitions": {"DEF": {"ok": True, "measured": {"cpus": 16, "mem_per_cpu_mb": 6000}}}}
+
+        snap = build_policy_snapshot("def|cpu=64|||||", partition_text, now=1, interval=1,
+                                     lua_text=lua_text, check=check)
+        d = snap["partition_defaults"]["DEF"]
+
+        self.assertEqual((d["cores"], d["def_mem_per_cpu_mb"], d["lua_mem_per_node_mb"]), (16, 6000, 98304))
+        self.assertTrue(d["measured"])
+        self.assertEqual(snap["check"], {"checked_at": 5, "lua_sha": None, "ok": True, "mismatches": []})
 
 
 class QueueParserTests(unittest.TestCase):

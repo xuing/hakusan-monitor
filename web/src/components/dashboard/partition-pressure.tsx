@@ -24,14 +24,17 @@ import {
   cpuProbeLabel,
   cpuProbeTone,
   fmtPolicyLimit,
+  gpuPluginNote,
   policyLimitRows,
 } from "@/lib/policy-hints";
 import {
   allowsMultiNode,
+  defaultRequestSec,
+  effectiveGpuLimit,
   isMaterialsStudioPartition,
-  interactiveForcedSec,
   matchPartition,
   partitionCap,
+  partitionDefaults,
   partitionPolicy as slurmPartitionPolicy,
   type PartitionCap,
 } from "@/lib/slurm";
@@ -84,13 +87,16 @@ function availableNodes(p: Partition) {
 // multi-node CPU jobs by free *whole* nodes (they need contiguous nodes to start).
 type Hero = { n: number; unit: "cores" | "gpu" | "nodes"; capped: boolean };
 
-function requestableNow(p: Partition, cap: PartitionCap, isGpu: boolean, pc: PoolCapacity, gpuSchedulable: number | null, probeCores?: number): Hero {
+function requestableNow(p: Partition, cap: PartitionCap, isGpu: boolean, pc: PoolCapacity, gpuSchedulable: number | null,
+                        probeCores?: number, jobGpus?: number): Hero {
   if (isGpu) {
     const free = p.gpu?.free ?? 0;
     // agree with the Overview verdict: a free GPU stranded on a node whose
     // leftover CPU/mem can't host the default request is NOT requestable
     const sched = Math.min(gpuSchedulable ?? free, free);
-    return { n: Math.min(cap.maxGpus ?? sched, sched), unit: "gpu", capped: false };
+    // ...and never more than one job can hold (QoS gres cap, or the GPUs the
+    // submit plugin pins per node x the node cap)
+    return { n: Math.min(jobGpus ?? sched, sched), unit: "gpu", capped: false };
   }
   // A real `sbatch --test-only` probe already reports the exact core count
   // Slurm will hand out — trust it over a derived "N idle whole nodes"
@@ -200,7 +206,7 @@ export function PartitionPressure() {
                       p.name,
                       pendingActive,
                       nowMs,
-                      interactiveForcedSec(p.name, true) ?? Number.POSITIVE_INFINITY,
+                      defaultRequestSec(p.name, snap.policy),
                     ),
                   ] as const)
                 : [],
@@ -244,7 +250,7 @@ export function PartitionPressure() {
                       gpuSlotsFor={(p) => gpuAvailByPartition.get(p.name)?.ready ?? null}
                       gpuClearFor={(p) =>
                         gpuAdviceByPartition.has(p.name)
-                          ? fitHasClearSlot(gpuAdviceByPartition.get(p.name)!.fit, pendingActive, nowMs, 720 * 60)
+                          ? fitHasClearSlot(gpuAdviceByPartition.get(p.name)!.fit, pendingActive, nowMs, defaultRequestSec(p.name, snap.policy))
                           : null
                       }
                       gpuStrandedFor={(p) => {
@@ -528,13 +534,21 @@ function PartitionRow({
   const gpuTip = gpuAdvice?.gpuTip ?? null;
   const backfillTip = gpuAdvice?.backfillTip ?? null;
   const cap = partitionCap(p.name, policy);
+  const defaults = partitionDefaults(p.name, policy);
+  const gpuLimit = effectiveGpuLimit(cap, defaults);
   const probeState = cpuProbe
     ? cpuProbeState(cpuProbe.probe, probeGeneratedAt, observedAt, probeMaxAge)
     : null;
   const hero = requestableNow(
     p, cap, isGpu, pc, gpuSchedulable,
     probeState === "now" ? cpuProbe?.cores : undefined,
+    isGpu ? gpuLimit.total : undefined,
   );
+  // What the plugin does to GPU requests today, from the cluster's own
+  // job_submit.lua — the static description must never promise a count.
+  const gpuNote = isGpu && gpuLimit.forced && gpuLimit.perNode
+    ? gpuPluginNote(gpuLimit.perNode, p.spec.gpu_per_node, t)
+    : "";
   // gpuClear === false means every free GPU slot is claimed by queued jobs
   // (or the node is PLANNED) — "can allocate" would be a false promise.
   const canRun = !maint && !groupLimitReached && (probeState ? probeState === "now" : hero.n > 0 && gpuClear !== false);
@@ -596,7 +610,7 @@ function PartitionRow({
               )}
             </span>
             <span className="font-mono text-xs text-muted-foreground">
-              {t("part.policyLimit")} {fmtPolicyLimit(cap, isGpu, t, p.name, p.spec.mem_per_node) || "—"}
+              {t("part.policyLimit")} {fmtPolicyLimit(cap, isGpu, t, p.name, p.spec.mem_per_node, policy) || "—"}
             </span>
             <span className={cn("font-mono text-xs", p.jobs.pending > 0 ? "text-warn-fg" : "text-muted-foreground")}>
               {t("part.run")}{nf(p.jobs.running)} {t("part.pend")}{nf(p.jobs.pending)}
@@ -605,7 +619,10 @@ function PartitionRow({
               )}
             </span>
           </div>
-          <div className="mt-0.5 truncate text-xs text-muted-foreground/80">{t(labelPolicy.desc)}</div>
+          <div className="mt-0.5 text-xs text-muted-foreground/80">
+            {t(labelPolicy.desc)}
+            {gpuNote && <> {gpuNote}</>}
+          </div>
           {gpuTip && (
             <div className="mt-0.5 text-xs text-warn-fg">
               {t("pool.quickGpuMemHint", { mem: gpuTip.mem })} · {gpuTip.node}

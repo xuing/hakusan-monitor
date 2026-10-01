@@ -1,5 +1,16 @@
 import { describe, expect, it } from "vitest";
-import { allowsMultiNode, effectiveJobMemGb, effectiveMemPerNodeGb } from "./slurm";
+import {
+  allowsMultiNode,
+  defaultRequestSec,
+  effectiveGpuLimit,
+  effectiveJobMemGb,
+  effectiveMemPerNodeGb,
+  fmtWallMinutes,
+  interactiveForcedLabel,
+  interactiveForcedSec,
+  minutesToSlurmTime,
+} from "./slurm";
+import type { PolicySnapshot } from "@/types/snapshot";
 
 // Measured 2026-07-11 on Hakusan: GPU-S QOS MaxTRES mem=512G, node
 // RealMemory=515306MB (~503G). `sbatch --mem=512G` fails at submit with
@@ -47,5 +58,88 @@ describe("effective memory ceilings", () => {
     expect(effectiveMemPerNodeGb({ maxMemGb: 512 }, undefined)).toBe(512);
     expect(effectiveJobMemGb({ maxMemGb: 512 }, undefined)).toBe(512);
     expect(effectiveJobMemGb({}, 515306)).toBeUndefined();
+  });
+});
+
+// Live policy block, 2026-10-01 (job_submit.lua sha d21dc093ba03 + sacctmgr).
+// The frontend owns none of these numbers: every test below feeds them in.
+const POLICY: PolicySnapshot = {
+  generated_at: 0,
+  interval: 86400,
+  partition_caps: {
+    "GPU-1": { maxCores: 26, maxMemGb: 256, maxGpus: 1, maxNodes: 1, wall: "7d" },
+    "GPU-S": { maxCores: 52, maxMemGb: 512, maxGpus: 2, maxNodes: 1, wall: "5d" },
+    "GPU-L": { maxCores: 208, maxMemGb: 2048, maxGpus: 8, wall: "3d" },
+    "GPU-1A": { maxCores: 26, maxMemGb: 256, maxNodes: 1, wall: "7d" },
+    "GPU-LA": { maxCores: 208, maxMemGb: 2048, wall: "3d" },
+    TINY: { maxCores: 16, maxMemGb: 96, maxNodes: 1, wall: "30m" },
+    DEF: { maxCores: 64, maxMemGb: 384, maxNodes: 1, wall: "7d" },
+  },
+  partition_policies: {},
+  partition_defaults: {
+    "GPU-1": { cores: 26, gpus_per_node: 1, gpu_request_respected: false, interactive_time_min: 720 },
+    "GPU-S": { cores: 26, gpus_per_node: 1, gpu_request_respected: false, interactive_time_min: 720 },
+    "GPU-L": { cores: 26, gpus_per_node: 1, gpu_request_respected: false, interactive_time_min: 720 },
+    "GPU-1A": { cores: 26, gpus_per_node: 1, gpu_request_respected: false, interactive_time_min: 720 },
+    "GPU-LA": { cores: 26, gpus_per_node: 1, gpu_request_respected: false, interactive_time_min: 720 },
+    TINY: { cores: 16 },
+    DEF: { cores: 16, interactive_time_min: 2880 },
+  },
+};
+
+describe("plugin-forced interactive walltime", () => {
+  it("reads the pinned minutes per partition from the policy", () => {
+    expect(interactiveForcedSec("GPU-1", POLICY)).toBe(720 * 60);
+    expect(interactiveForcedSec("DEF", POLICY)).toBe(2880 * 60);
+    expect(interactiveForcedLabel("GPU-1", POLICY)).toBe("12h");
+    expect(interactiveForcedLabel("DEF", POLICY)).toBe("2d");
+  });
+
+  it("treats an absent rule as 'honours -t', never as a remembered constant", () => {
+    expect(interactiveForcedSec("TINY", POLICY)).toBeNull();
+    expect(interactiveForcedLabel("TINY", POLICY)).toBeNull();
+    // no policy at all (mock mode / cold cache): nothing is forced
+    expect(interactiveForcedSec("GPU-1", undefined)).toBeNull();
+    expect(interactiveForcedSec("DEF", { ...POLICY, partition_defaults: undefined })).toBeNull();
+  });
+
+  it("labels any minute count sensibly", () => {
+    expect(fmtWallMinutes(720)).toBe("12h");
+    expect(fmtWallMinutes(2880)).toBe("2d");
+    expect(fmtWallMinutes(90)).toBe("1h30m");
+    expect(fmtWallMinutes(30)).toBe("30m");
+    expect(fmtWallMinutes(1440)).toBe("1d");
+    expect(minutesToSlurmTime(720)).toBe("12:00:00");
+    expect(minutesToSlurmTime(2880)).toBe("2-00:00:00");
+    expect(minutesToSlurmTime(90)).toBe("01:30:00");
+  });
+
+  it("judges a default request by the pinned walltime, else the QoS wall", () => {
+    expect(defaultRequestSec("GPU-1", POLICY)).toBe(720 * 60);
+    expect(defaultRequestSec("TINY", POLICY)).toBe(30 * 60);
+    expect(defaultRequestSec("GPU-1", undefined)).toBe(Number.POSITIVE_INFINITY);
+  });
+});
+
+describe("effective GPU limit", () => {
+  const limit = (p: string) => effectiveGpuLimit(POLICY.partition_caps[p], POLICY.partition_defaults![p]);
+
+  it("is the plugin's per-node pin x the node cap when the plugin overwrites --gres", () => {
+    // GPU-S QoS says 2 GPUs, but --gres=gpu:2 measured as 1 GPU on 1 node
+    expect(limit("GPU-S")).toEqual({ perNode: 1, total: 1, forced: true });
+    expect(limit("GPU-1")).toEqual({ perNode: 1, total: 1, forced: true });
+    // multi-node: the QoS gres cap still bounds the total
+    expect(limit("GPU-L")).toEqual({ perNode: 1, total: 8, forced: true });
+  });
+
+  it("does not invent a total where neither the QoS nor a node cap gives one", () => {
+    expect(limit("GPU-1A")).toEqual({ perNode: 1, total: 1, forced: true });
+    expect(limit("GPU-LA")).toEqual({ perNode: 1, total: undefined, forced: true });
+  });
+
+  it("falls back to the QoS gres cap when the plugin honours the request", () => {
+    expect(effectiveGpuLimit({ maxGpus: 2 }, { gpus_per_node: 1, gpu_request_respected: true })).toEqual({ total: 2, forced: false });
+    expect(effectiveGpuLimit({ maxGpus: 2 }, undefined)).toEqual({ total: 2, forced: false });
+    expect(effectiveGpuLimit({}, undefined)).toEqual({ total: undefined, forced: false });
   });
 });
