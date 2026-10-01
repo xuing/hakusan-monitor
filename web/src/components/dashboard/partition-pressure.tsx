@@ -24,7 +24,6 @@ import {
   cpuProbeLabel,
   cpuProbeTone,
   fmtPolicyLimit,
-  gpuPluginNote,
   policyLimitRows,
 } from "@/lib/policy-hints";
 import {
@@ -544,11 +543,6 @@ function PartitionRow({
     probeState === "now" ? cpuProbe?.cores : undefined,
     isGpu ? gpuLimit.total : undefined,
   );
-  // What the plugin does to GPU requests today, from the cluster's own
-  // job_submit.lua — the static description must never promise a count.
-  const gpuNote = isGpu && gpuLimit.forced && gpuLimit.perNode
-    ? gpuPluginNote(gpuLimit.perNode, p.spec.gpu_per_node, t)
-    : "";
   // gpuClear === false means every free GPU slot is claimed by queued jobs
   // (or the node is PLANNED) — "can allocate" would be a false promise.
   const canRun = !maint && !groupLimitReached && (probeState ? probeState === "now" : hero.n > 0 && gpuClear !== false);
@@ -621,7 +615,6 @@ function PartitionRow({
           </div>
           <div className="mt-0.5 text-xs text-muted-foreground/80">
             {t(labelPolicy.desc)}
-            {gpuNote && <> {gpuNote}</>}
           </div>
           {gpuTip && (
             <div className="mt-0.5 text-xs text-warn-fg">

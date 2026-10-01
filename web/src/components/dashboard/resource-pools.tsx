@@ -19,7 +19,6 @@ import {
   cpuProbeLabel,
   cpuProbeTone,
   fmtPolicyLimit,
-  gpuPluginNote,
   policyLimitRows,
 } from "@/lib/policy-hints";
 import {
@@ -43,7 +42,7 @@ import {
   type GpuFitNode,
   type GpuFitTipData,
 } from "@/lib/gpu-fit";
-import { allowsMultiNode, defaultRequestSec, effectiveGpuLimit, effectiveMemPerNodeGb, interactiveForcedLabel, interactiveForcedSec, isMaterialsStudioPartition, matchPool, minutesToSlurmTime, partitionCap, partitionDefaultRequest, partitionDefaults, partitionPolicy, type PartitionPolicy, type Tone } from "@/lib/slurm";
+import { allowsMultiNode, defaultRequestSec, effectiveMemPerNodeGb, interactiveForcedLabel, interactiveForcedSec, isMaterialsStudioPartition, matchPool, minutesToSlurmTime, partitionCap, partitionDefaultRequest, partitionDefaults, partitionPolicy, type PartitionPolicy, type Tone } from "@/lib/slurm";
 import { cn } from "@/lib/utils";
 import { cpuProbeMaxAge, cpuProbeRows, cpuProbeState, type CpuProbeRow } from "@/lib/cpu-probes";
 import { buildRequestCommand, shouldShowGapShell } from "@/lib/request-command";
@@ -362,11 +361,7 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
   const layouts = layoutResult?.layouts ?? [];
   const layout = layouts.length > 1 ? layouts.find((l) => l.key === gpuKey) ?? null : null;
   const multiGpu = !!layout && layout.gpus > 1;
-  // siblings in this pool that can hand out a whole node's GPUs
-  const fullNodeAlt = isGpu && gpuShape.gpus > 1 && layoutResult?.fullNodeBlocked
-    ? pool.partitions.filter((p) => p !== partition
-        && layoutFor(p).layouts.some((l) => l.nodes === 1 && l.gpus === gpuShape.gpus))
-    : [];
+
   const gpuFit = snap && isGpu ? gpuFitSnapshot(snap, pool, cap, partition) : null;
   const memRaw = mem.trim();
   const normalizedMem = normalizeMem(memRaw);
@@ -520,12 +515,8 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
   });
   const policyName = trMaybe(t, `policy.${partition}`, partition);
   const policyDescBase = trMaybe(t, `policy.${partition}.desc`, "");
-  // what the plugin does to GPU requests today, from the cluster's job_submit.lua
-  const gpuLimit = effectiveGpuLimit(cap, partitionDefaults(partition, snap?.policy));
-  const gpuNote = isGpu && gpuLimit.forced && gpuLimit.perNode
-    ? gpuPluginNote(gpuLimit.perNode, selectedPart?.spec.gpu_per_node ?? 0, t)
-    : "";
-  const policyDesc = [policyDescBase, multiGpu && layout?.exclusive ? "" : gpuNote].filter(Boolean).join(" ");
+  // Multi-GPU is a rare need: everything about it lives under 高级参数.
+  const policyDesc = policyDescBase;
   const limitText = fmtPolicyLimit(cap, isGpu, t, partition, undefined, snap?.policy);
   const policyLimit = limitText ? `${t("part.policyLimit")} ${limitText}` : "";
   // the scatter warning is about the implicit multi-node DEFAULT — once the
@@ -618,27 +609,6 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
                 ))}
               </div>
             </Field>
-            {layouts.length > 1 && (
-              <Field label={t("pool.gpuLayout")}>
-                <select value={layout?.key ?? "1"} onChange={(e) => setGpuKey(e.target.value)} className={fieldCls}>
-                  <option value="1">{t("pool.gpuLayoutOne")}</option>
-                  {layouts.some((l) => l.gpus > 1 && l.packed) && (
-                    <optgroup label={t("pool.gpuLayoutGroupPacked")}>
-                      {layouts.filter((l) => l.gpus > 1 && l.packed).map((l) => (
-                        <option key={l.key} value={l.key}>{gpuLayoutLabel(l, t)}</option>
-                      ))}
-                    </optgroup>
-                  )}
-                  {layouts.some((l) => l.gpus > 1 && !l.packed) && (
-                    <optgroup label={t("pool.gpuLayoutGroupSpread")}>
-                      {layouts.filter((l) => l.gpus > 1 && !l.packed).map((l) => (
-                        <option key={l.key} value={l.key}>{gpuLayoutLabel(l, t)}</option>
-                      ))}
-                    </optgroup>
-                  )}
-                </select>
-              </Field>
-            )}
             {mode === "script" && (
               <Field label={t("pool.scriptFile")}>
                 <input value={scriptFile} onChange={(e) => setScriptFile(e.target.value)} className={fieldCls} />
@@ -675,27 +645,6 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
                 fit details, and group-full has its own dedicated sentence */}
             {shownHint?.detail && (!showGpuFitDetails || multiGpu) && !groupLimitReached && (
               <div className="mt-1 text-xs leading-relaxed text-muted-foreground">{shownHint.detail}</div>
-            )}
-            {/* multi-GPU notes: why --exclusive (hidden once the plugin honours
-                --gres again — layout.exclusive turns false by itself), the
-                interconnect, and the cost of spreading one GPU per node */}
-            {multiGpu && layout?.exclusive && (
-              <div className="mt-1 text-xs leading-relaxed text-warn-fg">
-                {t("pool.gpuExclusiveWhy", { per: gpuShape.gpus, cores: gpuShape.cores })}
-              </div>
-            )}
-            {multiGpu && gpuShape.gpus > 1 && (
-              <div className="mt-1 text-xs leading-relaxed text-muted-foreground">{t("pool.gpuNoNvlink")}</div>
-            )}
-            {multiGpu && layout && !layout.packed && (
-              <div className="mt-1 text-xs leading-relaxed text-warn-fg">{t("pool.gpuSpreadWarn")}</div>
-            )}
-            {!multiGpu && fullNodeAlt.length > 0 && layoutResult?.fullNodeBlocked && (
-              <div className="mt-1 text-xs leading-relaxed text-muted-foreground">
-                {layoutResult.fullNodeBlocked === "gpus"
-                  ? t("pool.gpuFullNodeGpus", { per: gpuShape.gpus, max: cap.maxGpus ?? 1, alt: fullNodeAlt.join(" / ") })
-                  : t("pool.gpuFullNodeCores", { per: gpuShape.gpus, cores: cap.maxCores ?? 0, node: gpuShape.cores, alt: fullNodeAlt.join(" / ") })}
-              </div>
             )}
             {selectedCpuRow && (
               <CpuProbeInline
@@ -838,6 +787,27 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
           {advanced && (
             <div className="space-y-1.5">
               <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                {layouts.length > 1 && (
+                  <Field label={t("pool.gpuLayout")}>
+                    <select value={layout?.key ?? "1"} onChange={(e) => setGpuKey(e.target.value)} className={fieldCls}>
+                      <option value="1">{t("pool.gpuLayoutOne")}</option>
+                      {layouts.some((l) => l.gpus > 1 && l.packed) && (
+                        <optgroup label={t("pool.gpuLayoutGroupPacked")}>
+                          {layouts.filter((l) => l.gpus > 1 && l.packed).map((l) => (
+                            <option key={l.key} value={l.key}>{gpuLayoutLabel(l, t)}</option>
+                          ))}
+                        </optgroup>
+                      )}
+                      {layouts.some((l) => l.gpus > 1 && !l.packed) && (
+                        <optgroup label={t("pool.gpuLayoutGroupSpread")}>
+                          {layouts.filter((l) => l.gpus > 1 && !l.packed).map((l) => (
+                            <option key={l.key} value={l.key}>{gpuLayoutLabel(l, t)}</option>
+                          ))}
+                        </optgroup>
+                      )}
+                    </select>
+                  </Field>
+                )}
                 {!multiGpu && (<>
                 <Field label={capSuffix(t("spec.nodes"), cap.maxNodes)}>
                   <select value={nodeCount ? nodes : ""} onChange={(e) => setNodes(e.target.value)} className={fieldCls}>
@@ -884,6 +854,20 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
                   )}
                 </Field>
               </div>
+              {/* multi-GPU notes: why --exclusive (hidden once the plugin honours
+                  --gres again — layout.exclusive turns false by itself), the
+                  interconnect, and the cost of spreading one GPU per node */}
+              {multiGpu && layout?.exclusive && (
+                <div className="mt-1 text-xs leading-relaxed text-warn-fg">
+                  {t("pool.gpuExclusiveWhy", { per: gpuShape.gpus, cores: gpuShape.cores })}
+                </div>
+              )}
+              {multiGpu && gpuShape.gpus > 1 && (
+                <div className="mt-1 text-xs leading-relaxed text-muted-foreground">{t("pool.gpuNoNvlink")}</div>
+              )}
+              {multiGpu && layout && !layout.packed && (
+                <div className="mt-1 text-xs leading-relaxed text-warn-fg">{t("pool.gpuSpreadWarn")}</div>
+              )}
               <div className="text-xs leading-relaxed text-muted-foreground">
                 {multiGpu
                   ? t("pool.gpuLayoutLocks", { mem: t("pool.gpuLayoutLocksMem") })

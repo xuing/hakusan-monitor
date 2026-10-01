@@ -107,14 +107,6 @@ export function fmtGpuLimit(cap: PartitionCap, defaults: ReturnType<typeof parti
   return t("pool.limitGpuPerNodeForced", { n });
 }
 
-/** "The plugin pins N GPU(s) per node; --exclusive takes the node's M."
- *  Verified live 2026-10-01: GPU-S + --exclusive got both A40s. */
-export function gpuPluginNote(perNode: number, nodeGpus: number, t: TFn): string {
-  return nodeGpus > perNode
-    ? t("pool.gpuPluginPinnedExclusive", { n: perNode, total: nodeGpus })
-    : t("pool.gpuPluginPinned", { n: perNode });
-}
-
 export function cpuProbeLabel(state: CpuProbeState, t: TFn) {
   if (state === "now") return t("pool.cpuProbeNow");
   if (state === "queued") return t("pool.cpuProbeQueued");
