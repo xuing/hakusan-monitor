@@ -4,7 +4,8 @@
 // snapshot — when the policy is missing the sentence carrying it is omitted.
 import { useEffect, useState, type ReactNode } from "react";
 import { Link } from "react-router";
-import { AlertTriangle, ChevronRight, Clock, ExternalLink, Info, MemoryStick, Sparkles } from "lucide-react";
+import { AlertTriangle, ChevronRight, Clock, ExternalLink, Info, MemoryStick } from "lucide-react";
+import { SectionCard } from "@/components/common/section-card";
 import { CopyButton } from "@/components/common/copy-button";
 import { useLive } from "@/hooks/live-context";
 import { useT, type TFn, type TranslationKey } from "@/i18n";
@@ -235,103 +236,107 @@ export default function SlurmGuidePage() {
   const toggle = <KindToggle value={kind} onChange={setKind} t={t} />;
 
   return (
-    <div className="mx-auto max-w-5xl space-y-4">
-      <Hero t={t} />
-
-      <Section id="interactive" step={1} title={t("guide.s1.title")} lead={t("guide.s1.lead")} extra={toggle}>
-        <Terminal lines={[SALLOC[kind]]} />
-        {kind === "gpu" && facts.gpuDefault && (
-          <p className="mt-2 text-sm text-muted-foreground">
-            <Rich text={t("guide.s1.gpuDefault", { p: EXAMPLE_PARTITION.gpu, ...facts.gpuDefault })} />
-          </p>
-        )}
-        <div className="mt-4 space-y-2">
-          <Note tone="warn" icon={AlertTriangle}>
-            <Rich text={t("guide.s1.nTrap")} />
-            {facts.nTrap && (
-              <>
-                {sp}
-                <Rich
-                  text={t("guide.s1.nTrapExample", {
-                    p: EXAMPLE_PARTITION.cpu,
-                    tasks: facts.nTrap.tasks,
-                    total: facts.nTrap.tasks * 8,
-                    max: facts.nTrap.max,
-                  })}
-                />
-              </>
-            )}
-          </Note>
-          {facts.forced[kind] && (
-            <Note tone="info" icon={Clock}>
-              <Rich text={t("guide.s1.forced", { p: EXAMPLE_PARTITION[kind], t: facts.forced[kind]! })} />
-            </Note>
+    <div className="space-y-4">
+      {/* full-width card grid like the other pages. Wide screens: salloc and
+          check/cancel in the left column beside the taller sbatch card,
+          partitions across both; narrow screens keep the reading order. */}
+      <div className="grid items-start gap-4 xl:grid-cols-2">
+        <Section id="interactive" className="xl:col-start-1 xl:row-start-1" title={t("guide.s1.title")} lead={t("guide.s1.lead")} extra={toggle}>
+          <Terminal lines={[SALLOC[kind]]} />
+          {kind === "gpu" && facts.gpuDefault && (
+            <p className="mt-2 text-sm text-muted-foreground">
+              <Rich text={t("guide.s1.gpuDefault", { p: EXAMPLE_PARTITION.gpu, ...facts.gpuDefault })} />
+            </p>
           )}
-          <Note tone="neutral" icon={MemoryStick}>
-            {facts.memPerCore[kind] && (
-              <>
-                <Rich text={t("guide.s1.memDefault", { mem: facts.memPerCore[kind]! })} />{sp}
-              </>
+          <div className="mt-4 space-y-2">
+            <Note tone="warn" icon={AlertTriangle}>
+              <Rich text={t("guide.s1.nTrap")} />
+              {facts.nTrap && (
+                <>
+                  {sp}
+                  <Rich
+                    text={t("guide.s1.nTrapExample", {
+                      p: EXAMPLE_PARTITION.cpu,
+                      tasks: facts.nTrap.tasks,
+                      total: facts.nTrap.tasks * 8,
+                      max: facts.nTrap.max,
+                    })}
+                  />
+                </>
+              )}
+            </Note>
+            {facts.forced[kind] && (
+              <Note tone="info" icon={Clock}>
+                <Rich text={t("guide.s1.forced", { p: EXAMPLE_PARTITION[kind], t: facts.forced[kind]! })} />
+              </Note>
             )}
-            <Rich text={t("guide.s1.memMore")} />{sp}
-            <Link to="/" className="whitespace-nowrap text-info-fg hover:underline">{t("guide.s1.memLink")}</Link>
-          </Note>
-        </div>
-      </Section>
+            <Note tone="neutral" icon={MemoryStick}>
+              {facts.memPerCore[kind] && (
+                <>
+                  <Rich text={t("guide.s1.memDefault", { mem: facts.memPerCore[kind]! })} />{sp}
+                </>
+              )}
+              <Rich text={t("guide.s1.memMore")} />{sp}
+              <Link to="/" className="whitespace-nowrap text-info-fg hover:underline">{t("guide.s1.memLink")}</Link>
+            </Note>
+          </div>
+        </Section>
 
-      <Section id="batch" step={2} title={t("guide.s2.title")} lead={t("guide.s2.lead")} extra={toggle}>
-        <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
-          <Terminal file="job.sh" text={SCRIPT[kind].text} />
-          <dl className="space-y-2.5 text-sm">
-            <Flag flag="-J">{t("guide.s2.flag.J")}</Flag>
-            <Flag flag="-p">{t("guide.s2.flag.p")}</Flag>
-            <Flag flag={`-n 1 -c ${SCRIPT[kind].cores}`}>{t("guide.s2.flag.nc", { c: SCRIPT[kind].cores })}</Flag>
-            <Flag flag="-t">
-              <Rich
-                text={facts.wall[kind]
-                  ? t("guide.s2.flag.t", { p: EXAMPLE_PARTITION[kind], wall: facts.wall[kind]! })
-                  : t("guide.s2.flag.tNoData")}
-              />
-            </Flag>
-            <Flag flag="-o">{t("guide.s2.flag.o")}</Flag>
-            {kind === "gpu" && <Flag flag="--nv"><Rich text={t("guide.s2.flag.nv")} /></Flag>}
-          </dl>
-        </div>
-        <div className="mt-4">
-          <Terminal lines={["sbatch job.sh"]} output="Submitted batch job 123456" />
-          <p className="mt-2 text-sm text-muted-foreground">{t("guide.s2.submit")}</p>
-        </div>
-      </Section>
+        <Section id="batch" className="xl:col-start-2 xl:row-span-2 xl:row-start-1" title={t("guide.s2.title")} lead={t("guide.s2.lead")} extra={toggle}>
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-1">
+            <Terminal file="job.sh" text={SCRIPT[kind].text} />
+            <dl className="space-y-2.5 text-sm">
+              <Flag flag="-J">{t("guide.s2.flag.J")}</Flag>
+              <Flag flag="-p">{t("guide.s2.flag.p")}</Flag>
+              <Flag flag={`-n 1 -c ${SCRIPT[kind].cores}`}>{t("guide.s2.flag.nc", { c: SCRIPT[kind].cores })}</Flag>
+              <Flag flag="-t">
+                <Rich
+                  text={facts.wall[kind]
+                    ? t("guide.s2.flag.t", { p: EXAMPLE_PARTITION[kind], wall: facts.wall[kind]! })
+                    : t("guide.s2.flag.tNoData")}
+                />
+              </Flag>
+              <Flag flag="-o">{t("guide.s2.flag.o")}</Flag>
+              {kind === "gpu" && <Flag flag="--nv"><Rich text={t("guide.s2.flag.nv")} /></Flag>}
+            </dl>
+          </div>
+          <div className="mt-4">
+            <Terminal lines={["sbatch job.sh"]} output="Submitted batch job 123456" />
+            <p className="mt-2 text-sm text-muted-foreground">{t("guide.s2.submit")}</p>
+          </div>
+        </Section>
 
-      <Section id="manage" step={3} title={t("guide.s3.title")}>
-        <div className="divide-y divide-border/60">
-          {MANAGE.map((m) => (
-            <div key={m.key} className="grid gap-x-4 gap-y-1.5 py-3 first:pt-0 last:pb-0 md:grid-cols-[13rem_minmax(0,1fr)]">
-              <div>
-                <div className="text-sm font-medium">{t(`guide.s3.${m.key}` as TranslationKey)}</div>
-                <div className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
-                  <Rich text={t(`guide.s3.${m.key}Note` as TranslationKey)} />
+        <Section id="manage" className="xl:col-start-1 xl:row-start-2" title={t("guide.s3.title")}>
+          <div className="divide-y divide-border/60">
+            {MANAGE.map((m) => (
+              <div key={m.key} className="grid gap-x-4 gap-y-1.5 py-3 first:pt-0 last:pb-0 md:grid-cols-[13rem_minmax(0,1fr)]">
+                <div>
+                  <div className="text-sm font-medium">{t(`guide.s3.${m.key}` as TranslationKey)}</div>
+                  <div className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
+                    <Rich text={t(`guide.s3.${m.key}Note` as TranslationKey)} />
+                  </div>
                 </div>
+                <Terminal lines={[m.command]} className="self-start" />
               </div>
-              <Terminal lines={[m.command]} className="self-start" />
-            </div>
-          ))}
-        </div>
-      </Section>
+            ))}
+          </div>
+        </Section>
 
-      <Section id="partitions" title={t("guide.s4.title")} lead={t("guide.s4.lead")}>
-        {facts.rows.length > 0 ? (
-          <ul className="divide-y divide-border/60 rounded-lg border border-border">
-            {facts.rows.map((r) => <PartitionRow key={r.name} row={r} t={t} />)}
-          </ul>
-        ) : (
-          <p className="text-sm text-muted-foreground">—</p>
-        )}
-        <p className="mt-3 text-sm text-muted-foreground">
-          {t("guide.s4.more")}{t("guide.sentenceSep")}
-          <Link to="/partitions" className="whitespace-nowrap text-info-fg hover:underline">{t("guide.s4.moreLink")}</Link>
-        </p>
-      </Section>
+        <Section id="partitions" className="xl:col-span-2" title={t("guide.s4.title")} lead={t("guide.s4.lead")}>
+          {facts.rows.length > 0 ? (
+            <ul className="divide-y divide-border/60 rounded-lg border border-border">
+              {facts.rows.map((r) => <PartitionRow key={r.name} row={r} t={t} />)}
+            </ul>
+          ) : (
+            <p className="text-sm text-muted-foreground">—</p>
+          )}
+          <p className="mt-3 text-sm text-muted-foreground">
+            {t("guide.s4.more")}{t("guide.sentenceSep")}
+            <Link to="/partitions" className="whitespace-nowrap text-info-fg hover:underline">{t("guide.s4.moreLink")}</Link>
+          </p>
+        </Section>
+
+      </div>
 
       <Section id="rules" title={t("guide.rules.title")}>
         <ul className="grid gap-x-6 gap-y-2.5 text-sm leading-relaxed md:grid-cols-2">
@@ -344,145 +349,110 @@ export default function SlurmGuidePage() {
         </ul>
       </Section>
 
-      <div id="advanced" className="scroll-mt-16 space-y-2 pt-2">
-        <div className="px-1">
-          <h2 className="text-base font-semibold">{t("guide.adv.title")}</h2>
-        </div>
+      <div id="advanced" className="scroll-mt-16 space-y-2">
+        <h2 className="px-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">{t("guide.adv.title")}</h2>
+        <div className="grid items-start gap-2 lg:grid-cols-2">
 
-        <Advanced id="containers" title={t("guide.adv.container.title")} hint={t("guide.adv.container.hint")}>
-          <p><Rich text={t("guide.adv.container.pull")} /></p>
-          <Terminal lines={[CONTAINER_PULL]} />
-          <p><Rich text={t("guide.adv.container.run")} /></p>
-          <Terminal lines={[CONTAINER_RUN]} />
-        </Advanced>
-
-        <Advanced id="tasks" title={t("guide.adv.tasks.title")} hint={t("guide.adv.tasks.hint")}>
-          <ul className="divide-y divide-border/60 rounded-lg border border-border">
-            {TASK_LAYOUTS.map((l) => (
-              <li key={l.key} className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 px-3 py-2">
-                <span>{t(`guide.adv.tasks.${l.key}` as TranslationKey)}</span>
-                <code className="font-mono text-xs text-foreground">{l.flags}</code>
-              </li>
-            ))}
-          </ul>
-          <p>
-            <Rich text={t("guide.adv.tasks.nodes")} />
-            {facts.multiNode.length > 0 && <>{sp}{t("guide.adv.tasks.nodesParts", { parts: facts.multiNode.join(", ") })}</>}
-          </p>
-        </Advanced>
-
-        <Advanced id="multi-gpu" title={t("guide.adv.gpu.title")} hint={t("guide.adv.gpu.hint")}>
-          {facts.gpuForced.parts.length > 0 && facts.gpuForced.n ? (
-            <p>
-              <Rich text={t("guide.adv.gpu.forced", { parts: facts.gpuForced.parts.join(", "), n: facts.gpuForced.n })} />{sp}
-              <Rich text={t("guide.adv.gpu.exclusive")} />
-            </p>
-          ) : (
-            <p><Rich text={t("guide.adv.gpu.respected")} /></p>
-          )}
-          {facts.multiGpu.length > 0 && (
-            <p>
-              {t("guide.adv.gpu.max", {
-                list: facts.multiGpu.map((x) => t("guide.adv.gpu.maxItem", { p: x.p, n: x.n })).join(t("guide.listSep")),
-              })}
-            </p>
-          )}
-          <p>{t("guide.adv.gpu.more")}</p>
-        </Advanced>
-
-        <Advanced id="pty" title={t("guide.pty.title")} hint={t("guide.pty.hint")}>
-          <p>{facts.ptyForced ? t("guide.pty.lead", { forced: facts.ptyForced }) : t("guide.pty.leadNoData")}</p>
-          <ol className="space-y-4">
-            {PTY_STEPS.map((s, i) => (
-              <li key={s.key} className="flex gap-3">
-                <StepBadge n={i + 1} small />
-                <div className="min-w-0 flex-1 space-y-1.5">
-                  <div className="font-medium text-foreground">{t(`guide.pty.step${s.key}.title` as TranslationKey)}</div>
-                  <Terminal lines={s.command.split("\n")} />
-                  <p className="text-xs leading-relaxed"><Rich text={t(`guide.pty.step${s.key}.detail` as TranslationKey)} /></p>
-                </div>
-              </li>
-            ))}
-          </ol>
-        </Advanced>
-
-        <Advanced id="array" title={t("guide.adv.array.title")} hint={t("guide.adv.array.hint")}>
-          <p><Rich text={t("guide.adv.array.body")} /></p>
-          <Terminal file="sweep.sh" text={ARRAY_SCRIPT} />
-          <p>
-            <Rich text={t("guide.adv.array.log")} />{sp}
-            <Rich
-              text={facts.arrayPerUser
-                ? t("guide.adv.array.limit", { p: EXAMPLE_PARTITION.cpu, n: facts.arrayPerUser })
-                : t("guide.adv.array.limitNoData")}
-            />
-          </p>
-        </Advanced>
-
-        {facts.license.length > 0 && (
-          <Advanced id="materials-studio" title={t("guide.adv.ms.title")} hint={t("guide.adv.ms.hint")}>
-            <p><Rich text={t("guide.adv.ms.body", { parts: facts.license.join(", ") })} /></p>
+          <Advanced id="containers" title={t("guide.adv.container.title")} hint={t("guide.adv.container.hint")}>
+            <p><Rich text={t("guide.adv.container.pull")} /></p>
+            <Terminal lines={[CONTAINER_PULL]} />
+            <p><Rich text={t("guide.adv.container.run")} /></p>
+            <Terminal lines={[CONTAINER_RUN]} />
           </Advanced>
-        )}
 
-        <Advanced id="refs" title={t("guide.refs.title")} hint={t("guide.refs.hint")}>
-          <ul className="grid gap-1.5 sm:grid-cols-2">
-            {REFS.map(([label, href]) => (
-              <li key={href}>
-                <a
-                  href={href}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="flex items-center justify-between gap-2 rounded-md border border-border px-3 py-2 hover:bg-muted/40 hover:text-foreground"
-                >
-                  <span className="truncate">{label}</span>
-                  <ExternalLink className="h-3.5 w-3.5 shrink-0" />
-                </a>
-              </li>
-            ))}
-          </ul>
-        </Advanced>
+          <Advanced id="tasks" title={t("guide.adv.tasks.title")} hint={t("guide.adv.tasks.hint")}>
+            <ul className="divide-y divide-border/60 rounded-lg border border-border">
+              {TASK_LAYOUTS.map((l) => (
+                <li key={l.key} className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 px-3 py-2">
+                  <span>{t(`guide.adv.tasks.${l.key}` as TranslationKey)}</span>
+                  <code className="font-mono text-xs text-foreground">{l.flags}</code>
+                </li>
+              ))}
+            </ul>
+            <p>
+              <Rich text={t("guide.adv.tasks.nodes")} />
+              {facts.multiNode.length > 0 && <>{sp}{t("guide.adv.tasks.nodesParts", { parts: facts.multiNode.join(", ") })}</>}
+            </p>
+          </Advanced>
+
+          <Advanced id="multi-gpu" title={t("guide.adv.gpu.title")} hint={t("guide.adv.gpu.hint")}>
+            {facts.gpuForced.parts.length > 0 && facts.gpuForced.n ? (
+              <p>
+                <Rich text={t("guide.adv.gpu.forced", { parts: facts.gpuForced.parts.join(", "), n: facts.gpuForced.n })} />{sp}
+                <Rich text={t("guide.adv.gpu.exclusive")} />
+              </p>
+            ) : (
+              <p><Rich text={t("guide.adv.gpu.respected")} /></p>
+            )}
+            {facts.multiGpu.length > 0 && (
+              <p>
+                {t("guide.adv.gpu.max", {
+                  list: facts.multiGpu.map((x) => t("guide.adv.gpu.maxItem", { p: x.p, n: x.n })).join(t("guide.listSep")),
+                })}
+              </p>
+            )}
+            <p>{t("guide.adv.gpu.more")}</p>
+          </Advanced>
+
+          <Advanced id="pty" title={t("guide.pty.title")} hint={t("guide.pty.hint")}>
+            <p>{facts.ptyForced ? t("guide.pty.lead", { forced: facts.ptyForced }) : t("guide.pty.leadNoData")}</p>
+            <ol className="space-y-4">
+              {PTY_STEPS.map((s, i) => (
+                <li key={s.key} className="flex gap-3">
+                  <StepBadge n={i + 1} small />
+                  <div className="min-w-0 flex-1 space-y-1.5">
+                    <div className="font-medium text-foreground">{t(`guide.pty.step${s.key}.title` as TranslationKey)}</div>
+                    <Terminal lines={s.command.split("\n")} />
+                    <p className="text-xs leading-relaxed"><Rich text={t(`guide.pty.step${s.key}.detail` as TranslationKey)} /></p>
+                  </div>
+                </li>
+              ))}
+            </ol>
+          </Advanced>
+
+          <Advanced id="array" title={t("guide.adv.array.title")} hint={t("guide.adv.array.hint")}>
+            <p><Rich text={t("guide.adv.array.body")} /></p>
+            <Terminal file="sweep.sh" text={ARRAY_SCRIPT} />
+            <p>
+              <Rich text={t("guide.adv.array.log")} />{sp}
+              <Rich
+                text={facts.arrayPerUser
+                  ? t("guide.adv.array.limit", { p: EXAMPLE_PARTITION.cpu, n: facts.arrayPerUser })
+                  : t("guide.adv.array.limitNoData")}
+              />
+            </p>
+          </Advanced>
+
+          {facts.license.length > 0 && (
+            <Advanced id="materials-studio" title={t("guide.adv.ms.title")} hint={t("guide.adv.ms.hint")}>
+              <p><Rich text={t("guide.adv.ms.body", { parts: facts.license.join(", ") })} /></p>
+            </Advanced>
+          )}
+
+          <Advanced id="refs" title={t("guide.refs.title")} hint={t("guide.refs.hint")}>
+            <ul className="grid gap-1.5 sm:grid-cols-2">
+              {REFS.map(([label, href]) => (
+                <li key={href}>
+                  <a
+                    href={href}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="flex items-center justify-between gap-2 rounded-md border border-border px-3 py-2 hover:bg-muted/40 hover:text-foreground"
+                  >
+                    <span className="truncate">{label}</span>
+                    <ExternalLink className="h-3.5 w-3.5 shrink-0" />
+                  </a>
+                </li>
+              ))}
+            </ul>
+          </Advanced>
+        </div>
       </div>
     </div>
   );
 }
 
 // ---- building blocks ---------------------------------------------------------------
-function Hero({ t }: { t: TFn }) {
-  const steps: { id: string; label: TranslationKey }[] = [
-    { id: "interactive", label: "guide.nav.interactive" },
-    { id: "batch", label: "guide.nav.batch" },
-    { id: "manage", label: "guide.nav.manage" },
-  ];
-  return (
-    <section className="rounded-xl border border-border bg-card px-4 py-5 sm:px-6">
-      <h1 className="text-xl font-semibold tracking-tight">{t("guide.title")}</h1>
-      <p className="mt-1.5 max-w-3xl text-sm leading-relaxed text-muted-foreground">{t("guide.lead")}</p>
-      <nav className="mt-4 flex flex-wrap items-center gap-x-1.5 gap-y-2 text-sm">
-        {steps.map((s, i) => (
-          <span key={s.id} className="flex items-center gap-1.5">
-            {i > 0 && <ChevronRight className="hidden h-3.5 w-3.5 text-muted-foreground/60 sm:block" aria-hidden />}
-            <a href={`#${s.id}`} className="flex items-center gap-1.5 rounded-full border border-border px-2.5 py-1 hover:bg-muted/50">
-              <span className="font-mono text-xs text-info-fg">{i + 1}</span>
-              {t(s.label)}
-            </a>
-          </span>
-        ))}
-        <span className="mx-1 h-4 w-px bg-border" aria-hidden />
-        <a href="#partitions" className="rounded-full px-2 py-1 text-muted-foreground hover:text-foreground">{t("guide.nav.partitions")}</a>
-        <a href="#advanced" className="rounded-full px-2 py-1 text-muted-foreground hover:text-foreground">{t("guide.nav.advanced")}</a>
-      </nav>
-      <div className="mt-4 flex items-start gap-2 rounded-lg border border-info/35 bg-info-soft/45 px-3 py-2 text-sm">
-        <Sparkles className="mt-0.5 h-4 w-4 shrink-0 text-info-fg" aria-hidden />
-        <span>
-          {t("guide.quickRequest")}{t("guide.sentenceSep")}
-          <Link to="/" className="whitespace-nowrap font-medium text-info-fg hover:underline">{t("guide.toQuickRequest")}</Link>
-        </span>
-      </div>
-    </section>
-  );
-}
-
 function StepBadge({ n, small }: { n: number; small?: boolean }) {
   return (
     <span
@@ -497,28 +467,23 @@ function StepBadge({ n, small }: { n: number; small?: boolean }) {
   );
 }
 
-function Section({ id, step, title, lead, extra, children }: {
+/** A guide section in the dashboard's shared SectionCard look; `id` is the
+ *  deep-link anchor. */
+function Section({ id, className, title, lead, extra, children }: {
   id: string;
-  step?: number;
+  className?: string;
   title: string;
   lead?: string;
   extra?: ReactNode;
   children: ReactNode;
 }) {
   return (
-    <section id={id} className="scroll-mt-16 rounded-xl border border-border bg-card px-4 py-5 sm:px-6">
-      <header className="mb-4 flex flex-wrap items-start justify-between gap-3">
-        <div className="flex min-w-0 items-start gap-3">
-          {step !== undefined && <StepBadge n={step} />}
-          <div className="min-w-0">
-            <h2 className={cn("text-base font-semibold", step !== undefined && "leading-7")}>{title}</h2>
-            {lead && <p className="mt-1 max-w-3xl text-sm leading-relaxed text-muted-foreground">{lead}</p>}
-          </div>
-        </div>
-        {extra}
-      </header>
-      {children}
-    </section>
+    <div id={id} className={cn("scroll-mt-16", className)}>
+      <SectionCard title={title} extra={extra}>
+        {lead && <p className="mb-3 text-sm leading-relaxed text-muted-foreground">{lead}</p>}
+        {children}
+      </SectionCard>
+    </div>
   );
 }
 
