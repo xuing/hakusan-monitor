@@ -14,7 +14,7 @@ export interface Totals {
     cpu_total: number;
     cpu_free: number;
   };
-  cpus: { total: number; alloc: number; free: number; util: number };
+  cpus: { total: number; alloc: number; free: number; unavailable?: number; util: number };
   memory: { total_mb: number; alloc_mb: number; util: number };
   gpus: {
     total: number;
@@ -66,7 +66,7 @@ export interface Pool {
   down_nodes: number;
   cpus_total: number;
   cpus_alloc: number;
-  cores: { total: number; alloc: number; free: number; util: number };
+  cores: { total: number; alloc: number; free: number; unavailable?: number; util: number };
   util: number;
   gpu: PoolGpu | null;
   partitions: string[];
@@ -80,7 +80,7 @@ export interface Partition {
   nodes: number;
   gpu_type: string | null;
   pool: string | null;
-  cpus: { total: number; alloc: number; free: number; util: number };
+  cpus: { total: number; alloc: number; free: number; unavailable?: number; util: number };
   gpu: { total: number; used: number; down: number; reserved?: number; free: number; util: number } | null;
   jobs: { running: number; pending: number };
   pending_reasons: Record<string, number>;
@@ -91,6 +91,7 @@ export interface Partition {
   free_nodes: number;
   available_nodes: number;
   busy_nodes: number;
+  /** jobs ending within 2h and the DISTINCT nodes they run on */
   releasing: { jobs: number; nodes: number };
 }
 

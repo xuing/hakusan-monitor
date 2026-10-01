@@ -135,6 +135,38 @@ class NodeAvailabilityTests(unittest.TestCase):
         self.assertEqual(gpu["free"], 1)
         self.assertEqual(snap["partitions"][0]["gpu"]["reserved"], 0)
 
+    def test_releasing_counts_distinct_nodes(self):
+        # three short jobs on one node used to report 3 releasing nodes
+        jobs = [{"job_id": i, "job_state": "RUNNING", "partition": "P", "user_name": "u",
+                 "node_count": 1, "cpus": 9, "time_left": "0:30:00",
+                 "nodelist": "spcc-a40g01", "end_time": "2026-10-01T15:00:00"}
+                for i in (1, 2, 3)]
+        jobs.append({"job_id": 4, "job_state": "RUNNING", "partition": "P", "user_name": "u",
+                     "node_count": 2, "cpus": 52, "time_left": "1:00:00",
+                     "nodelist": "spcc-a40g[01-02]", "end_time": "2026-10-01T15:30:00"})
+        snap = normalize(
+            {"nodes": [raw_node(name=n, state=["MIXED"], cpus=52, alloc=10,
+                                gres="gpu:nvidia_a40:2", gres_used="gpu:nvidia_a40:1")
+                       for n in ("spcc-a40g01", "spcc-a40g02")]},
+            {"jobs": jobs},
+        )
+
+        self.assertEqual(snap["pools"][0]["queue"]["releasing"], {"jobs": 4, "nodes": 2})
+        self.assertEqual(snap["partitions"][0]["releasing"], {"jobs": 4, "nodes": 2})
+
+    def test_cpu_breakdown_reconciles(self):
+        snap = normalize(
+            {"nodes": [raw_node(name="lcpcc-001", state=["MIXED", "PLANNED"], cpus=256, alloc=200,
+                                gres="", gres_used=""),
+                       raw_node(name="lcpcc-002", state=["MIXED"], cpus=256, alloc=250,
+                                gres="", gres_used="")]},
+            {"jobs": []},
+        )
+
+        for c in (snap["totals"]["cpus"], snap["pools"][0]["cores"], snap["partitions"][0]["cpus"]):
+            self.assertEqual(c["alloc"] + c["free"] + c["unavailable"], c["total"])
+            self.assertEqual(c["unavailable"], 56)
+
     def test_schedulable_state_matrix(self):
         self.assertTrue(is_schedulable(["IDLE"]))
         self.assertTrue(is_schedulable(["MIXED"]))

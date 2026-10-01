@@ -33,7 +33,9 @@ SEP = "|@|"   # field separator unlikely to occur in any value (e.g. job names)
 SQUEUE_FIELDS = ["%i", "%u", "%a", "%P", "%T", "%r", "%D", "%C", "%b", "%V",
                  "%e", "%S", "%L", "%j", "%q", "%N", "%M", "%l", "%m", "%n", "%x"]
 SQUEUE_FMT = SEP.join(SQUEUE_FIELDS)
-CONTAINER_FMT = "JobID:64,tres-alloc:256,SchedNodes:128,Container:512"
+# JobArrayID, not JobID: -O JobID prints an array's BASE id ("759320") for
+# every task, so no task ever joined its row; JobArrayID matches %i exactly.
+CONTAINER_FMT = "JobArrayID:64,tres-alloc:256,SchedNodes:128,Container:512"
 CPU_TEST_PARTITIONS = ["TINY", "DEF", "SINGLE", "SMALL", "LARGE", "XLARGE", "X2LARGE", "LONG", "LONG-L"]
 
 
@@ -329,7 +331,7 @@ def build_policy_snapshot(qos_text, partition_text, now, interval):
 
 
 def parse_containers(text):
-    """`squeue -O JobID,tres-alloc,SchedNodes,Container` -> {job_id: {...}}.
+    """`squeue -r -O JobArrayID,tres-alloc,SchedNodes,Container` -> {job_id: {...}}.
 
     The `-O/--Format` surface exposes fields the `-o` single-letter formats
     cannot express. tres-alloc carries each job's *effective* allocation
@@ -371,7 +373,7 @@ def parse_pending_reqtres(text):
 
 
 def parse_queue(text, extras=None, pending_reqtres=None):
-    """`squeue -h -a -o SQUEUE_FMT` -> [{...}] like squeue --json, enriched with
+    """`squeue -h -a -r -o SQUEUE_FMT` -> [{...}] like squeue --json, enriched with
     every field the raw Jobs table surfaces (see SQUEUE_FIELDS for order).
 
     `extras` is parse_containers' output: per-job tres-alloc + container.
@@ -579,8 +581,12 @@ class Source:
         # Core reads must succeed: a later optional command must never turn a
         # controller failure into a healthy-looking empty cluster/queue.
         out = self._exec(f"scontrol -o show nodes || exit $?; echo {MARK}; "
-                         f"squeue -h -a -o '{SQUEUE_FMT}' || exit $?; echo {MARK}; "
-                         f"(squeue -h -a -O '{CONTAINER_FMT}' 2>/dev/null || true); echo {MARK}; "
+                         # -r: one row per array task. Without it a pending
+                         # array prints as ONE row ("759320_[5-10%2]" = 6
+                         # tasks) while its running tasks are separate rows,
+                         # so pending counts ran ~10 short (audit 2026-10-01).
+                         f"squeue -h -a -r -o '{SQUEUE_FMT}' || exit $?; echo {MARK}; "
+                         f"(squeue -h -a -r -O '{CONTAINER_FMT}' 2>/dev/null || true); echo {MARK}; "
                          # pending jobs' AllocTRES is null and squeue %m prints
                          # per-CPU requests indistinguishably from totals (a
                          # 26-CPU job asking 10000M/CPU shows "10000M" — 26x
