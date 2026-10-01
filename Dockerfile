@@ -1,5 +1,5 @@
 # ---- stage 1: build the React app ----
-FROM node:26-slim@sha256:c0753125a3789977aefe869cbebccf70e3cfd7ea84ca48547458f02e4f1d7146 AS web
+FROM node:26-slim@sha256:ec7758ee051e457b468b32bde57b0879010b325bb9862718e9615225ce4aaae1 AS web
 WORKDIR /web
 COPY web/package.json web/package-lock.json ./
 RUN npm install --global npm@12.0.1 \
@@ -8,7 +8,7 @@ COPY web/ ./
 RUN npm run build
 
 # ---- stage 2: python runtime (stdlib only + ssh client) ----
-FROM python:3.14-slim@sha256:caaf356f40667c496d405780745b9ac25771c189a51dfcc42430d531ea09f8a2
+FROM python:3.14-slim@sha256:51dafde81dbdb6ebde285137a295cf18a47ca95234fe388a343719cb97305b3d
 RUN apt-get update \
  && apt-get install -y --no-install-recommends openssh-client \
  && rm -rf /var/lib/apt/lists/*
