@@ -9,6 +9,7 @@ export function UnitBlocks({
   total,
   unit,
   schedulable,
+  strandedLabel = "unused by any policy",
   className,
 }: {
   free: number;
@@ -21,6 +22,9 @@ export function UnitBlocks({
    *  actually grant right now — splits the free segment green/yellow instead
    *  of counting every physically-idle GPU as equally available. */
   schedulable?: number;
+  /** Tooltip wording for the amber part of `free` (CPU node bars use it for
+   *  nodes with only some cores free). */
+  strandedLabel?: string;
   className?: string;
 }) {
   if (total <= 0) return null;
@@ -37,7 +41,7 @@ export function UnitBlocks({
   return (
     <div
       className={cn("flex h-2.5 w-36 shrink-0 gap-px", className)}
-      title={`${nf(free)} ${unit} ${unit === "GPU" ? "free" : "available"}${stranded ? ` (${nf(stranded)} unused by any policy)` : ""} · ${nf(used)} used${reserved ? ` · ${nf(reserved)} reserved` : ""}${down ? ` · ${nf(down)} down` : ""}`}
+      title={`${nf(free)} ${unit} ${unit === "GPU" ? "free" : "available"}${stranded ? ` (${nf(stranded)} ${strandedLabel})` : ""} · ${nf(used)} used${reserved ? ` · ${nf(reserved)} reserved` : ""}${down ? ` · ${nf(down)} down` : ""}`}
     >
       {/* Reserved reads exactly like stranded — idle, reachable only via
           tweaks or the timed gap — so it sits solid amber with the free-ish

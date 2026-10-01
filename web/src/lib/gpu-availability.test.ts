@@ -8,7 +8,7 @@
  */
 import { describe, expect, it } from "vitest";
 import { gpuAvailability, gpuPerGpuNeed, type GpuAvailabilitySegment } from "./gpu-availability";
-import { activePendingForPool, gpuNodeFacts } from "./gpu-fit";
+import { activePendingForPool, gpuFitFromNodes, gpuNodeFacts } from "./gpu-fit";
 import { capPerGpu } from "./slurm";
 import {
   A100_DRAIN,
@@ -249,6 +249,10 @@ describe("2026-10-01 audit: headline counts match what they say", () => {
 
     expect(segments(result)).toEqual([{ kind: "cpu-memory", count: 1 }]);
     expect(result.free).toBe(1);
+    // the card's fit explanation ("物理空闲 N GPU") must count the same card
+    const fit = gpuFitFromNodes([node], [], POOL_A40, CAP_GPU_1, "GPU-1", REQUEST_GPU_1);
+    expect(fit.rawFree).toBe(result.free);
+    expect(fit.stranded.map((row) => row.node.name)).toEqual(["spcc-a40g15"]);
   });
 
   it("keeps a node's GPUs split when only one of two fits the default", () => {

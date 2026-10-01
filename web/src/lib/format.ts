@@ -43,12 +43,14 @@ export function fmtDurUnits(raw: string): string {
   return `${s}s`;
 }
 
-/** MB -> human (the cluster reports memory in MB). */
+/** MiB -> human. Slurm reports memory in MiB and its "G" suffix is GiB
+ *  (--mem=458G = 469,070 MiB), so the binary unit is labelled as such —
+ *  "458 GB" read as decimal would be 492 GB. */
 export const fmtMB = (mb: number | null | undefined) => {
   const v = mb ?? 0;
-  if (v >= 1024 * 1024) return `${(v / 1024 / 1024).toFixed(1)} TB`;
-  if (v >= 1024) return `${(v / 1024).toFixed(0)} GB`;
-  return `${v} MB`;
+  if (v >= 1024 * 1024) return `${(v / 1024 / 1024).toFixed(1)} TiB`;
+  if (v >= 1024) return `${(v / 1024).toFixed(0)} GiB`;
+  return `${v} MiB`;
 };
 
 /** Seconds since a unix timestamp, clamped at 0. */

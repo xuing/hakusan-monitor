@@ -59,12 +59,13 @@ export function fmtCapMem(gb?: number) {
   if (!gb) return "";
   if (gb >= 1024) {
     const tb = gb / 1024;
-    return `${Number.isInteger(tb) ? tb : tb.toFixed(1)}TB`;
+    return `${Number.isInteger(tb) ? tb : tb.toFixed(1)}TiB`;
   }
-  return `${gb}GB`;
+  // QoS MaxTRES mem=256G is binary (GiB), same unit as --mem=256G
+  return `${gb}GiB`;
 }
 
-/** "8 GPU / 208c / 2TB / 4 nodes / 3d" — no label prefix, "" when the cap is empty.
+/** "8 GPU / 208c / 2TiB / 4 nodes / 3d" — no label prefix, "" when the cap is empty.
  * Cores render as a range ("256–2,048c") where the QOS enforces a minimum
  * (submitting below it is rejected outright — measured on LARGE), and memory
  * is clamped to what the nodes can physically grant. */

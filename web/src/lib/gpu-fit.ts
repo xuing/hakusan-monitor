@@ -67,7 +67,12 @@ export function gpuFitFromNodes(nodes: RawNode[], jobs: RawJob[], pool: Pool, ca
   let slots = 0;
   for (const node of nodes) {
     if (node.pool !== pool.id) continue;
-    const normallySchedulable = nodeIsSchedulable(node);
+    // In service = not taken out by an operator and not held by the
+    // scheduler. That includes a CPU-full ALLOCATED node with an idle GPU:
+    // it lands in `stranded` (short on cores), so rawFree equals the pool
+    // card's "N 张 GPU 空闲" (gpu-availability `free`) instead of a second,
+    // smaller "physically idle" number.
+    const normallySchedulable = !nodeNeedsAttention(node) && !nodeIsSchedulerHeld(node);
     const backfillCandidate = nodeIsBackfillCandidate(node);
     if (!normallySchedulable && !backfillCandidate) continue;
     const freeGpu = Math.max(0, parseGpuCount(node.gres, pool.gpu.type) - parseGpuCount(node.gres_used, pool.gpu.type));

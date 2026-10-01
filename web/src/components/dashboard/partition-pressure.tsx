@@ -13,7 +13,7 @@ import { useLive } from "@/hooks/live-context";
 import { useResourceFilter } from "@/hooks/resource-filter-context";
 import { poolLabel, useT, type TFn } from "@/i18n";
 import type { TranslationKey } from "@/i18n/en";
-import { poolCapacity, type PoolCapacity } from "@/lib/derive";
+import { nodeIsSchedulerHeld, poolCapacity, type PoolCapacity } from "@/lib/derive";
 import { clockOf, fmtMB, nf } from "@/lib/format";
 import { contendersForPool, fitHasClearSlot, partitionGpuAvailability, poolGpuAvailability } from "@/lib/gpu-fit";
 import type { GpuAvailability } from "@/lib/gpu-availability";
@@ -227,6 +227,7 @@ export function PartitionPressure() {
                   isGpu={isGpu}
                   pc={pc}
                   gpuAvail={gpuAvail}
+                  heldNodes={snap.nodes.filter((n) => n.pool === group.poolKey && nodeIsSchedulerHeld(n)).length}
                   generatedAt={snap.generated_at}
                   t={t}
                 />
@@ -364,6 +365,7 @@ function PoolHeader({
   isGpu,
   pc,
   gpuAvail,
+  heldNodes,
   generatedAt,
   t,
 }: {
@@ -373,6 +375,8 @@ function PoolHeader({
   isGpu: boolean;
   pc: PoolCapacity;
   gpuAvail?: GpuAvailability | null;
+  /** Nodes the scheduler holds (PLANNED/RESERVED), from the raw node list. */
+  heldNodes: number;
   generatedAt: number;
   t: TFn;
 }) {
@@ -388,7 +392,9 @@ function PoolHeader({
   const dim = isGpu ? t("dim.gpu") : t("dim.cpu");
   const downNodes = pool?.down_nodes ?? ((pool?.nodes_state.down ?? 0) + (pool?.nodes_state.drain ?? 0));
   const availableNodeCount = pool?.available_nodes ?? pool?.idle_nodes ?? 0;
-  const busyNodes = Math.max((pool?.nodes ?? 0) - availableNodeCount - downNodes, 0);
+  // PLANNED/RESERVED nodes are held by the scheduler, not busy — paint them
+  // amber like the pool card instead of lumping them into "used".
+  const busyNodes = Math.max((pool?.nodes ?? 0) - availableNodeCount - downNodes - heldNodes, 0);
   const blocks = isGpu
     ? {
         free: pool?.gpu?.free ?? 0,
@@ -401,7 +407,7 @@ function PoolHeader({
     : {
         free: availableNodeCount,
         used: busyNodes,
-        reserved: 0,
+        reserved: heldNodes,
         down: downNodes,
         total: pool?.nodes ?? 0,
         unit: t("spec.nodes"),
@@ -420,7 +426,13 @@ function PoolHeader({
         {isGpu && <GpuReleaseHint next={pool?.gpu?.next_free} generatedAt={generatedAt} />}
       </div>
       <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
-        <UnitBlocks {...blocks} schedulable={isGpu ? gpuReady : undefined} />
+        {/* CPU: only wholly idle nodes are green; a node with a few spare
+            cores is amber — green for "8 of 256 cores free" overstated it. */}
+        <UnitBlocks
+          {...blocks}
+          schedulable={isGpu ? gpuReady : pc.idleNodes}
+          strandedLabel={isGpu ? undefined : "partly free"}
+        />
         {maint ? (
           <>
             <Tag tone="neutral">{t("pool.maint")}</Tag>
@@ -498,6 +510,15 @@ function PartitionRow({
   t: TFn;
 }) {
   const maint = isMaintPartition(p);
+  const { snap } = useLive();
+  // Pending jobs submitted to several partitions ("-p DEF,SMALL,SINGLE") wait
+  // in each of them but start in one, so per-partition PD counts don't add up
+  // to the pool total — say so where it applies.
+  const pendShared = (snap?.jobs ?? []).filter((j) => {
+    if (String(j.job_state).toUpperCase() !== "PENDING") return false;
+    const parts = String(j.partition || "").split(",");
+    return parts.length > 1 && parts.includes(p.name);
+  }).length;
   const labelPolicy = partitionLabelPolicy(p.name);
   const runtimePolicy = slurmPartitionPolicy(p.name, policy);
   const groupRunning = p.jobs.running;
@@ -578,6 +599,9 @@ function PartitionRow({
             </span>
             <span className={cn("font-mono text-xs", p.jobs.pending > 0 ? "text-warn-fg" : "text-muted-foreground")}>
               {t("part.run")}{nf(p.jobs.running)} {t("part.pend")}{nf(p.jobs.pending)}
+              {pendShared > 0 && (
+                <HoverHint text={t("part.pendShared", { n: pendShared })} className="ml-0.5 align-super text-xs" />
+              )}
             </span>
           </div>
           <div className="mt-0.5 truncate text-xs text-muted-foreground/80">{t(labelPolicy.desc)}</div>
