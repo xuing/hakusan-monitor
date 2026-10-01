@@ -15,7 +15,6 @@ RUN apt-get update \
 
 WORKDIR /app
 COPY backend/ backend/
-COPY mock/ mock/
 COPY --from=web /web/dist web/dist
 
 EXPOSE 8787

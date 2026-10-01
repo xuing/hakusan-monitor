@@ -257,7 +257,7 @@ function job(fields: Partial<RawJob> & Pick<RawJob, "job_id" | "partition" | "jo
  *  Its request (26 cores / 1 GPU / 255970 MB) fits the node's leftovers. */
 export const PENDING_A40_CONTENDER = job({
   job_id: 499329,
-  user_name: "s2516101",
+  user_name: "user-a",
   partition: "GPU-S",
   job_state: "PENDING",
   state_reason: "Resources",
@@ -274,7 +274,7 @@ export const PENDING_A40_CONTENDER = job({
  *  Verified live the same morning: a fresh salloc walked straight past it. */
 export const PENDING_H100_LIMIT_BLOCKED = job({
   job_id: 499123,
-  user_name: "s2410212",
+  user_name: "user-b",
   partition: "VM-GPU-L",
   job_state: "PENDING",
   state_reason: "QOSMaxJobsPerUserLimit",

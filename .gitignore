@@ -26,3 +26,7 @@ web/dist/
 
 # repo-audit working material (reports/screenshots) — publish deliberately, not by default
 audit/
+
+# demo data captured from the live cluster (real job names / group accounts):
+# kept locally for HM_SOURCE=mock, never published
+/mock/

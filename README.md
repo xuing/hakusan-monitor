@@ -149,7 +149,7 @@ HM_SOURCE=mock python3 backend/server.py
 # open http://localhost:8787
 ```
 
-`HM_SOURCE=mock` serves the captured fixtures in `mock/`.
+`HM_SOURCE=mock` serves fixtures from `mock/` (`nodes.json`, `squeue.json`, `login_nodes.json` in the shapes `sources.py` / `login_nodes.py` read). They were captured from the live cluster, so they are not published in this repository — supply your own.
 
 ## Live mode (against Hakusan)
 
