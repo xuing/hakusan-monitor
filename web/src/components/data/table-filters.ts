@@ -1,4 +1,5 @@
-import type { Row, Table } from "@tanstack/react-table";
+import type { Row, RowData, Table, TableFeatures } from "@tanstack/react-table";
+import type { DataTableFeatures } from "./table-features";
 import type { TFn } from "@/i18n";
 import type { Snapshot } from "@/types/snapshot";
 
@@ -12,7 +13,7 @@ export function poolKindGroups(snap: Snapshot, t: TFn) {
   ];
 }
 
-export function exactArrayFilter<T>(row: Row<T>, columnId: string, filterValue: unknown) {
+export function exactArrayFilter<F extends TableFeatures, T extends RowData>(row: Row<F, T>, columnId: string, filterValue: unknown) {
   const selected = normalizeFilter(filterValue);
   if (selected.length === 0) return true;
   const raw = row.getValue(columnId);
@@ -23,7 +24,7 @@ export function exactArrayFilter<T>(row: Row<T>, columnId: string, filterValue: 
 /** Like exactArrayFilter, but the cell value is a comma-joined list
  * (e.g. a job's "GPU-1,GPU-S" partition string): match any member,
  * and still accept the joined string itself (cell-click filters). */
-export function commaArrayFilter<T>(row: Row<T>, columnId: string, filterValue: unknown) {
+export function commaArrayFilter<F extends TableFeatures, T extends RowData>(row: Row<F, T>, columnId: string, filterValue: unknown) {
   const selected = normalizeFilter(filterValue);
   if (selected.length === 0) return true;
   const raw = String(row.getValue(columnId) ?? "");
@@ -31,7 +32,7 @@ export function commaArrayFilter<T>(row: Row<T>, columnId: string, filterValue: 
   return selected.some((value) => value === raw || values.includes(value));
 }
 
-export function setSingleFacet<T>(table: Table<T>, columnId: string, value: string) {
+export function setSingleFacet<T extends RowData>(table: Table<DataTableFeatures, T>, columnId: string, value: string) {
   const column = table.getColumn(columnId);
   if (!column) return;
   const selected = normalizeFilter(column.getFilterValue());

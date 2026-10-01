@@ -1,5 +1,6 @@
 import { useMemo } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
+import type { DataTableFeatures } from "@/components/data/table-features";
 import { JOB_HIDDEN, jobColumns } from "@/components/data/columns-jobs";
 import { DataTable, type DataFacet } from "@/components/data/data-table";
 import { TableSkeleton } from "@/components/common/table-skeleton";
@@ -15,7 +16,7 @@ type JobTableRow = RawJob & { resource_pool: string };
 export default function JobsPage() {
   const t = useT();
   const { snap } = useLive();
-  const columns = useMemo<ColumnDef<JobTableRow>[]>(() => [
+  const columns = useMemo<ColumnDef<DataTableFeatures, JobTableRow>[]>(() => [
     ...jobColumns<JobTableRow>(t),
     {
       id: "resource_pool",

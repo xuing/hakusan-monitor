@@ -1,4 +1,5 @@
-import type { ColumnDef } from "@tanstack/react-table";
+import type { ColumnDef, SortFn } from "@tanstack/react-table";
+import type { DataTableFeatures } from "./table-features";
 import { reasonLabel, type TFn } from "@/i18n";
 import { fmtAt, fmtDurUnits, fmtEpoch, fmtMB } from "@/lib/format";
 import type { RawJob } from "@/types/snapshot";
@@ -8,12 +9,26 @@ import { commaArrayFilter, exactArrayFilter, setSingleFacet } from "./table-filt
 const mono = (v: string, cls = "") => <span className={`font-mono text-xs ${cls}`}>{v || "—"}</span>;
 const clickText = "rounded px-1 py-0.5 text-left transition-colors hover:bg-accent hover:text-foreground";
 
-export function jobColumns<T extends RawJob>(t: TFn): ColumnDef<T>[] {
+/** "759320_7" -> [759320, 7]; 761906 -> [761906, -1]. Job IDs mix numbers
+ *  and array-task strings, so automatic sort detection orders them
+ *  inconsistently — compare the job number, then the task index. */
+export function jobIdKey(id: string | number): [number, number] {
+  const m = String(id).match(/^(\d+)(?:_(\d+))?/);
+  return m ? [Number(m[1]), m[2] !== undefined ? Number(m[2]) : -1] : [Number.MAX_SAFE_INTEGER, -1];
+}
+
+export function jobColumns<T extends RawJob>(t: TFn): ColumnDef<DataTableFeatures, T>[] {
+  const jobIdSort: SortFn<DataTableFeatures, T> = (a, b) => {
+    const [aj, at] = jobIdKey(a.original.job_id);
+    const [bj, bt] = jobIdKey(b.original.job_id);
+    return aj - bj || at - bt;
+  };
   return [
     {
       accessorKey: "job_id",
       header: t("col.job"),
       cell: ({ row }) => <span className="font-mono font-medium">{row.original.job_id}</span>,
+      sortFn: jobIdSort,
     },
     { accessorKey: "name", header: t("col.name"), cell: ({ row }) => <span className="text-xs">{row.original.name || "—"}</span> },
     {

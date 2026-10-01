@@ -1,4 +1,5 @@
-import type { ColumnDef, SortingFn } from "@tanstack/react-table";
+import type { ColumnDef, SortFn } from "@tanstack/react-table";
+import type { DataTableFeatures } from "./table-features";
 import { poolLabel, type TFn } from "@/i18n";
 import { fmtAt, fmtMB } from "@/lib/format";
 import type { RawNode } from "@/types/snapshot";
@@ -7,7 +8,7 @@ import { exactArrayFilter, setSingleFacet } from "./table-filters";
 
 const mono = (v: string) => <span className="font-mono text-xs">{v || "—"}</span>;
 const muted = (v: string) => <span className="text-xs text-muted-foreground">{v || "—"}</span>;
-const firstStringSort: SortingFn<RawNode> = (a, b, columnId) => {
+const firstStringSort: SortFn<DataTableFeatures, RawNode> = (a, b, columnId) => {
   const av = a.getValue<string[] | string>(columnId);
   const bv = b.getValue<string[] | string>(columnId);
   const as = Array.isArray(av) ? av[0] : av;
@@ -15,7 +16,7 @@ const firstStringSort: SortingFn<RawNode> = (a, b, columnId) => {
   return String(as ?? "").localeCompare(String(bs ?? ""));
 };
 
-export function nodeColumns(t: TFn): ColumnDef<RawNode>[] {
+export function nodeColumns(t: TFn): ColumnDef<DataTableFeatures, RawNode>[] {
   return [
     {
       accessorKey: "name",
@@ -46,7 +47,7 @@ export function nodeColumns(t: TFn): ColumnDef<RawNode>[] {
       header: t("col.state"),
       cell: ({ row, table }) => <StateBadges states={row.original.state} onSelect={(state) => setSingleFacet(table, "state", state)} />,
       filterFn: exactArrayFilter,
-      sortingFn: firstStringSort,
+      sortFn: firstStringSort,
     },
     {
       id: "partitions",
@@ -58,7 +59,7 @@ export function nodeColumns(t: TFn): ColumnDef<RawNode>[] {
         </span>
       ),
       filterFn: exactArrayFilter,
-      sortingFn: firstStringSort,
+      sortFn: firstStringSort,
     },
     {
       id: "cpus",

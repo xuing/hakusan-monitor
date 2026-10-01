@@ -1,21 +1,14 @@
 import { Fragment, useMemo, useState, type MouseEvent, type ReactNode } from "react";
 import {
-  flexRender,
-  getCoreRowModel,
-  getExpandedRowModel,
-  getFacetedRowModel,
-  getFacetedUniqueValues,
-  getFilteredRowModel,
-  getPaginationRowModel,
-  getSortedRowModel,
-  useReactTable,
+  useTable,
+  type RowData,
   type ColumnDef,
   type ColumnFiltersState,
   type ExpandedState,
   type PaginationState,
   type SortingState,
   type Table as TanStackTable,
-  type VisibilityState,
+  type ColumnVisibilityState,
 } from "@tanstack/react-table";
 import {
   ArrowDown,
@@ -48,9 +41,10 @@ import {
 } from "@/components/ui/table";
 import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
+import { dataTableFeatures, type DataTableFeatures } from "./table-features";
 import { normalizeFilter } from "./table-filters";
 
-export interface DataFacet<T> {
+export interface DataFacet<T extends RowData> {
   columnId: string;
   label: string;
   valueLabel?: (value: string) => string;
@@ -59,8 +53,8 @@ export interface DataFacet<T> {
   groups?: { label: string; values: string[] }[];
 }
 
-interface DataTableProps<T> {
-  columns: ColumnDef<T>[];
+interface DataTableProps<T extends RowData> {
+  columns: ColumnDef<DataTableFeatures, T>[];
   data: T[];
   facets?: DataFacet<T>[];
   initialHidden?: string[];
@@ -68,7 +62,7 @@ interface DataTableProps<T> {
   renderSubRow?: (row: T) => ReactNode;
 }
 
-export function DataTable<T>({
+export function DataTable<T extends RowData>({
   columns,
   data,
   facets = [],
@@ -82,11 +76,11 @@ export function DataTable<T>({
   const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([]);
   const [expanded, setExpanded] = useState<ExpandedState>({});
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize });
-  const [columnVisibility, setColumnVisibility] = useState<VisibilityState>(
+  const [columnVisibility, setColumnVisibility] = useState<ColumnVisibilityState>(
     Object.fromEntries(initialHidden.map((id) => [id, false])),
   );
 
-  const allColumns = useMemo<ColumnDef<T>[]>(
+  const allColumns = useMemo<ColumnDef<DataTableFeatures, T>[]>(
     () =>
       renderSubRow
         ? [
@@ -115,7 +109,8 @@ export function DataTable<T>({
     [columns, renderSubRow],
   );
 
-  const table = useReactTable({
+  const table = useTable({
+    features: dataTableFeatures,
     data,
     columns: allColumns,
     state: { sorting, globalFilter, columnFilters, expanded, pagination, columnVisibility },
@@ -126,13 +121,6 @@ export function DataTable<T>({
     onPaginationChange: setPagination,
     onColumnVisibilityChange: setColumnVisibility,
     getRowCanExpand: () => !!renderSubRow,
-    getCoreRowModel: getCoreRowModel(),
-    getFilteredRowModel: getFilteredRowModel(),
-    getFacetedRowModel: getFacetedRowModel(),
-    getFacetedUniqueValues: getFacetedUniqueValues(),
-    getSortedRowModel: getSortedRowModel(),
-    getExpandedRowModel: getExpandedRowModel(),
-    getPaginationRowModel: getPaginationRowModel(),
     globalFilterFn: "includesString",
     // live snapshots replace `data` every few minutes — don't yank the user
     // back to page 1 or collapse their expanded rows on each refresh
@@ -194,11 +182,11 @@ export function DataTable<T>({
                           className="inline-flex items-center gap-1 text-left hover:text-foreground"
                           onClick={header.column.getToggleSortingHandler()}
                         >
-                          {flexRender(header.column.columnDef.header, header.getContext())}
+                          <table.FlexRender header={header} />
                           <SortIcon sort={header.column.getIsSorted()} />
                         </button>
                       ) : (
-                        flexRender(header.column.columnDef.header, header.getContext())
+                        <table.FlexRender header={header} />
                       )}
                     </TableHead>
                   ))}
@@ -221,7 +209,7 @@ export function DataTable<T>({
                     >
                       {row.getVisibleCells().map((cell) => (
                         <TableCell key={cell.id} className="whitespace-nowrap py-1.5 text-xs">
-                          {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                          <table.FlexRender cell={cell} />
                         </TableCell>
                       ))}
                     </TableRow>
@@ -243,7 +231,7 @@ export function DataTable<T>({
       {table.getPageCount() > 1 && (
         <div className="flex items-center justify-end gap-1.5 text-xs text-muted-foreground">
           <span className="tnum mr-1">
-            {table.getState().pagination.pageIndex + 1} / {table.getPageCount()}
+            {table.state.pagination.pageIndex + 1} / {table.getPageCount()}
           </span>
           <PageButton label="First page" onClick={() => table.firstPage()} disabled={!table.getCanPreviousPage()}>
             <ChevronsLeft className="h-4 w-4" />
@@ -263,7 +251,7 @@ export function DataTable<T>({
   );
 }
 
-function FacetDropdown<T>({ table, facet }: { table: TanStackTable<T>; facet: DataFacet<T> }) {
+function FacetDropdown<T extends RowData>({ table, facet }: { table: TanStackTable<DataTableFeatures, T>; facet: DataFacet<T> }) {
   const t = useT();
   const column = table.getColumn(facet.columnId);
   if (!column) return null;
@@ -383,7 +371,7 @@ function FacetDropdown<T>({ table, facet }: { table: TanStackTable<T>; facet: Da
   );
 }
 
-function facetOptions<T>(table: TanStackTable<T>, facet: DataFacet<T>) {
+function facetOptions<T extends RowData>(table: TanStackTable<DataTableFeatures, T>, facet: DataFacet<T>) {
   const column = table.getColumn(facet.columnId);
   if (!column) return [];
   const counts = new Map<string, number>();
@@ -408,7 +396,7 @@ function facetOptions<T>(table: TanStackTable<T>, facet: DataFacet<T>) {
     .sort((a, b) => b.count - a.count || valueLabel(a.value).localeCompare(valueLabel(b.value)));
 }
 
-function ColumnMenu<T>({ table }: { table: TanStackTable<T> }) {
+function ColumnMenu<T extends RowData>({ table }: { table: TanStackTable<DataTableFeatures, T> }) {
   const t = useT();
   return (
     <DropdownMenu>
