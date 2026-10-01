@@ -280,6 +280,13 @@ export interface PolicyCheckReport {
   probe_jobs_left?: number;
   partitions?: Record<string, PolicyCheckPartition>;
   skipped?: Record<string, string>;
+  /** largest value of every quick-request field, probed as held jobs */
+  boundary?: {
+    checked: number;
+    problems: { partition: string; field: string; value: string; args: string; issues: string[] }[];
+    skipped?: string;
+    probe_jobs_left?: number | null;
+  };
 }
 
 /** GET /api/policy-source — the raw cluster texts the policy block is read from. */

@@ -141,7 +141,16 @@ class TresPolicyTests(unittest.TestCase):
 
         self.assertEqual((d["cores"], d["def_mem_per_cpu_mb"], d["lua_mem_per_node_mb"]), (16, 6000, 98304))
         self.assertTrue(d["measured"])
-        self.assertEqual(snap["check"], {"checked_at": 5, "lua_sha": None, "ok": True, "mismatches": []})
+        self.assertEqual(snap["check"], {"checked_at": 5, "lua_sha": None, "ok": True, "mismatches": [],
+                                         "boundary_checked": 0})
+
+    def test_boundary_problems_fail_the_check(self):
+        check = {"checked_at": 5, "partitions": {"DEF": {"ok": True}},
+                 "boundary": {"checked": 80, "problems": [{"partition": "GPU-L", "field": "mem"}]}}
+        snap = build_policy_snapshot("", "", now=1, interval=1, check=check)
+
+        self.assertFalse(snap["check"]["ok"])
+        self.assertEqual(snap["check"]["mismatches"], ["GPU-L:mem"])
 
 
 class QueueParserTests(unittest.TestCase):

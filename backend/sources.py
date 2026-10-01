@@ -380,11 +380,16 @@ def _check_summary(check):
     if not check:
         return None
     parts = check.get("partitions") or {}
+    boundary = check.get("boundary") or {}
+    # boundary problems: a quick-request value the UI offers that Slurm
+    # would reject or never start — named "PARTITION:field"
+    bad_bounds = sorted({f"{b['partition']}:{b['field']}" for b in boundary.get("problems") or []})
     return {
         "checked_at": check.get("checked_at"),
         "lua_sha": check.get("lua_sha"),
-        "ok": all(p.get("ok", True) for p in parts.values()),
-        "mismatches": sorted(n for n, p in parts.items() if p.get("ok") is False),
+        "ok": all(p.get("ok", True) for p in parts.values()) and not bad_bounds,
+        "mismatches": sorted(n for n, p in parts.items() if p.get("ok") is False) + bad_bounds,
+        "boundary_checked": boundary.get("checked", 0),
     }
 
 

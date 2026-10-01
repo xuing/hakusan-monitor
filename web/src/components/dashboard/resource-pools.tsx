@@ -42,11 +42,12 @@ import {
   type GpuFitNode,
   type GpuFitTipData,
 } from "@/lib/gpu-fit";
-import { allowsMultiNode, defaultRequestSec, effectiveMemPerNodeGb, interactiveForcedLabel, interactiveForcedSec, isMaterialsStudioPartition, matchPool, minutesToSlurmTime, partitionCap, partitionDefaultRequest, partitionDefaults, partitionPolicy, type PartitionPolicy, type Tone } from "@/lib/slurm";
+import { allowsMultiNode, defaultRequestSec, interactiveForcedLabel, interactiveForcedSec, isMaterialsStudioPartition, matchPool, minutesToSlurmTime, partitionCap, partitionDefaultRequest, partitionDefaults, partitionPolicy, type PartitionPolicy, type Tone } from "@/lib/slurm";
 import { cn } from "@/lib/utils";
 import { cpuProbeMaxAge, cpuProbeRows, cpuProbeState, type CpuProbeRow } from "@/lib/cpu-probes";
 import { buildRequestCommand, shouldShowGapShell } from "@/lib/request-command";
 import { gpuLayouts, type GpuLayout, type GpuNodeShape } from "@/lib/gpu-layout";
+import { requestLimits, type PoolShape } from "@/lib/request-limits";
 import { defaultRequestFit, singleNodeCoreFlag } from "@/lib/default-request";
 import { gpuPartitionAdvice, partitionRunningJobs } from "@/lib/gpu-advice";
 import type { Occupant, Partition, Pool, PoolGpu, RawJob, Snapshot } from "@/types/snapshot";
@@ -341,7 +342,15 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
   const policy = partitionPolicy(partition, snap?.policy);
   const selectedPart = snap?.partitions.find((p) => p.name === partition);
   const groupRunning = snap ? partitionRunningJobs(snap.jobs, partition) : 0;
-  const multiNodePolicy = allowsMultiNode(cap, pool.nodes ? pool.cpus_total / pool.nodes : undefined);
+  // field bounds come from request-limits (shared with the daily boundary check)
+  const limitShape: PoolShape = {
+    nodes: selectedPart?.nodes ?? pool.nodes,
+    coresPerNode: poolCoresPerNode(pool),
+    memPerNodeMb: pool.mem_per_node,
+    gpusPerNode: selectedPart?.spec.gpu_per_node ?? 0,
+  };
+  const baseLimits = requestLimits(partition, snap?.policy, limitShape, isGpu);
+  const multiNodePolicy = baseLimits.multiNode;
   // Multi-GPU options this partition can really grant (QoS cores/memory/GPUs,
   // plugin GPU rule, node shape). Anything else is not offered at all, and a
   // choice the newly picked partition can't hold falls back to the default.
@@ -381,7 +390,7 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
     ? (partitionDefaults(partition, snap?.policy).gpus_per_node ?? 0) * Math.max(0, defaultFit.nodesNeeded - 1)
     : 0;
   const singleNodeFlag = singleNodeCoreFlag(defaultFit);
-  const effMemGb = effectiveMemPerNodeGb(cap, pool.mem_per_node, poolCoresPerNode(pool));
+  const effMemGb = baseLimits.maxMemGb;
   const maxMemMb = effMemGb ? effMemGb * 1024 : 0;
   const memTooHigh = parsedMemMb > 0 && maxMemMb > 0 && parsedMemMb > maxMemMb;
   const memValue = normalizedMem && !memTooHigh ? normalizedMem : "";
@@ -401,21 +410,11 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
   // clamped flag, and vice versa. Below-minimum counts too: LARGE-class QOS
   // rejects -c under MinTRES at submit, while flagless requests are shaped
   // up to the minimum automatically, so Default is the safe fallback.
-  // -N is only offered where it means something and can run: multi-node CPU
-  // partitions (GPU pools pick nodes
-  // through the GPU layout, which also prices the per-node GPUs), never more
-  // nodes than the partition has, than the QoS cores allow (1 CPU each), or
-  // than there are tasks to place (-n, or the plugin's default task count) —
-  // measured: `-p GPU-L -N 27` is accepted on a 20-node pool and never starts.
+  // -N bounds (request-limits): multi-node CPU partitions only, never more
+  // nodes than the partition has, the QoS cores allow, or tasks to place
   const coreCountRaw = withinCapInt(cores, cap.maxCores, cap.minCores);
-  const defaultTasks = partitionDefaults(partition, snap?.policy).tasks;
-  const nodeLimit = isGpu || !multiNodePolicy ? 0 : Math.min(
-    cap.maxNodes ?? Number.POSITIVE_INFINITY,
-    selectedPart?.nodes || Number.POSITIVE_INFINITY,
-    cap.maxCores ?? Number.POSITIVE_INFINITY,
-    coreCountRaw || defaultTasks || Number.POSITIVE_INFINITY,
-  );
-  const nodeCount = nodeLimit > 0 ? withinCapInt(nodes, Number.isFinite(nodeLimit) ? nodeLimit : undefined) : 0;
+  const nodeLimit = requestLimits(partition, snap?.policy, limitShape, isGpu, coreCountRaw).maxNodes;
+  const nodeCount = nodeLimit > 0 ? withinCapInt(nodes, nodeLimit) : 0;
   // tasks must cover the nodes: an -n below the chosen -N cannot be placed
   const coreCount = nodeCount && coreCountRaw && coreCountRaw < nodeCount ? 0 : coreCountRaw;
   // Same rule for -t vs the partition wall (mirrors --mem's memTooHigh).
@@ -537,9 +536,7 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
   // the scatter warning is about the implicit multi-node DEFAULT — once the
   // user pins -N themselves it describes a state they already left
   const multiNodeCpuPolicy = !isGpu && multiNodePolicy && !nodeCount;
-  const nodeOptions = nodeLimit > 0
-    ? numberOptions(Number.isFinite(nodeLimit) ? nodeLimit : undefined, [1, 2, 3, 4, 8, 16, 32])
-    : [];
+  const nodeOptions = nodeLimit > 0 ? numberOptions(nodeLimit, [1, 2, 3, 4, 8, 16, 32]) : [];
   const coreOptions = numberOptions(cap.maxCores, [1, 2, 4, 8, 16, 26, 32, 52, 64, 96, 128, 208, 256, 512, 768, 1024, 2048, 4096, 8192],
     Math.max(cap.minCores ?? 1, nodeCount || 1));
   const timeOptions = timeOptionsFor(cap.wall, t);
@@ -828,7 +825,7 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
                 )}
                 {!multiGpu && (<>
                 {nodeOptions.length > 0 && (
-                <Field label={capSuffix(t("spec.nodes"), Number.isFinite(nodeLimit) ? nodeLimit : undefined)}>
+                <Field label={capSuffix(t("spec.nodes"), nodeLimit)}>
                   <select value={nodeCount ? nodes : ""} onChange={(e) => setNodes(e.target.value)} className={fieldCls}>
                     <option value="">{t("pool.default")}</option>
                     {nodeOptions.map((n) => (

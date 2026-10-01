@@ -169,11 +169,16 @@ export function PolicySourceSection() {
   const badParts = check?.partitions
     ? Object.entries(check.partitions).filter(([, v]) => v.ok === false).map(([k]) => k)
     : policy?.check?.mismatches ?? [];
+  // quick-request values the UI offers that Slurm would reject or never start
+  const boundary = check?.boundary;
+  const badBounds = (boundary?.problems ?? []).map((b) => `${b.partition} ${b.field}=${b.value}`);
   const checkLine = !checkedAt
     ? t("guide.policy.checkedNone")
-    : badParts.length
-      ? t("guide.policy.checkedBad", { time: fmtDateTime(checkedAt), parts: badParts.join(", ") })
-      : t("guide.policy.checkedOk", { time: fmtDateTime(checkedAt) });
+    : badParts.length || badBounds.length
+      ? t("guide.policy.checkedBad", { time: fmtDateTime(checkedAt), parts: [...badParts, ...badBounds].join(", ") })
+      : boundary?.checked
+        ? t("guide.policy.checkedOkBoundary", { time: fmtDateTime(checkedAt), n: boundary.checked })
+        : t("guide.policy.checkedOk", { time: fmtDateTime(checkedAt) });
 
   // ---- findings, each only when its condition holds in the data --------------
   const luaFacts = lua?.partitions ?? policy?.lua?.partitions ?? {};
@@ -190,6 +195,9 @@ export function PolicySourceSection() {
   const findings: { key: string; tone: Tone; text: string }[] = [];
   if (badParts.length) {
     findings.push({ key: "mismatch", tone: "bad", text: t("guide.policy.find.mismatch", { parts: badParts.join(", ") }) });
+  }
+  if (badBounds.length) {
+    findings.push({ key: "boundary", tone: "bad", text: t("guide.policy.find.boundary", { list: badBounds.join(", ") }) });
   }
   if (overwritten.length) {
     findings.push({
