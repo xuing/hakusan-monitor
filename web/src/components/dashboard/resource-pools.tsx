@@ -381,7 +381,7 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
     ? (partitionDefaults(partition, snap?.policy).gpus_per_node ?? 0) * Math.max(0, defaultFit.nodesNeeded - 1)
     : 0;
   const singleNodeFlag = singleNodeCoreFlag(defaultFit);
-  const effMemGb = effectiveMemPerNodeGb(cap, pool.mem_per_node);
+  const effMemGb = effectiveMemPerNodeGb(cap, pool.mem_per_node, poolCoresPerNode(pool));
   const maxMemMb = effMemGb ? effMemGb * 1024 : 0;
   const memTooHigh = parsedMemMb > 0 && maxMemMb > 0 && parsedMemMb > maxMemMb;
   const memValue = normalizedMem && !memTooHigh ? normalizedMem : "";
@@ -401,8 +401,23 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
   // clamped flag, and vice versa. Below-minimum counts too: LARGE-class QOS
   // rejects -c under MinTRES at submit, while flagless requests are shaped
   // up to the minimum automatically, so Default is the safe fallback.
-  const nodeCount = withinCapInt(nodes, cap.maxNodes);
-  const coreCount = withinCapInt(cores, cap.maxCores, cap.minCores);
+  // -N is only offered where it means something and can run: multi-node CPU
+  // partitions (GPU pools pick nodes
+  // through the GPU layout, which also prices the per-node GPUs), never more
+  // nodes than the partition has, than the QoS cores allow (1 CPU each), or
+  // than there are tasks to place (-n, or the plugin's default task count) —
+  // measured: `-p GPU-L -N 27` is accepted on a 20-node pool and never starts.
+  const coreCountRaw = withinCapInt(cores, cap.maxCores, cap.minCores);
+  const defaultTasks = partitionDefaults(partition, snap?.policy).tasks;
+  const nodeLimit = isGpu || !multiNodePolicy ? 0 : Math.min(
+    cap.maxNodes ?? Number.POSITIVE_INFINITY,
+    selectedPart?.nodes || Number.POSITIVE_INFINITY,
+    cap.maxCores ?? Number.POSITIVE_INFINITY,
+    coreCountRaw || defaultTasks || Number.POSITIVE_INFINITY,
+  );
+  const nodeCount = nodeLimit > 0 ? withinCapInt(nodes, Number.isFinite(nodeLimit) ? nodeLimit : undefined) : 0;
+  // tasks must cover the nodes: an -n below the chosen -N cannot be placed
+  const coreCount = nodeCount && coreCountRaw && coreCountRaw < nodeCount ? 0 : coreCountRaw;
   // Same rule for -t vs the partition wall (mirrors --mem's memTooHigh).
   const wallSec = parseWallMinutes(cap.wall) * 60;
   const timeSel = time.trim() && (!wallSec || parseWalltimeSec(time) <= wallSec) ? time : "";
@@ -517,13 +532,16 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
   const policyDescBase = trMaybe(t, `policy.${partition}.desc`, "");
   // Multi-GPU is a rare need: everything about it lives under 高级参数.
   const policyDesc = policyDescBase;
-  const limitText = fmtPolicyLimit(cap, isGpu, t, partition, undefined, snap?.policy, isGpu ? gpuShape : undefined);
+  const limitText = fmtPolicyLimit(cap, isGpu, t, partition, pool.mem_per_node, snap?.policy, isGpu ? gpuShape : undefined, poolCoresPerNode(pool));
   const policyLimit = limitText ? `${t("part.policyLimit")} ${limitText}` : "";
   // the scatter warning is about the implicit multi-node DEFAULT — once the
   // user pins -N themselves it describes a state they already left
   const multiNodeCpuPolicy = !isGpu && multiNodePolicy && !nodeCount;
-  const nodeOptions = numberOptions(cap.maxNodes, [1, 2, 3, 4, 8, 16, 32]);
-  const coreOptions = numberOptions(cap.maxCores, [1, 2, 4, 8, 16, 26, 32, 52, 64, 96, 128, 208, 256, 512, 768, 1024, 2048, 4096, 8192], cap.minCores);
+  const nodeOptions = nodeLimit > 0
+    ? numberOptions(Number.isFinite(nodeLimit) ? nodeLimit : undefined, [1, 2, 3, 4, 8, 16, 32])
+    : [];
+  const coreOptions = numberOptions(cap.maxCores, [1, 2, 4, 8, 16, 26, 32, 52, 64, 96, 128, 208, 256, 512, 768, 1024, 2048, 4096, 8192],
+    Math.max(cap.minCores ?? 1, nodeCount || 1));
   const timeOptions = timeOptionsFor(cap.wall, t);
   const partitionGroups = partitionOptionGroups(pool.partitions, t);
   const gpuPartitionChoices = isGpu && pool.partitions.length > 1
@@ -534,7 +552,7 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
         return {
           partition: p,
           policy: trMaybe(t, `policy.${p}`, p),
-          limit: fmtPolicyLimit(partitionCap(p, snap?.policy), true, t, p, undefined, snap?.policy, gpuShape),
+          limit: fmtPolicyLimit(partitionCap(p, snap?.policy), true, t, p, pool.mem_per_node, snap?.policy, gpuShape, gpuShape.cores),
           verdict: partitionOptionVerdict(summary, t),
         };
       })
@@ -809,7 +827,8 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
                   </Field>
                 )}
                 {!multiGpu && (<>
-                <Field label={capSuffix(t("spec.nodes"), cap.maxNodes)}>
+                {nodeOptions.length > 0 && (
+                <Field label={capSuffix(t("spec.nodes"), Number.isFinite(nodeLimit) ? nodeLimit : undefined)}>
                   <select value={nodeCount ? nodes : ""} onChange={(e) => setNodes(e.target.value)} className={fieldCls}>
                     <option value="">{t("pool.default")}</option>
                     {nodeOptions.map((n) => (
@@ -817,6 +836,7 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
                     ))}
                   </select>
                 </Field>
+                )}
                 <Field label={capSuffix(t("unit.cores"), cap.maxCores, cap.minCores)}>
                   <select value={coreCount ? cores : ""} onChange={(e) => setCores(e.target.value)} className={fieldCls}>
                     <option value="">{t("pool.default")}</option>

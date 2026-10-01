@@ -613,7 +613,7 @@ function PartitionRow({
               )}
             </span>
             <span className="font-mono text-xs text-muted-foreground">
-              {t("part.policyLimit")} {fmtPolicyLimit(cap, isGpu, t, p.name, p.spec.mem_per_node, policy, gpuShape) || "—"}
+              {t("part.policyLimit")} {fmtPolicyLimit(cap, isGpu, t, p.name, p.spec.mem_per_node, policy, gpuShape, p.spec.cores_per_node) || "—"}
             </span>
             <span className={cn("font-mono text-xs", p.jobs.pending > 0 ? "text-warn-fg" : "text-muted-foreground")}>
               {t("part.run")}{nf(p.jobs.running)} {t("part.pend")}{nf(p.jobs.pending)}

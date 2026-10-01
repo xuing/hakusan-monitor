@@ -70,19 +70,32 @@ export interface PartitionPolicy {
 // min(policy, hardware).
 
 /** Largest --mem (per node) a single node can actually grant. */
-export function effectiveMemPerNodeGb(cap: PartitionCap, nodeMemMb?: number): number | undefined {
-  const hw = nodeMemMb ? Math.floor(nodeMemMb / 1024) : undefined;
-  const limits = [hw, cap.maxMemGb, cpuBoundMemGb(cap)].filter((v): v is number => !!v);
+export function effectiveMemPerNodeGb(cap: PartitionCap, nodeMemMb?: number, nodeCores?: number): number | undefined {
+  const limits = [hw(nodeMemMb), cap.maxMemGb, cpuBoundMemGb(cap), nodeCpuBoundMemGb(cap, nodeCores)]
+    .filter((v): v is number => !!v);
   return limits.length ? Math.min(...limits) : undefined;
+}
+
+const hw = (nodeMemMb?: number) => (nodeMemMb ? Math.floor(nodeMemMb / 1024) : undefined);
+
+/** Per-node memory one node's cores can carry: Slurm meets --mem above
+ *  cores x MaxMemPerCPU by adding CPUs, and a node has only so many.
+ *  Measured 2026-10-01: GPU-L --mem=503G -> 78 CPUs on a 52-core node (never
+ *  starts); --mem=499G -> 52 CPUs. SMALL --mem=1507G spills onto a second
+ *  256-core node; 1500G stays on one. */
+function nodeCpuBoundMemGb(cap: PartitionCap, nodeCores?: number): number | undefined {
+  if (!nodeCores || !cap.maxMemPerCpuMb) return undefined;
+  return Math.floor((nodeCores * cap.maxMemPerCpuMb) / 1024);
 }
 
 /** Job-total memory ceiling for the policy-limit line (spans maxNodes).
  *  Without a node limit the job may span as many nodes as it likes, so only
  *  the QoS total binds. */
-export function effectiveJobMemGb(cap: PartitionCap, nodeMemMb?: number): number | undefined {
+export function effectiveJobMemGb(cap: PartitionCap, nodeMemMb?: number, nodeCores?: number): number | undefined {
   if (!cap.maxMemGb) return undefined;
-  const hw = cap.maxNodes && nodeMemMb ? Math.floor(nodeMemMb / 1024) * cap.maxNodes : undefined;
-  const limits = [cap.maxMemGb, hw, cpuBoundMemGb(cap)].filter((v): v is number => !!v);
+  const perNode = [hw(nodeMemMb), nodeCpuBoundMemGb(cap, nodeCores)].filter((v): v is number => !!v);
+  const nodes = cap.maxNodes && perNode.length ? Math.min(...perNode) * cap.maxNodes : undefined;
+  const limits = [cap.maxMemGb, nodes, cpuBoundMemGb(cap)].filter((v): v is number => !!v);
   return Math.min(...limits);
 }
 

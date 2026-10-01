@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { fmtCapMem } from "./policy-hints";
 import {
   allowsMultiNode,
   defaultRequestSec,
@@ -141,5 +142,27 @@ describe("effective GPU limit", () => {
     expect(effectiveGpuLimit({ maxGpus: 2 }, { gpus_per_node: 1, gpu_request_respected: true })).toEqual({ total: 2, forced: false });
     expect(effectiveGpuLimit({ maxGpus: 2 }, undefined)).toEqual({ total: 2, forced: false });
     expect(effectiveGpuLimit({}, undefined)).toEqual({ total: undefined, forced: false });
+  });
+});
+
+describe("per-node memory a node's cores can carry (2026-10-01 boundary probes)", () => {
+  it("GPU-L stops at 52 x 9845 MB = 499 GiB, not the node's 503", () => {
+    // --mem=503G -> Slurm raised the job to 78 CPUs on a 52-core node (never
+    // starts); --mem=499G -> 52 CPUs on one node.
+    expect(effectiveMemPerNodeGb({ maxCores: 208, maxMemGb: 2048, maxMemPerCpuMb: 9845 }, 515306, 52)).toBe(499);
+  });
+
+  it("SMALL stops at 256 x 6000 MB = 1500 GiB, not the node's 1507", () => {
+    // --mem=1507G spilled onto a second 256-core node (512 CPUs); 1500G fits one.
+    expect(effectiveMemPerNodeGb({ maxCores: 768, maxMemGb: 4608, maxMemPerCpuMb: 6000 }, 1543224, 256)).toBe(1500);
+  });
+});
+
+describe("memory limits are shown exactly, never rounded up", () => {
+  it("prints GiB unless the value is a whole number of TiB", () => {
+    expect(fmtCapMem(1500)).toMatch(/^1,?500GiB$/);   // once "1.5TiB" = 1536 GiB
+    expect(fmtCapMem(4500)).toMatch(/^4,?500GiB$/);   // once "4.4TiB"
+    expect(fmtCapMem(2048)).toBe("2TiB");
+    expect(fmtCapMem(499)).toBe("499GiB");
   });
 });

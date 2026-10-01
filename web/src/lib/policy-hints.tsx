@@ -59,12 +59,11 @@ export function policyLimitRows(policy: PartitionPolicy, groupRunning: number, t
 
 export function fmtCapMem(gb?: number) {
   if (!gb) return "";
-  if (gb >= 1024) {
-    const tb = gb / 1024;
-    return `${Number.isInteger(tb) ? tb : tb.toFixed(1)}TiB`;
-  }
+  // Exact, never rounded up: a limit of 1500 GiB once read "1.5TiB"
+  // (= 1536 GiB, more than Slurm grants). Whole TiB stay compact.
+  if (gb >= 1024 && gb % 1024 === 0) return `${gb / 1024}TiB`;
   // QoS MaxTRES mem=256G is binary (GiB), same unit as --mem=256G
-  return `${gb}GiB`;
+  return `${nf(gb)}GiB`;
 }
 
 /** "8 GPU / 208c / 2TiB / 4 nodes / 3d" — no label prefix, "" when the cap is empty.
@@ -75,7 +74,7 @@ export function fmtCapMem(gb?: number) {
  * line says so, and a partition with neither a QoS GPU cap nor a plugin rule
  * gets no GPU term at all rather than an invented one. */
 export function fmtPolicyLimit(cap: PartitionCap, isGpu: boolean, t: TFn, partition?: string, nodeMemMb?: number,
-                               policy?: PolicySnapshot, shape?: GpuNodeShape) {
+                               policy?: PolicySnapshot, shape?: GpuNodeShape, nodeCores?: number) {
   const parts: string[] = [];
   if (isGpu) {
     const gpu = fmtGpuLimit(cap, partition ? partitionDefaults(partition, policy) : undefined, t, shape);
@@ -84,7 +83,7 @@ export function fmtPolicyLimit(cap: PartitionCap, isGpu: boolean, t: TFn, partit
   if (cap.maxCores) {
     parts.push(cap.minCores ? `${nf(cap.minCores)}–${nf(cap.maxCores)}c` : `${nf(cap.maxCores)}c`);
   }
-  const memGb = effectiveJobMemGb(cap, nodeMemMb);
+  const memGb = effectiveJobMemGb(cap, nodeMemMb, nodeCores ?? shape?.cores);
   if (memGb) parts.push(fmtCapMem(memGb));
   if (cap.maxNodes) parts.push(`${nf(cap.maxNodes)} ${t(cap.maxNodes === 1 ? "spec.nodeSingle" : "spec.nodes")}`);
   if (cap.wall) {
