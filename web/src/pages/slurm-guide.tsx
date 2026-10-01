@@ -347,7 +347,6 @@ export default function SlurmGuidePage() {
       <div id="advanced" className="scroll-mt-16 space-y-2 pt-2">
         <div className="px-1">
           <h2 className="text-base font-semibold">{t("guide.adv.title")}</h2>
-          <p className="mt-0.5 text-sm text-muted-foreground">{t("guide.adv.lead")}</p>
         </div>
 
         <Advanced id="containers" title={t("guide.adv.container.title")} hint={t("guide.adv.container.hint")}>
