@@ -508,8 +508,8 @@ function KindToggle({ value, onChange, t }: { value: Kind; onChange: (k: Kind) =
   );
 }
 
-/** Terminal-styled block (dark in both themes, like the quick-request
- *  command): `lines` get a $ prompt each; `file` shows a script with its
+/** Code block — muted in light theme, terminal-dark in dark theme:
+ *  `lines` get a $ prompt each; `file` shows a script with its
  *  name in a title bar instead. */
 function Terminal({ lines, output, file, text, className }: {
   lines?: string[];
@@ -521,14 +521,14 @@ function Terminal({ lines, output, file, text, className }: {
   const copyText = file ? (text ?? "") : (lines ?? []).join("\n");
   if (file) {
     return (
-      <div className={cn("min-w-0 overflow-hidden rounded-lg border border-zinc-800 bg-zinc-950", className)}>
-        <div className="flex items-center justify-between border-b border-zinc-800 px-3 py-1.5">
-          <span className="font-mono text-xs text-zinc-400">{file}</span>
-          <CopyButton text={copyText} label className="text-zinc-400 hover:bg-white/10 hover:text-zinc-100" />
+      <div className={cn("min-w-0 overflow-hidden rounded-lg border border-border bg-muted/40 dark:border-zinc-800 dark:bg-zinc-950", className)}>
+        <div className="flex items-center justify-between border-b border-border px-3 py-1.5 dark:border-zinc-800">
+          <span className="font-mono text-xs text-muted-foreground dark:text-zinc-400">{file}</span>
+          <CopyButton text={copyText} label className="text-muted-foreground hover:bg-foreground/5 hover:text-foreground dark:text-zinc-400 dark:hover:bg-white/10 dark:hover:text-zinc-100" />
         </div>
-        <pre className="overflow-x-auto px-3 py-2.5 font-mono text-xs leading-relaxed text-zinc-100">
+        <pre className="overflow-x-auto px-3 py-2.5 font-mono text-xs leading-relaxed text-foreground dark:text-zinc-100">
           {(text ?? "").split("\n").map((line, i) => (
-            <div key={i} className={cn(line.startsWith("#SBATCH") ? "text-sky-300" : line.startsWith("#") ? "text-zinc-500" : undefined)}>
+            <div key={i} className={cn(line.startsWith("#SBATCH") ? "text-sky-700 dark:text-sky-300" : line.startsWith("#") ? "text-muted-foreground dark:text-zinc-500" : undefined)}>
               {line || " "}
             </div>
           ))}
@@ -537,17 +537,17 @@ function Terminal({ lines, output, file, text, className }: {
     );
   }
   return (
-    <div className={cn("flex min-w-0 items-start gap-2 rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2", className)}>
-      <pre className="min-w-0 flex-1 overflow-x-auto font-mono text-xs leading-relaxed text-zinc-100">
+    <div className={cn("flex min-w-0 items-start gap-2 rounded-lg border border-border bg-muted/40 px-3 py-2 dark:border-zinc-800 dark:bg-zinc-950", className)}>
+      <pre className="min-w-0 flex-1 overflow-x-auto font-mono text-xs leading-relaxed text-foreground dark:text-zinc-100">
         {(lines ?? []).map((line, i) => (
           <div key={i}>
-            <span aria-hidden className="select-none text-zinc-500">$ </span>
+            <span aria-hidden className="select-none text-muted-foreground dark:text-zinc-500">$ </span>
             {line}
           </div>
         ))}
-        {output && <div className="text-zinc-500">{output}</div>}
+        {output && <div className="text-muted-foreground dark:text-zinc-500">{output}</div>}
       </pre>
-      <CopyButton text={copyText} label className="pt-0.5 text-zinc-400 hover:bg-white/10 hover:text-zinc-100" />
+      <CopyButton text={copyText} label className="pt-0.5 text-muted-foreground hover:bg-foreground/5 hover:text-foreground dark:text-zinc-400 dark:hover:bg-white/10 dark:hover:text-zinc-100" />
     </div>
   );
 }
