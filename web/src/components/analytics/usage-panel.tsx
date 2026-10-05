@@ -3,6 +3,7 @@ import { ChartPlaceholder } from "@/components/common/chart-placeholder";
 import { Empty } from "@/components/common/empty";
 import { HoverHint } from "@/components/common/hover-hint";
 import { SectionCard } from "@/components/common/section-card";
+import { Segmented } from "@/components/common/segmented";
 import { useApi } from "@/hooks/use-api";
 import { useT, type TFn } from "@/i18n";
 import type { TranslationKey } from "@/i18n/en";
@@ -62,24 +63,12 @@ export function UsagePanel() {
           {hasSparseData && <div className="text-xs text-warn-fg">{t("usage.lowConfidence")}</div>}
 
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <div className="flex rounded-md border border-border bg-background p-0.5">
-              {METRICS.map((item) => (
-                <button
-                  key={item}
-                  type="button"
-                  onClick={() => setMetric(item)}
-                  aria-pressed={metric === item}
-                  className={cn(
-                    "rounded-[4px] px-2.5 py-1 text-xs transition-colors",
-                    metric === item
-                      ? "bg-primary text-primary-foreground"
-                      : "text-muted-foreground hover:text-foreground",
-                  )}
-                >
-                  {metricLabel(item, t)}
-                </button>
-              ))}
-            </div>
+            <Segmented
+              value={metric}
+              onChange={setMetric}
+              className="h-8"
+              options={METRICS.map((item) => ({ value: item, label: metricLabel(item, t) }))}
+            />
             <span className="text-xs text-muted-foreground">{dateRangeText(data.since, data.until, data.timezone)}</span>
           </div>
 

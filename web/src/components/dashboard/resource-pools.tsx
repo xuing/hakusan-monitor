@@ -4,6 +4,7 @@ import { ChevronRight } from "lucide-react";
 import { CopyButton } from "@/components/common/copy-button";
 import { GpuReleaseHint } from "@/components/common/gpu-release-hint";
 import { PolicyLimitChips } from "@/components/common/policy-limit-chips";
+import { Segmented } from "@/components/common/segmented";
 import { Tag } from "@/components/common/tag";
 import { UnitBlocks } from "@/components/common/unit-blocks";
 import { Card, CardContent } from "@/components/ui/card";
@@ -157,7 +158,10 @@ function PoolCard({ pool, snap, t }: { pool: Pool; snap: Snapshot; t: TFn }) {
   return (
     <Card
       className={cn(
-        "transition-colors",
+        // min-w-0: a grid item sizes to its longest unbreakable line without
+        // it; the collapsed-row summary and the per-GPU block strip would
+        // widen the card past a phone screen
+        "min-w-0 transition-colors",
         maint
           ? "border-dashed border-muted-foreground/30 bg-muted/10"
           : hasAvailable
@@ -304,9 +308,13 @@ function DisclosureRow({
       type="button"
       onClick={onToggle}
       aria-expanded={open}
-      className="flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-left text-xs text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
+      className={cn(
+        "flex min-h-8 w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-left text-xs text-muted-foreground outline-none transition-colors",
+        "hover:bg-muted/60 hover:text-foreground focus-visible:ring-2 focus-visible:ring-primary/45",
+        open && "text-foreground",
+      )}
     >
-      <ChevronRight className={cn("h-3.5 w-3.5 shrink-0 transition-transform", open && "rotate-90")} />
+      <ChevronRight className={cn("h-3.5 w-3.5 shrink-0 transition-transform duration-150", open && "rotate-90")} />
       <span className="font-medium text-foreground/85">{label}</span>
       {count !== undefined && <span className="tnum font-mono">{count}</span>}
       {summary && <span className="ml-auto flex min-w-0 items-center gap-1.5 pl-2">{summary}</span>}
@@ -561,6 +569,22 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
       })
     : [];
   const fieldCls = "h-7 w-full rounded-md border border-border bg-background px-2 text-xs outline-none focus:border-primary";
+  // The partition cards already carry the selected partition's name, verdict
+  // and limit, so the explanation box states them only when there is no
+  // picker (CPU select, single-partition pool). Its verdict tag survives
+  // only when it differs from the card's: manual overrides, a multi-GPU
+  // layout or script-mode -t can change what the default request got.
+  const pickerShown = gpuPartitionChoices.length > 0;
+  const pickedVerdict = pickerShown
+    ? gpuPartitionChoices.find((c) => c.partition === partition)?.verdict ?? null
+    : null;
+  const hintTagDuplicated = Boolean(
+    shownHint && pickedVerdict && pickedVerdict.label === shownHint.label && pickedVerdict.tone === shownHint.tone,
+  );
+  const showHintTag = Boolean(shownHint)
+    && (!showGpuFitDetails || groupLimitReached || !gpuTip || multiGpu)
+    && !hintTagDuplicated;
+  const showPolicyHeader = !pickerShown || showHintTag;
 
   // Collapsed one-glance verdict for the row. Scan every partition and lead
   // with the most startable one — the default partition's "will queue · group
@@ -613,22 +637,16 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
               </Field>
             )}
             <Field label={t("pool.mode")}>
-              <div className="flex h-7 rounded-md border border-border p-0.5">
-                {(["interactive", "script"] as const).map((m) => (
-                  <button
-                    key={m}
-                    type="button"
-                    onClick={() => setMode(m)}
-                    aria-pressed={mode === m}
-                    className={cn(
-                      "flex-1 rounded-[4px] px-2 text-xs transition-colors",
-                      mode === m ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground",
-                    )}
-                  >
-                    {t(m === "interactive" ? "pool.modeInteractive" : "pool.modeScript")}
-                  </button>
-                ))}
-              </div>
+              <Segmented
+                value={mode}
+                onChange={setMode}
+                ariaLabel={t("pool.mode")}
+                className="flex w-full"
+                options={[
+                  { value: "interactive", label: t("pool.modeInteractive") },
+                  { value: "script", label: t("pool.modeScript") },
+                ]}
+              />
             </Field>
             {mode === "script" && (
               <Field label={t("pool.scriptFile")}>
@@ -653,14 +671,17 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
           )}
 
           {/* why / limits — explanation reads after the deliverable, not before it */}
-          <div className="rounded-md border border-border bg-muted/30 px-2.5 py-2">
-            <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-              <span className="text-xs font-medium text-foreground">{policyName}</span>
-              {shownHint && (!showGpuFitDetails || groupLimitReached || !gpuTip || multiGpu) && (
-                <Tag tone={shownHint.tone}>{shownHint.label}</Tag>
-              )}
-              {policyLimit && <span className="font-mono text-xs text-muted-foreground">{policyLimit}</span>}
-            </div>
+          {/* children keep their own mt-*; whichever renders first sits flush */}
+          <div className="rounded-md border border-border bg-muted/30 px-2.5 py-2 [&>:first-child]:mt-0">
+            {showPolicyHeader && (
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                {!pickerShown && <span className="text-xs font-medium text-foreground">{policyName}</span>}
+                {showHintTag && shownHint && <Tag tone={shownHint.tone}>{shownHint.label}</Tag>}
+                {!pickerShown && policyLimit && (
+                  <span className="font-mono text-xs text-muted-foreground">{policyLimit}</span>
+                )}
+              </div>
+            )}
             {policyDesc && <div className="mt-1 text-xs leading-relaxed text-muted-foreground">{policyDesc}</div>}
             {/* say each fact once: the diagnostic block restates contention /
                 fit details, and group-full has its own dedicated sentence */}
@@ -797,16 +818,11 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
 
           {/* last on purpose: it only grows downward, so toggling it (or the
               mem-tip auto-open) never shifts the command or the tip button */}
-          <button
-            type="button"
-            onClick={() => setAdvanced(!advanced)}
-            className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
-          >
-            <ChevronRight className={cn("h-3 w-3 transition-transform", advanced && "rotate-90")} />
-            {t("pool.advanced")}
-          </button>
+          <div className="-mx-2">
+            <DisclosureRow open={advanced} onToggle={() => setAdvanced(!advanced)} label={t("pool.advanced")} />
+          </div>
           {advanced && (
-            <div className="space-y-1.5">
+            <div className="space-y-1.5 pb-1">
               <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
                 {layouts.length > 1 && (
                   <Field label={t("pool.gpuLayout")}>

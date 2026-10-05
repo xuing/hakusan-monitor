@@ -7,6 +7,7 @@ import { Link } from "react-router";
 import { AlertTriangle, ChevronRight, Clock, ExternalLink, Info, MemoryStick } from "lucide-react";
 import { SectionCard } from "@/components/common/section-card";
 import { CopyButton } from "@/components/common/copy-button";
+import { Segmented } from "@/components/common/segmented";
 import { useLive } from "@/hooks/live-context";
 import { useT, type TFn, type TranslationKey } from "@/i18n";
 import { fmtMB } from "@/lib/format";
@@ -482,22 +483,14 @@ function Section({ id, className, title, lead, extra, children }: {
 
 function KindToggle({ value, onChange, t }: { value: Kind; onChange: (k: Kind) => void; t: TFn }) {
   return (
-    <div className="flex h-8 shrink-0 rounded-md border border-border p-0.5" role="group" aria-label={t("guide.kindLabel")}>
-      {(["cpu", "gpu"] as const).map((k) => (
-        <button
-          key={k}
-          type="button"
-          onClick={() => onChange(k)}
-          aria-pressed={value === k}
-          className={cn(
-            "rounded-[4px] px-3 text-xs font-medium transition-colors",
-            value === k ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground",
-          )}
-        >
-          {k.toUpperCase()}
-        </button>
-      ))}
-    </div>
+    <Segmented
+      value={value}
+      onChange={onChange}
+      ariaLabel={t("guide.kindLabel")}
+      className="h-8"
+      itemClassName="px-3 font-medium"
+      options={(["cpu", "gpu"] as const).map((k) => ({ value: k, label: k.toUpperCase() }))}
+    />
   );
 }
 
