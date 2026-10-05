@@ -619,9 +619,11 @@ function PartitionRow({
               )}
             </span>
           </div>
-          <div className="mt-0.5 text-xs text-muted-foreground/80">
-            {t(labelPolicy.desc)}
-          </div>
+          {t(labelPolicy.desc) && (
+            <div className="mt-0.5 text-xs text-muted-foreground/80">
+              {t(labelPolicy.desc)}
+            </div>
+          )}
           {gpuTip && (
             <div className="mt-0.5 text-xs text-warn-fg">
               {t("pool.quickGpuMemHint", { mem: gpuTip.mem })} · {gpuTip.node}
