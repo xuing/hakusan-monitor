@@ -21,6 +21,17 @@ export function reasonLabel(t: TFn, raw: string): string {
   return t(key) === key ? raw : t(key);
 }
 
+/** What a raw Slurm reason means (Slurm's job reason codes), localized:
+ *  full key, then first word ("Nodes required for job are DOWN, …"); "" when
+ *  the code has no description. */
+export function reasonDescription(t: TFn, raw: string): string {
+  if (!raw) return "";
+  for (const key of [`reason.${raw}.desc`, `reason.${raw.split(/[\s_]/)[0]}.desc`] as TranslationKey[]) {
+    if (t(key) !== key) return t(key);
+  }
+  return "";
+}
+
 /** Localized hardware-pool label, falling back to the id. */
 export function poolLabel(t: TFn, id: string): string {
   const key = `pool.${id}` as TranslationKey;

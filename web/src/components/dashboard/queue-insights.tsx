@@ -1,5 +1,7 @@
 import type { ReactNode } from "react";
+import { ExternalLink } from "lucide-react";
 import { Empty } from "@/components/common/empty";
+import { ReasonText } from "@/components/common/reason-text";
 import { SectionCard } from "@/components/common/section-card";
 import { useLive } from "@/hooks/live-context";
 import { reasonLabel, useT } from "@/i18n";
@@ -35,7 +37,18 @@ export function QueueInsights() {
         <div className="mb-4">
           <div className="mb-2 flex items-baseline justify-between gap-2">
             <h3 className="text-xs text-muted-foreground">{t("queue.reasons")}</h3>
-            <span className="tnum text-xs text-muted-foreground">{reasonTotal}</span>
+            <span className="flex items-baseline gap-3 text-xs text-muted-foreground">
+              <a
+                href="https://slurm.schedmd.com/job_reason_codes.html"
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1 whitespace-nowrap hover:text-foreground"
+              >
+                {t("queue.reasonsDoc")}
+                <ExternalLink aria-hidden className="h-3 w-3" />
+              </a>
+              <span className="tnum">{reasonTotal}</span>
+            </span>
           </div>
           <div className="flex h-2.5 w-full gap-px overflow-hidden rounded-full bg-muted">
             {reasonEntries.map(([reason, n]) => (
@@ -51,7 +64,7 @@ export function QueueInsights() {
             {reasonEntries.map(([reason, n]) => (
               <span key={reason} className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
                 <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: reasonColor(reason) }} />
-                {reasonLabel(t, reason)}
+                <ReasonText reason={reason} t={t} />
                 <span className="tnum text-foreground">{n}</span>
               </span>
             ))}
@@ -84,7 +97,7 @@ export function QueueInsights() {
                     <Td>{j.job_id}</Td>
                     <Td className="text-info-fg">{j.user}</Td>
                     <Td>{j.gpu || `${j.cpus}c`}</Td>
-                    <Td className="text-muted-foreground">{reasonLabel(t, j.reason)}</Td>
+                    <Td className="text-muted-foreground"><ReasonText reason={j.reason} t={t} /></Td>
                     <Td className="text-muted-foreground">{fmtEpoch(j.submit_time)}</Td>
                     <Td className="text-muted-foreground">{j.start_est ? fmtAt(j.start_est) : "—"}</Td>
                   </tr>

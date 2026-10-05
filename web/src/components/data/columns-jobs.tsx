@@ -1,6 +1,7 @@
 import type { ColumnDef, SortFn } from "@tanstack/react-table";
 import type { DataTableFeatures } from "./table-features";
-import { reasonLabel, type TFn } from "@/i18n";
+import { ReasonText } from "@/components/common/reason-text";
+import type { TFn } from "@/i18n";
 import { fmtAt, fmtDurUnits, fmtEpoch, fmtMB } from "@/lib/format";
 import type { RawJob } from "@/types/snapshot";
 import { JobStateBadge } from "./cells";
@@ -81,7 +82,7 @@ export function jobColumns<T extends RawJob>(t: TFn): ColumnDef<DataTableFeature
       // like "Being scheduled" would be nonsense there.
       cell: ({ row }) => (
         <span className="text-xs text-muted-foreground">
-          {row.original.job_state === "PENDING" ? reasonLabel(t, row.original.state_reason) : "—"}
+          {row.original.job_state === "PENDING" ? <ReasonText reason={row.original.state_reason} t={t} /> : "—"}
         </span>
       ),
     },

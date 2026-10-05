@@ -3,6 +3,7 @@ export { useI18n, useT, type I18nValue } from "./context";
 export {
   LANGS,
   poolLabel,
+  reasonDescription,
   reasonLabel,
   type Lang,
   type TFn,

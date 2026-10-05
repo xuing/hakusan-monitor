@@ -10,9 +10,10 @@ import { UnitBlocks } from "@/components/common/unit-blocks";
 import { Card, CardContent } from "@/components/ui/card";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { PartitionTable, type PartitionAxis, type PartitionTableRow } from "@/components/dashboard/partition-table";
+import { ReasonText } from "@/components/common/reason-text";
 import { useLive } from "@/hooks/live-context";
 import { useResourceFilter } from "@/hooks/resource-filter-context";
-import { poolLabel, reasonLabel, useT, type TFn, type TranslationKey } from "@/i18n";
+import { poolLabel, useT, type TFn, type TranslationKey } from "@/i18n";
 import { nodeIsSchedulable, nodeIsSchedulerHeld, nodeNeedsAttention, occupantsForPool, poolCapacity } from "@/lib/derive";
 import { fmtCountdown, fmtDur, fmtMB, nf, parseDur } from "@/lib/format";
 import type { GpuAvailabilitySegment } from "@/lib/gpu-availability";
@@ -2071,7 +2072,6 @@ function PendingJobs({ pool, t }: { pool: Pool; t: TFn }) {
 
 function PendingJobRow({ job, t }: { job: RawJob; t: TFn }) {
   const rawReason = job.state_reason || "None";
-  const reason = reasonLabel(t, rawReason);
   return (
     <div className="rounded-md bg-muted/40 px-2.5 py-1.5 text-xs">
       <div className="flex items-center justify-between gap-2">
@@ -2082,8 +2082,7 @@ function PendingJobRow({ job, t }: { job: RawJob; t: TFn }) {
         </div>
       </div>
       <div className="mt-1 truncate text-xs text-muted-foreground">
-        {reason}
-        {reason !== rawReason && <span className="font-mono"> ({rawReason})</span>}
+        <ReasonText reason={rawReason} t={t} />
       </div>
     </div>
   );
