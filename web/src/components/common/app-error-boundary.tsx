@@ -1,4 +1,5 @@
 import { Component, type ErrorInfo, type ReactNode } from "react";
+import { isChunkLoadError, reloadForNewBuild } from "@/lib/stale-build";
 
 export class AppErrorBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
   state = { failed: false };
@@ -8,6 +9,8 @@ export class AppErrorBoundary extends Component<{ children: ReactNode }, { faile
   }
 
   componentDidCatch(error: Error, info: ErrorInfo) {
+    // an old tab asking for a chunk the last deploy removed: load the new build
+    if (isChunkLoadError(error) && reloadForNewBuild()) return;
     console.error("render failed", error, info.componentStack);
   }
 
