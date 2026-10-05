@@ -474,7 +474,7 @@ function PoolHeader({
             {isGpu && gpuBlocked.map((segment) => (
               <Fragment key={segment.kind}>
                 <span>·</span>
-                <span className={cn("font-mono", segment.kind === "down" ? "text-bad-fg" : "text-warn-fg")}>
+                <span className={cn("font-mono", segment.kind === "down" ? "text-muted-foreground" : "text-warn-fg")}>
                   {nf(segment.count)} {unit} {gpuSegmentLabel(segment.kind, t)}
                 </span>
               </Fragment>

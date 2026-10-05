@@ -1694,7 +1694,7 @@ function fmtMemRaw(mb: number) {
 
 /** One block per physical GPU — ready (green), unavailable idle capacity
  * (amber, whether constrained or scheduler-reserved), used (red), then
- * genuinely offline (lighter red with an inset border). */
+ * genuinely offline (grey with an inset border). */
 function GpuBlocks({ gpu, schedulableFree, className }: { gpu: PoolGpu; schedulableFree?: number; className?: string }) {
   const ready = Math.max(0, Math.min(gpu.free, schedulableFree ?? gpu.free));
   const stranded = Math.max(0, gpu.free - ready);
@@ -1709,7 +1709,7 @@ function GpuBlocks({ gpu, schedulableFree, className }: { gpu: PoolGpu; schedula
       {seg(stranded, "bg-warn", "s")}
       {seg(reserved, "bg-warn", "r")}
       {seg(gpu.used, "bg-bad", "u")}
-      {seg(gpu.down, "bg-bad/35 ring-1 ring-inset ring-bad/65", "d")}
+      {seg(gpu.down, "bg-muted-foreground/25 ring-1 ring-inset ring-muted-foreground/45", "d")}
     </div>
   );
 }

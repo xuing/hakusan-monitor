@@ -21,7 +21,7 @@ export function gpuSegmentLabel(kind: GpuAvailabilityKind, t: TFn) {
 
 export function gpuSegmentTextClass(kind: GpuAvailabilityKind) {
   if (kind === "ready") return "text-ok-fg";
-  if (kind === "down") return "text-bad-fg";
+  if (kind === "down") return "text-muted-foreground";
   if (kind === "full") return "text-muted-foreground";
   // Resource constraints, queue contention, and scheduler reservations all
   // mean "idle but not directly available" and intentionally share amber.

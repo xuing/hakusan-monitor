@@ -14,8 +14,8 @@ const BUCKET_TONE: Record<string, Tone> = {
   idle: "ok",
   mixed: "warn",
   allocated: "info",
-  down: "bad",
-  drain: "bad",
+  down: "neutral",
+  drain: "neutral",
   reserved: "neutral",
 };
 const BUCKET_ORDER = ["idle", "mixed", "allocated", "down", "drain", "reserved"];

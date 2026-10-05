@@ -50,7 +50,7 @@ export function UnitBlocks({
       {cell(strandedCells, "bg-warn", "stranded")}
       {cell(reservedCells, "bg-warn", "reserved")}
       {cell(usedCells, "bg-bad", "used")}
-      {cell(downCells, "bg-bad/35 ring-1 ring-inset ring-bad/65", "down")}
+      {cell(downCells, "bg-muted-foreground/25 ring-1 ring-inset ring-muted-foreground/45", "down")}
     </div>
   );
 }

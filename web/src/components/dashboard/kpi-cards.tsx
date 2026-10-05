@@ -29,7 +29,7 @@ function ClusterKpis({ snap, t }: { snap: Snapshot; t: TFn }) {
     <>
       <SplitCard label={t("kpi.nodes")} stats={[
         [nodes.available, t("kpi.schedulable"), "text-ok-fg"],
-        [nodes.down, t("kpi.down"), "text-bad-fg"],
+        [nodes.down, t("kpi.down"), "text-muted-foreground"],
         [nodes.total, t("kpi.total"), "text-muted-foreground"],
       ]} />
       <BarKpi label={t("kpi.gpuNodes")} free={nodes.gpu_free} total={nodes.gpu_total} />
@@ -86,7 +86,7 @@ function PoolKpis({ pool, snap, t }: { pool: Pool; snap: Snapshot; t: TFn }) {
       ]} />
       <SplitCard label={t("kpi.nodes")} stats={[
         [schedulable, t("kpi.schedulable"), "text-ok-fg"],
-        [pool.down_nodes, t("kpi.down"), "text-bad-fg"],
+        [pool.down_nodes, t("kpi.down"), "text-muted-foreground"],
         [pool.nodes, t("kpi.total"), "text-muted-foreground"],
       ]} />
       <SplitCard label={t("kpi.queue")} stats={[
