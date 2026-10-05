@@ -15,7 +15,7 @@ decoupled from requests (true real-time push + durable history for peak/trough).
 Run:  python3 backend/server.py     (see env vars below)
 """
 from __future__ import annotations
-import gzip, json, math, os, queue, re, secrets, sys, threading, time
+import gzip, ipaddress, json, math, os, queue, re, secrets, sys, threading, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from types import MappingProxyType
 from urllib.parse import urlparse, parse_qs
@@ -105,6 +105,9 @@ CFG = {
     "visit_retain_days": int(env("HM_VISIT_RETAIN_DAYS", "365")),
     "max_sse":    int(env("HM_MAX_SSE", "64")),   # cap concurrent SSE connections
     "trust_proxy": env("HM_TRUST_PROXY", "0") in ("1", "true", "yes"),
+    # Page requests that reach the port directly (not via the proxy, not from
+    # this host) are redirected here, e.g. http://host/hakusan/. Empty = off.
+    "public_url": env("HM_PUBLIC_URL", "").rstrip("/"),
     "access_log": env("HM_ACCESS_LOG", "0") in ("1", "true", "yes"),
     "login_nodes": env("HM_LOGIN_NODES", ""),
     "login_interval": float(env("HM_LOGIN_INTERVAL", env("HM_SAMPLE_INTERVAL", "300"))),
@@ -427,6 +430,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._stream()
             if path.startswith("/api/"):
                 return self._api(path)
+            if self._should_redirect_public():
+                return self._redirect_public(path)
             return self._static(path)
         except (BrokenPipeError, ConnectionResetError):
             pass
@@ -539,6 +544,18 @@ class Handler(BaseHTTPRequestHandler):
             self.engine.store.record_visit(visitor, time.time())
         except Exception:
             pass
+
+    def _should_redirect_public(self):
+        if not CFG["public_url"] or self.headers.get("X-Forwarded-For"):
+            return False
+        return not ipaddress.ip_address(self.client_address[0].removeprefix("::ffff:")).is_loopback
+
+    def _redirect_public(self, path):
+        query = urlparse(self.path).query
+        self.send_response(302)
+        self.send_header("Location", f"{CFG['public_url']}{path}" + (f"?{query}" if query else ""))
+        self.send_header("Content-Length", "0")
+        self.end_headers()
 
     def _static(self, path):
         requested = "/index.html" if path in ("/", "") else path

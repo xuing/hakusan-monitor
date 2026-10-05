@@ -105,6 +105,27 @@ class ServerBehaviorTests(unittest.TestCase):
         self.assertEqual(engine.login.calls, 0)
 
 
+class PublicRedirectTests(unittest.TestCase):
+    def _decide(self, ip, headers=None, url="http://host.example/hakusan"):
+        from backend import server
+        fake = type("H", (), {"headers": headers or {}, "client_address": (ip, 0)})()
+        old = server.CFG["public_url"]
+        server.CFG["public_url"] = url
+        try:
+            return Handler._should_redirect_public(fake)
+        finally:
+            server.CFG["public_url"] = old
+
+    def test_direct_remote_page_requests_redirect(self):
+        self.assertTrue(self._decide("150.65.181.206"))
+
+    def test_proxy_local_and_disabled_do_not(self):
+        self.assertFalse(self._decide("172.17.0.2", {"X-Forwarded-For": "10.0.0.1"}))
+        self.assertFalse(self._decide("127.0.0.1"))
+        self.assertFalse(self._decide("::ffff:127.0.0.1"))
+        self.assertFalse(self._decide("150.65.181.206", url=""))
+
+
 class _ExplodingLogin:
     calls = 0
 

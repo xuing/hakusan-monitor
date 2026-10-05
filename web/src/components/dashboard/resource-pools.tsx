@@ -849,13 +849,42 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
                   </select>
                 </Field>
                 <Field label={`${t("kpi.memory")} (--mem)`}>
-                  <input
-                    value={mem}
-                    onChange={(e) => setMem(e.target.value)}
-                    placeholder={gpuTip?.mem || defLabel(defMemLabel)}
-                    className={cn(fieldCls, memError && "border-bad")}
-                  />
-                  {memError && <span className="mt-0.5 block text-xs leading-tight text-bad-fg">{memError}</span>}
+                  {effMemGb ? (
+                    // 1G steps up to what one node can really hold (QoS cap
+                    // clamped to RealMemory); untouched = the partition default
+                    <div className="flex h-7 items-center gap-2">
+                      <input
+                        type="range"
+                        min={1}
+                        max={effMemGb}
+                        step={1}
+                        value={memValue ? Math.min(effMemGb, Math.round(parsedMemMb / 1024)) : Math.min(effMemGb, Math.round(defMemMb / 1024)) || 1}
+                        onChange={(e) => setMem(`${e.target.value}G`)}
+                        className="h-1 min-w-0 flex-1 cursor-pointer accent-primary"
+                      />
+                      {memValue ? (
+                        <>
+                          <span className="shrink-0 font-mono text-foreground">{memValue}</span>
+                          <button type="button" onClick={(e) => { e.preventDefault(); setMem(""); }}
+                                  className="shrink-0 text-info-fg hover:underline">
+                            {t("pool.default")}
+                          </button>
+                        </>
+                      ) : (
+                        <span className="shrink-0">{defLabel(defMemLabel)}</span>
+                      )}
+                    </div>
+                  ) : (
+                    <>
+                      <input
+                        value={mem}
+                        onChange={(e) => setMem(e.target.value)}
+                        placeholder={gpuTip?.mem || defLabel(defMemLabel)}
+                        className={cn(fieldCls, memError && "border-bad")}
+                      />
+                      {memError && <span className="mt-0.5 block text-xs leading-tight text-bad-fg">{memError}</span>}
+                    </>
+                  )}
                 </Field>
                 </>)}
                 <Field label={t("pool.time")}>
