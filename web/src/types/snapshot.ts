@@ -438,6 +438,8 @@ export interface RawJob {
   /** nodes explicitly made ineligible by --exclude */
   exc_nodes?: string;
   time_used: string;
+  /** Slurm priority (squeue %Q); comparable across partitions here */
+  priority?: number;
   time_limit: string;
 }
 

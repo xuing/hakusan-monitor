@@ -194,6 +194,7 @@ class QueueParserTests(unittest.TestCase):
                 "512G",
                 "N/A",
                 "(null)",
+                "1000",
             ],
         )
 
@@ -219,7 +220,7 @@ class QueueParserTests(unittest.TestCase):
                 "1", "64", "N/A", "2026-06-30T12:00:00", "2026-07-07T12:00:00",
                 "N/A", "6-00:00:00", "calc", "normal", "lcpcc-043",
                 "1-00:00:00", "7-00:00:00", "6000M",
-                "", "",
+                "", "", "1000",
             ],
         )
         extras = {"378759": {"tres": "cpu=64,mem=375G,node=1,billing=64", "container": ""}}
@@ -253,7 +254,7 @@ class QueueParserTests(unittest.TestCase):
                 "1", "26", "gpu:1", "2026-07-04T13:32:39", "N/A",
                 "2026-07-09T01:45:25", "12:00:00", "interactive", "gpu-s", "",
                 "0:00", "12:00:00", "10000M",
-                "spcc-cld-gl01", "spcc-cld-gl[02-03]",
+                "spcc-cld-gl01", "spcc-cld-gl[02-03]", "22691",
             ],
         )
         reqtres = parse_pending_reqtres(
@@ -268,6 +269,7 @@ class QueueParserTests(unittest.TestCase):
         self.assertEqual(job["min_memory"], "260000M")
         self.assertEqual(job["req_nodes"], "spcc-cld-gl01")
         self.assertEqual(job["exc_nodes"], "spcc-cld-gl[02-03]")
+        self.assertEqual(job["priority"], 22691)
 
         # Running jobs must keep trusting tres-alloc, not the pending map.
         running = line.replace("PENDING", "RUNNING")

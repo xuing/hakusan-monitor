@@ -10,10 +10,10 @@ import { UnitBlocks } from "@/components/common/unit-blocks";
 import { Card, CardContent } from "@/components/ui/card";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { PartitionTable, type PartitionAxis, type PartitionTableRow } from "@/components/dashboard/partition-table";
-import { ReasonText } from "@/components/common/reason-text";
 import { useLive } from "@/hooks/live-context";
 import { useResourceFilter } from "@/hooks/resource-filter-context";
-import { poolLabel, useT, type TFn, type TranslationKey } from "@/i18n";
+import { poolLabel, reasonLabel, useT, type TFn, type TranslationKey } from "@/i18n";
+import { nextUpOrder } from "@/lib/pending-order";
 import { nodeIsSchedulable, nodeIsSchedulerHeld, nodeNeedsAttention, occupantsForPool, poolCapacity } from "@/lib/derive";
 import { fmtCountdown, fmtDur, fmtMB, nf, parseDur } from "@/lib/format";
 import type { GpuAvailabilitySegment } from "@/lib/gpu-availability";
@@ -2054,15 +2054,11 @@ function hasAvailableNodes(pool: Pool, snap: Snapshot) {
 function PendingJobs({ pool, t }: { pool: Pool; t: TFn }) {
   const { snap } = useLive();
   if (!snap) return null;
-  const all = pendingForPool(snap.jobs, snap.part_pool, pool.id)
-    .map((job, i) => ({ job, i }))
-    .sort((a, b) => pendingRank(a.job) - pendingRank(b.job) || a.i - b.i)
-    .map(({ job }) => job);
-  const list = all.slice(0, 12);
+  // every waiting job, in the order it gets its turn (the box scrolls)
+  const list = nextUpOrder(pendingForPool(snap.jobs, snap.part_pool, pool.id));
   if (list.length === 0) return null;
   return (
     <div className="mt-2 max-h-64 space-y-1 overflow-y-auto pr-1">
-      <div className="pb-1 text-xs text-muted-foreground">{t("pool.pendingShowing", { shown: list.length, total: all.length })}</div>
       {list.map((j) => (
         <PendingJobRow key={String(j.job_id)} job={j} t={t} />
       ))}
@@ -2082,7 +2078,10 @@ function PendingJobRow({ job, t }: { job: RawJob; t: TFn }) {
         </div>
       </div>
       <div className="mt-1 truncate text-xs text-muted-foreground">
-        <ReasonText reason={rawReason} t={t} />
+        {reasonLabel(t, rawReason)}
+        {job.start_est && Number.isFinite(Date.parse(job.start_est)) && (
+          <> · {t("pool.pendingStartEst", { when: dayClockLabel(job.start_est, t) })}</>
+        )}
       </div>
     </div>
   );
@@ -2095,10 +2094,6 @@ function pendingJobResources(job: RawJob, t: TFn) {
   if ((job.min_memory_mb ?? 0) > 0) parts.push(fmtMB(job.min_memory_mb));
   if (job.node_count > 0) parts.push(`${job.node_count} ${t("spec.nodes")}`);
   return parts.join(" · ") || "—";
-}
-
-function pendingRank(job: RawJob) {
-  return isLimitBlocked(job) ? 1 : 0;
 }
 
 function Occupants({ pool, t }: { pool: Pool; t: TFn }) {

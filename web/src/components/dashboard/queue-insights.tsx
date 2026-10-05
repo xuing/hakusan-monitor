@@ -97,7 +97,7 @@ export function QueueInsights() {
                     <Td>{j.job_id}</Td>
                     <Td className="text-info-fg">{j.user}</Td>
                     <Td>{j.gpu || `${j.cpus}c`}</Td>
-                    <Td className="text-muted-foreground"><ReasonText reason={j.reason} t={t} /></Td>
+                    <Td className="text-muted-foreground">{reasonLabel(t, j.reason)}</Td>
                     <Td className="text-muted-foreground">{fmtEpoch(j.submit_time)}</Td>
                     <Td className="text-muted-foreground">{j.start_est ? fmtAt(j.start_est) : "—"}</Td>
                   </tr>

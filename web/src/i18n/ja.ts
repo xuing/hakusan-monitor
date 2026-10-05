@@ -158,7 +158,7 @@ export const ja: Record<TranslationKey, string> = {
   "pool.gpuStatusFull": "空き GPU なし",
   "pool.occupants": "誰が使っているか",
   "pool.pendingJobs": "待ちジョブ",
-  "pool.pendingShowing": "{shown}/{total} 表示",
+  "pool.pendingStartEst": "{when} 開始予定",
   "pool.quickRequest": "クイックリクエスト",
   "pool.mode": "モード",
   "pool.modeInteractive": "対話",
@@ -695,7 +695,7 @@ export const ja: Record<TranslationKey, string> = {
   "reason.Reservation.desc": "ジョブは予約（reservation）が使えるようになるのを待っています。",
   "reason.BadConstraints": "要件を満たせない",
   "reason.BadConstraints.desc": "ジョブの要件を満たせず、実行できる見込みはありません。",
-  "reason.None": "スケジューラ未評価",
+  "reason.None": "スケジュール待ち",
   "reason.None.desc": "現在のバックフィル周期で、このジョブはまだスケジューラに評価されていません。",
 
   "footer.disclaimer": "コミュニティダッシュボード · JAIST 公式サービスではありません。",

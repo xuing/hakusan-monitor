@@ -158,7 +158,7 @@ export const en = {
   "pool.gpuStatusFull": "no idle GPU",
   "pool.occupants": "Who's using it",
   "pool.pendingJobs": "Pending jobs",
-  "pool.pendingShowing": "showing {shown}/{total}",
+  "pool.pendingStartEst": "starts ~{when}",
   "pool.quickRequest": "Quick request",
   "pool.mode": "Mode",
   "pool.modeInteractive": "Interactive",
@@ -695,7 +695,7 @@ export const en = {
   "reason.Reservation.desc": "The job is waiting for its advanced reservation to become available.",
   "reason.BadConstraints": "Requirements can't be met",
   "reason.BadConstraints.desc": "The job's requirements cannot be satisfied; it is never expected to be runnable.",
-  "reason.None": "Not yet evaluated",
+  "reason.None": "Waiting to be scheduled",
   "reason.None.desc": "The job has not been considered yet in the current backfill cycle.",
 
   "footer.disclaimer": "Community dashboard · not an official JAIST service.",

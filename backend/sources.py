@@ -30,7 +30,7 @@ LUA_MARK = "@@HM-LUA@@"
 SEP = "|@|"   # field separator unlikely to occur in any value (e.g. job names)
 # order matters — see parse_queue()
 SQUEUE_FIELDS = ["%i", "%u", "%a", "%P", "%T", "%r", "%D", "%C", "%b", "%V",
-                 "%e", "%S", "%L", "%j", "%q", "%N", "%M", "%l", "%m", "%n", "%x"]
+                 "%e", "%S", "%L", "%j", "%q", "%N", "%M", "%l", "%m", "%n", "%x", "%Q"]
 SQUEUE_FMT = SEP.join(SQUEUE_FIELDS)
 # JobArrayID, not JobID: -O JobID prints an array's BASE id ("759320") for
 # every task, so no task ever joined its row; JobArrayID matches %i exactly.
@@ -468,7 +468,7 @@ def parse_queue(text, extras=None, pending_reqtres=None):
             continue
         (jid, user, acct, part, state, reason, nnodes, cpus, gres, submit,
          end, start_est, left, name, qos, nodelist, used, timelimit, min_mem,
-         req_nodes, exc_nodes) = p[:21]
+         req_nodes, exc_nodes, priority) = p[:22]
         extra = extras.get(str(jid)) or {}
         alloc = _parse_tres(extra.get("tres", ""))
         gm = re.search(r"gpu:(?:([A-Za-z0-9_.\-]+):)?(\d+)", gres or "")
@@ -510,6 +510,9 @@ def parse_queue(text, extras=None, pending_reqtres=None):
             # Hard placement constraints are distinct from SchedNodes, which
             # is only the scheduler's current (and movable) future plan.
             "req_nodes": _clean(req_nodes), "exc_nodes": _clean(exc_nodes),
+            # %Q: every partition has PriorityTier 1 here, so priorities
+            # compare across partitions — the order Slurm considers jobs in
+            "priority": int(priority) if priority.isdigit() else 0,
             "time_used": _clean(used), "time_limit": _clean(timelimit),
             # keep the display string consistent with the corrected total so
             # the UI never shows a per-CPU "10000M" next to a 260000M verdict

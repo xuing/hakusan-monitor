@@ -158,7 +158,7 @@ export const zh: Record<TranslationKey, string> = {
   "pool.gpuStatusFull": "暂无空闲 GPU",
   "pool.occupants": "谁在使用",
   "pool.pendingJobs": "排队作业",
-  "pool.pendingShowing": "显示 {shown}/{total}",
+  "pool.pendingStartEst": "预计 {when} 开始",
   "pool.quickRequest": "快速申请",
   "pool.mode": "模式",
   "pool.modeInteractive": "交互",
@@ -695,7 +695,7 @@ export const zh: Record<TranslationKey, string> = {
   "reason.Reservation.desc": "作业在等它的预约（reservation）可用。",
   "reason.BadConstraints": "要求无法满足",
   "reason.BadConstraints.desc": "作业的要求无法满足，预计永远不会运行。",
-  "reason.None": "调度器尚未评估",
+  "reason.None": "等待调度",
   "reason.None.desc": "调度器在当前这轮 backfill 中还没评估这个作业。",
 
   "footer.disclaimer": "社区面板 · 非 JAIST 官方服务。",

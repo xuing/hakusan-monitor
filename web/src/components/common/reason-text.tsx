@@ -2,8 +2,9 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { reasonDescription, reasonLabel, type TFn } from "@/i18n";
 import { cn } from "@/lib/utils";
 
-/** A pending job's reason: the localized label; on hover or focus, the
- *  code Slurm reports and its meaning from Slurm's job reason codes. */
+/** A reason in the queue card's legend: the localized label; on hover or
+ *  focus, the code Slurm reports and its meaning from Slurm's job reason
+ *  codes. Job rows show the label alone — one explanation per reason. */
 export function ReasonText({ reason, t, className }: { reason: string; t: TFn; className?: string }) {
   const label = reasonLabel(t, reason);
   const desc = reasonDescription(t, reason);
@@ -14,7 +15,7 @@ export function ReasonText({ reason, t, className }: { reason: string; t: TFn; c
         <button
           type="button"
           className={cn(
-            "cursor-help text-left underline decoration-current/35 decoration-dotted underline-offset-[3px] outline-none",
+            "cursor-help text-left outline-none",
             "focus-visible:rounded-sm focus-visible:ring-2 focus-visible:ring-primary/45",
             className,
           )}
