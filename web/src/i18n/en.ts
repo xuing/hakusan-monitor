@@ -303,7 +303,6 @@ export const en = {
   "pool.scatteredNote": "(scattered — no whole node is free)",
   "pool.sortUsage": "by usage",
   "pool.sortEnding": "soonest ending",
-  "pool.submit": "Submit to",
   "pool.maint": "Maintenance",
   "section.poolDetail": "About these nodes",
   "section.poolNodes": "Nodes",

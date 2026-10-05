@@ -2204,11 +2204,6 @@ function Occupants({ pool, t }: { pool: Pool; t: TFn }) {
         )}
       </div>
       )}
-      {pool.partitions.length > 0 && (
-        <div className="pt-2 text-xs text-muted-foreground">
-          {t("pool.submit")}: <span className="font-mono">{pool.partitions.join(", ")}</span>
-        </div>
-      )}
     </div>
   );
 }

@@ -303,7 +303,6 @@ export const ja: Record<TranslationKey, string> = {
   "pool.scatteredNote": "（断片化、完全空きノードなし）",
   "pool.sortUsage": "使用量順",
   "pool.sortEnding": "終了が早い順",
-  "pool.submit": "投入先",
   "pool.maint": "メンテ中",
   "section.poolDetail": "これらのノードについて",
   "section.poolNodes": "ノード",

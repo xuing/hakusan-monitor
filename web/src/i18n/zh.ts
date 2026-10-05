@@ -303,7 +303,6 @@ export const zh: Record<TranslationKey, string> = {
   "pool.scatteredNote": "（零散，无整空节点）",
   "pool.sortUsage": "按占用",
   "pool.sortEnding": "最快结束",
-  "pool.submit": "提交到",
   "pool.maint": "维护中",
   "section.poolDetail": "关于这些节点",
   "section.poolNodes": "节点",
