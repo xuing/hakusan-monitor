@@ -118,8 +118,6 @@ function PoolGroup({ label, pools, snap, t }: { label: string; pools: Pool[]; sn
 
 function PoolCard({ pool, snap, t }: { pool: Pool; snap: Snapshot; t: TFn }) {
   const [open, setOpen] = useState(false);
-  // an open quick request takes the whole row: its table and sliders need the width
-  const [requestOpen, setRequestOpen] = useState(false);
   const [queueOpen, setQueueOpen] = useState(false);
   const isGpu = pool.kind === "gpu";
   const maint = isMaintPool(pool);
@@ -164,7 +162,6 @@ function PoolCard({ pool, snap, t }: { pool: Pool; snap: Snapshot; t: TFn }) {
         // it; the collapsed-row summary and the per-GPU block strip would
         // widen the card past a phone screen
         "min-w-0 transition-colors",
-        requestOpen && "lg:col-span-2",
         maint
           ? "border-dashed border-muted-foreground/30 bg-muted/10"
           : hasAvailable
@@ -284,7 +281,7 @@ function PoolCard({ pool, snap, t }: { pool: Pool; snap: Snapshot; t: TFn }) {
             </>
           )}
 
-          {!maint && <RequestSample pool={pool} t={t} open={requestOpen} setOpen={setRequestOpen} />}
+          {!maint && <RequestSample pool={pool} t={t} />}
         </div>
       </CardContent>
     </Card>
@@ -330,9 +327,10 @@ function DisclosureRow({
  *  pick from, then that partition's request — sliders bounded by its limits,
  *  green up to what starts now — and the command. Picking a partition resets
  *  every field to that partition's defaults. */
-function RequestSample({ pool, t, open, setOpen }: { pool: Pool; t: TFn; open: boolean; setOpen: (open: boolean) => void }) {
+function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
   const { snap } = useLive();
   const base = SAMPLE[pool.id];
+  const [open, setOpen] = useState(false);
   const [partChoice, setPartChoice] = useState("");
   const [mode, setMode] = useState<"interactive" | "script">("interactive");
   // interactive has two command forms: plain salloc, or the batch-placeholder
@@ -757,9 +755,12 @@ function RequestSample({ pool, t, open, setOpen }: { pool: Pool; t: TFn; open: b
   ) : null;
 
   const perGpuCores = layout?.coresPerGpu || Math.max(1, Math.floor(gpuShape.cores / Math.max(1, gpuShape.gpus)));
-  // as many columns as fields: cores-or-GPUs, memory, time
+  // columns follow the panel's own width (half-width cards too): three
+  // fields sit side by side from @3xl; below that two per row, the third
+  // taking the whole second row instead of leaving half of it empty
   const fieldCount = (isGpu ? (showGpuSlider ? 1 : 0) : 1) + 1 + (showTimeSlider ? 1 : 0);
-  const sliderCols = fieldCount >= 3 ? "sm:grid-cols-2 lg:grid-cols-3" : fieldCount === 2 ? "sm:grid-cols-2" : "";
+  const sliderCols = fieldCount >= 3 ? "@lg:grid-cols-2 @3xl:grid-cols-3" : fieldCount === 2 ? "@lg:grid-cols-2" : "";
+  const lastCellCls = fieldCount >= 3 ? "@lg:col-span-2 @3xl:col-span-1" : "";
 
   return (
     <>
@@ -788,7 +789,7 @@ function RequestSample({ pool, t, open, setOpen }: { pool: Pool; t: TFn; open: b
             />
           )}
 
-          <div className="overflow-hidden rounded-lg border border-info/35 bg-card">
+          <div className="@container overflow-hidden rounded-lg border border-info/35 bg-card">
             <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-border/70 px-3 py-2">
               <span className="font-mono text-sm font-bold text-foreground">{partition}</span>
               <span className="flex-1" />
@@ -813,7 +814,7 @@ function RequestSample({ pool, t, open, setOpen }: { pool: Pool; t: TFn; open: b
               />
             </div>
 
-            <div className={cn("grid gap-x-7 gap-y-4 px-3 pb-3 pt-3 sm:grid-cols-2", sliderCols)}>
+            <div className={cn("grid gap-x-7 gap-y-4 px-3 pb-3 pt-3", sliderCols)}>
               {isGpu ? (
                 showGpuSlider && (
                   <div className="flex min-w-0 flex-col gap-2">
@@ -943,7 +944,7 @@ function RequestSample({ pool, t, open, setOpen }: { pool: Pool; t: TFn; open: b
                 </div>
               )}
 
-              {showTimeSlider && (timeLocked ? (
+              {showTimeSlider && <div className={cn("min-w-0", lastCellCls)}>{timeLocked ? (
                 <RangeSlider
                   label={<>{t("pool.walltime")} <span className="text-muted-foreground">-t</span></>}
                   ariaLabel={t("pool.walltime")}
@@ -987,7 +988,7 @@ function RequestSample({ pool, t, open, setOpen }: { pool: Pool; t: TFn; open: b
                   hint={timeHint}
                   error={timeError || undefined}
                 />
-              ))}
+              )}</div>}
             </div>
 
             {!multiGpu && nodeOptions.length > 0 && (

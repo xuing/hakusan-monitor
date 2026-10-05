@@ -28,7 +28,9 @@ export interface PartitionAxis {
   ticks: { value: number; label: string; minor?: boolean }[];
 }
 
-const GRID = "grid grid-cols-[5.25rem_minmax(0,1fr)_5.5rem] items-center gap-x-3 px-3 sm:grid-cols-[5.75rem_minmax(0,1fr)_6.5rem_2.5rem_5.5rem]";
+// columns follow the table's own width (it sits in half-width cards too):
+// the time column from @md, the per-user column from @2xl
+const GRID = "grid grid-cols-[5.25rem_minmax(0,1fr)_5.5rem] items-center gap-x-3 px-3 @md:grid-cols-[5.5rem_minmax(0,1fr)_6.5rem_5.5rem] @2xl:grid-cols-[5.75rem_minmax(0,1fr)_6.5rem_2.5rem_5.5rem]";
 
 /** Partitions side by side on one axis: each row's bar is what a job there
  *  may ask for, its green part what starts now. Clicking a row picks it. */
@@ -51,12 +53,16 @@ export function PartitionTable({
   rangeLabels?: boolean;
 }) {
   const logSpan = Math.log(axis.max / axis.min) || 1;
+  // with range labels the axis uses 80% of the cell: a label after a bar that
+  // starts at the axis origin always has room, and one before a bar that
+  // starts further in sits in the empty part on its left
+  const reach = rangeLabels ? 0.8 : 1;
   const pos = (v: number) => {
     const c = Math.min(axis.max, Math.max(axis.min, v));
-    return axis.scale === "log" ? Math.log(c / axis.min) / logSpan : (c - axis.min) / Math.max(axis.max - axis.min, 1);
+    return reach * (axis.scale === "log" ? Math.log(c / axis.min) / logSpan : (c - axis.min) / Math.max(axis.max - axis.min, 1));
   };
   return (
-    <div className="overflow-hidden rounded-lg border border-border bg-card">
+    <div className="@container overflow-hidden rounded-lg border border-border bg-card">
       <div className={cn(GRID, "border-b border-border bg-muted/40 py-1.5 text-xs text-muted-foreground")}>
         <span>{headers.name}</span>
         <div className="relative h-4 font-mono">
@@ -65,23 +71,23 @@ export function PartitionTable({
             return (
               <span
                 key={tk.value}
-                className={cn("absolute whitespace-nowrap", tk.minor && "hidden sm:inline")}
-                style={{ left: `${p * 100}%`, transform: `translateX(${p <= 0.001 ? "0" : p >= 0.999 ? "-100%" : "-50%"})` }}
+                className={cn("absolute whitespace-nowrap", tk.minor && "hidden @xl:inline")}
+                style={{ left: `${p * 100}%`, transform: `translateX(${p <= 0.001 ? "0" : p >= reach - 0.001 ? "-100%" : "-50%"})` }}
               >
                 {tk.label}
               </span>
             );
           })}
         </div>
-        <span className="hidden truncate sm:block">{headers.wall}</span>
-        <span className="hidden text-right sm:block">{headers.perUser}</span>
+        <span className="hidden truncate @md:block">{headers.wall}</span>
+        <span className="hidden text-right @2xl:block">{headers.perUser}</span>
         <span className="text-right">{headers.verdict}</span>
       </div>
       {rows.map((r) => {
         const a = r.lo <= axis.min ? 0 : pos(r.lo);
         const b = pos(r.hi);
         const g = r.now >= r.lo ? pos(Math.min(r.now, r.hi)) : a;
-        const labelAfter = b < 0.8;
+        const labelAfter = a < 0.12;
         return (
           <button
             key={r.name}
@@ -110,7 +116,7 @@ export function PartitionTable({
                   style={{ left: `${a * 100}%`, width: `${(g - a) * 100}%` }}
                 />
               )}
-              {rangeLabels && (labelAfter || a >= 0.12) && (
+              {rangeLabels && (
                 <span
                   className="absolute top-1/2 -translate-y-1/2 whitespace-nowrap font-mono text-xs text-muted-foreground"
                   style={labelAfter ? { left: `calc(${b * 100}% + 0.5rem)` } : { right: `calc(${(1 - a) * 100}% + 0.5rem)` }}
@@ -128,8 +134,8 @@ export function PartitionTable({
                 />
               )}
             </span>
-            <span className="hidden truncate font-mono text-xs text-foreground/80 sm:block">{r.wall}</span>
-            <span className="hidden text-right font-mono text-xs text-foreground/80 sm:block">{r.perUser ?? "—"}</span>
+            <span className="hidden truncate font-mono text-xs text-foreground/80 @md:block">{r.wall}</span>
+            <span className="hidden text-right font-mono text-xs text-foreground/80 @2xl:block">{r.perUser ?? "—"}</span>
             <span className="flex justify-end">{r.verdict && <Tag tone={r.verdict.tone}>{r.verdict.label}</Tag>}</span>
           </button>
         );
