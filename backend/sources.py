@@ -35,7 +35,23 @@ SQUEUE_FMT = SEP.join(SQUEUE_FIELDS)
 # JobArrayID, not JobID: -O JobID prints an array's BASE id ("759320") for
 # every task, so no task ever joined its row; JobArrayID matches %i exactly.
 CONTAINER_FMT = "JobArrayID:64,tres-alloc:256,SchedNodes:128,Container:512"
+# Probed before the first policy read lands; afterwards every CPU partition the
+# Lua defines (no GPU default, no license) is probed — see cpu_test_partitions().
 CPU_TEST_PARTITIONS = ["TINY", "DEF", "SINGLE", "SMALL", "LARGE", "XLARGE", "X2LARGE", "LONG", "LONG-L"]
+
+
+def cpu_test_partitions(policy, node_partitions=None, gpu_partitions=()):
+    """CPU partitions to `sbatch --test-only`: every Lua partition that sets no
+    GPU default, needs no license, has nodes and no GPU node (scontrol). The
+    UI takes only rejections from these probes; whether a request starts now
+    is judged from the live snapshot (see web/src/lib/cpu-probes.ts)."""
+    defaults = (policy or {}).get("partition_defaults") or {}
+    found = [p for p, d in defaults.items()
+             if not d.get("gpus_per_node") and not d.get("requires_license") and p not in gpu_partitions
+             and (node_partitions is None or p in node_partitions)]
+    # the familiar order first (the UI breaks verdict ties by it), then the rest
+    order = {p: i for i, p in enumerate(CPU_TEST_PARTITIONS)}
+    return sorted(found, key=lambda p: (order.get(p, len(order)), p)) or CPU_TEST_PARTITIONS
 
 
 def _kv(line, key):
@@ -565,6 +581,8 @@ class Source:
         self.singularity = None
         self.cpu_probes = []
         self.cpu_probe_at = 0
+        self.gpu_partitions = set()   # partitions with a GPU node, from the last scontrol read
+        self.node_partitions = None   # partitions with any node (None until the first read)
         # Policy is read from the cluster once a day (policy_interval) and the
         # last good reading is cached on disk, so a restart shows real limits
         # at once instead of built-in guesses. policy_at=0 keeps a refresh due.
@@ -645,7 +663,7 @@ class Source:
             "out=$(timeout 4s sbatch --test-only -p {p}{t} --wrap=hostname 2>&1); rc=$?; "
             "printf '%s%s%s%s%s\\n' {p} \"$SEP\" \"$rc\" \"$SEP\" \"$out\"".format(
                 p=shlex.quote(p), t=self._interactive_t_flag(p))
-            for p in CPU_TEST_PARTITIONS)
+            for p in cpu_test_partitions(self.policy_snapshot, self.node_partitions, self.gpu_partitions))
         cpu_probe_cmd = f"SEP={sep_q}; {cpu_probes}" if probe_due else "true"
         qos_cmd = (
             "timeout 8s sacctmgr -n -P show qos "
@@ -696,7 +714,11 @@ class Source:
         queue = parse_queue(queue_txt, parse_containers(containers_txt), parse_pending_reqtres(reqtres_txt))
         queue["cpu_submit_probes"] = self.cpu_probes
         queue["cpu_submit_probes_generated_at"] = int(self.cpu_probe_at) if self.cpu_probe_at else 0
-        return parse_nodes(nodes_txt), queue
+        nodes = parse_nodes(nodes_txt)
+        if nodes["nodes"]:
+            self.gpu_partitions = {p for n in nodes["nodes"] if "gpu" in n["gres"] for p in n["partitions"]}
+            self.node_partitions = {p for n in nodes["nodes"] for p in n["partitions"]}
+        return nodes, queue
 
     def _interactive_t_flag(self, partition):
         d = ((self.policy_snapshot or {}).get("partition_defaults") or {}).get(partition) or {}

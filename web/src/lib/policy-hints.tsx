@@ -4,7 +4,7 @@
 // user-limit chip layouts). Any policy hint shown to users must come from here.
 import type { TFn } from "@/i18n";
 import { cleanCpuProbeRaw, type CpuProbeRow, type CpuProbeState } from "@/lib/cpu-probes";
-import { clockOf, nf } from "@/lib/format";
+import { nf } from "@/lib/format";
 import { maxJobGpus, type GpuNodeShape } from "@/lib/gpu-layout";
 import { allowsMultiNode, effectiveGpuLimit, effectiveJobMemGb, interactiveForcedLabel, type PartitionCap, type PartitionPolicy, type Tone } from "@/lib/slurm";
 import type { PolicySnapshot } from "@/types/snapshot";
@@ -127,7 +127,8 @@ export function cpuProbeDetail(row: CpuProbeRow, state: CpuProbeState | null, t:
   const probe = row.probe;
   if (!probe) return t("pool.cpuProbeNoData");
   if (state === "now") return "";
-  if (state === "queued" && probe.start_time) return t("pool.cpuProbeStart", { time: clockOf(probe.start_time) });
+  // the test-only start time plans behind limit-capped jobs too — not quoted
+  if (state === "queued") return "";
   return truncateProbeRaw(cleanCpuProbeRaw(probe.raw));
 }
 

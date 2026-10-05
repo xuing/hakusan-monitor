@@ -19,7 +19,7 @@ import { contendersForPool, fitHasClearSlot, partitionGpuAvailability, poolGpuAv
 import { maxJobGpus } from "@/lib/gpu-layout";
 import type { GpuAvailability } from "@/lib/gpu-availability";
 import { gpuPartitionAdvice, type GpuPartitionAdvice } from "@/lib/gpu-advice";
-import { cpuProbeForPartition, cpuProbeMaxAge, cpuProbeState, type CpuProbeRow } from "@/lib/cpu-probes";
+import { cpuProbeForPartition, type CpuProbeRow } from "@/lib/cpu-probes";
 import {
   cpuProbeDetail,
   cpuProbeLabel,
@@ -170,12 +170,7 @@ export function PartitionPressure() {
               if (runtimePolicy.grpJobs && p.jobs.running >= runtimePolicy.grpJobs) return 1;
               const row = cpuProbeForPartition(snap, p.name);
               if (!row) return 0;
-              const state = cpuProbeState(
-                row.probe,
-                snap.cpu_submit_probes_generated_at || snap.generated_at,
-                snap.generated_at,
-                cpuProbeMaxAge(snap),
-              );
+              const state = row.state;
               if (state === "now") return 0;
               if (state === "queued") return 2;
               if (state === "unknown") return 3;
@@ -257,9 +252,6 @@ export function PartitionPressure() {
                         return avail ? idleNotReady(avail) : 0;
                       }}
                       gpuAdviceFor={(p) => gpuAdviceByPartition.get(p.name) ?? null}
-                      probeGeneratedAt={snap.cpu_submit_probes_generated_at || snap.generated_at}
-                      observedAt={snap.generated_at}
-                      probeMaxAge={cpuProbeMaxAge(snap)}
                       policy={snap.policy}
                       t={t}
                     />
@@ -276,9 +268,6 @@ export function PartitionPressure() {
                       gpuClearFor={() => null}
                       gpuStrandedFor={() => 0}
                       gpuAdviceFor={() => null}
-                      probeGeneratedAt={snap.cpu_submit_probes_generated_at || snap.generated_at}
-                      observedAt={snap.generated_at}
-                      probeMaxAge={cpuProbeMaxAge(snap)}
                       policy={snap.policy}
                       t={t}
                     />
@@ -310,9 +299,6 @@ function PartitionRows({
   gpuClearFor,
   gpuStrandedFor,
   gpuAdviceFor,
-  probeGeneratedAt,
-  observedAt,
-  probeMaxAge,
   policy,
   t,
 }: {
@@ -326,9 +312,6 @@ function PartitionRows({
   gpuClearFor: (p: Partition) => boolean | null;
   gpuStrandedFor: (p: Partition) => number;
   gpuAdviceFor: (p: Partition) => GpuPartitionAdvice | null;
-  probeGeneratedAt: number;
-  observedAt: number;
-  probeMaxAge: number;
   policy?: PolicySnapshot;
   t: TFn;
 }) {
@@ -352,9 +335,6 @@ function PartitionRows({
             gpuClear={gpuClearFor(p)}
             gpuStranded={gpuStrandedFor(p)}
             gpuAdvice={gpuAdviceFor(p)}
-            probeGeneratedAt={probeGeneratedAt}
-            observedAt={observedAt}
-            probeMaxAge={probeMaxAge}
             policy={policy}
             t={t}
           />
@@ -495,9 +475,6 @@ function PartitionRow({
   gpuClear,
   gpuStranded,
   gpuAdvice,
-  probeGeneratedAt,
-  observedAt,
-  probeMaxAge,
   policy,
   t,
 }: {
@@ -509,9 +486,6 @@ function PartitionRow({
   gpuClear: boolean | null;
   gpuStranded: number;
   gpuAdvice: GpuPartitionAdvice | null;
-  probeGeneratedAt: number;
-  observedAt: number;
-  probeMaxAge: number;
   policy?: PolicySnapshot;
   t: TFn;
 }) {
@@ -541,9 +515,7 @@ function PartitionRow({
   const jobGpus = gpuShape
     ? maxJobGpus(cap, gpuShape, allowsMultiNode(cap, gpuShape.cores))
     : effectiveGpuLimit(cap).total;
-  const probeState = cpuProbe
-    ? cpuProbeState(cpuProbe.probe, probeGeneratedAt, observedAt, probeMaxAge)
-    : null;
+  const probeState = cpuProbe ? cpuProbe.state : null;
   const hero = requestableNow(
     p, cap, isGpu, pc, gpuSchedulable,
     probeState === "now" ? cpuProbe?.cores : undefined,

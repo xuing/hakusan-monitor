@@ -45,7 +45,7 @@ import {
 } from "@/lib/gpu-fit";
 import { allowsMultiNode, defaultRequestSec, interactiveForcedLabel, interactiveForcedSec, isMaterialsStudioPartition, matchPool, minutesToSlurmTime, partitionCap, partitionDefaultRequest, partitionDefaults, partitionPolicy, type PartitionPolicy, type Tone } from "@/lib/slurm";
 import { cn } from "@/lib/utils";
-import { cpuProbeMaxAge, cpuProbeRows, cpuProbeState, type CpuProbeRow } from "@/lib/cpu-probes";
+import { cpuProbeRows, type CpuProbeRow } from "@/lib/cpu-probes";
 import { buildRequestCommand, shouldShowGapShell } from "@/lib/request-command";
 import { gpuLayouts, type GpuLayout, type GpuNodeShape } from "@/lib/gpu-layout";
 import { requestLimits, type PoolShape } from "@/lib/request-limits";
@@ -424,10 +424,7 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
   // Same rule for -t vs the partition wall (mirrors --mem's memTooHigh).
   const wallSec = parseWallMinutes(cap.wall) * 60;
   const timeSel = time.trim() && (!wallSec || parseWalltimeSec(time) <= wallSec) ? time : "";
-  const cpuRows = snap && !isGpu && pool.id === "cpu" ? cpuProbeRows(pool, snap) : [];
-  const cpuProbeGeneratedAt = snap?.cpu_submit_probes_generated_at || snap?.generated_at || 0;
-  const cpuProbeObservedAt = snap?.generated_at || 0;
-  const cpuProbeMaxAgeS = snap ? cpuProbeMaxAge(snap) : 20 * 60;
+  const cpuRows = snap && !isGpu ? cpuProbeRows(pool, snap) : [];
   const hasAdvancedOverrides = Boolean(nodeCount || coreCount || memValue || timeSel);
   const selectedCpuRow = !hasAdvancedOverrides ? cpuRows.find((row) => row.partition === partition) ?? null : null;
   // salloc can't take the -t deal (plugin forces the walltime); the displayed
@@ -476,7 +473,7 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
     : (parseWalltimeSec(ptyActive ? ptyTime : timeSel) || Number.POSITIVE_INFINITY);
   const optionLabel = (p: string): string => {
     if (cpuRows.length > 0) {
-      return cpuOptionLabel(p, cpuRows, cpuProbeGeneratedAt, cpuProbeObservedAt, cpuProbeMaxAgeS, t);
+      return cpuOptionLabel(p, cpuRows, t);
     }
     const base = isMaterialsStudioPartition(p) ? `${p} · ${trMaybe(t, `policy.${p}`, p)}` : p;
     if (!snap) return base;
@@ -590,7 +587,7 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
   // with the most startable one — the default partition's "will queue · group
   // full" must not hide that a sibling policy can start (possibly via a tip).
   const collapsedPick = !open && snap
-    ? bestPartitionPick(pool, snap, isGpu, pendingActive, cpuRows, cpuProbeGeneratedAt, t)
+    ? bestPartitionPick(pool, snap, isGpu, pendingActive, cpuRows, t)
     : null;
   const rowSummary = collapsedPick ? (
     <>
@@ -691,9 +688,6 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
             {selectedCpuRow && (
               <CpuProbeInline
                 row={selectedCpuRow}
-                probedAt={cpuProbeGeneratedAt}
-                observedAt={cpuProbeObservedAt}
-                maxAge={cpuProbeMaxAgeS}
                 t={t}
               />
             )}
@@ -1119,6 +1113,12 @@ function requestQueueHint({
   if (!isGpu && coreCount > 0 && poolFree
       && coreCount > (multiNode ? poolFree.freeCores : poolFree.emptiestNodeFree)) return warn(t("pool.queueReasonCores"));
 
+  // CPU: a queue made only of limit-capped / dependency-held jobs takes no
+  // free core — VM-CPU read "will queue" on 42 idle nodes behind one
+  // Dependency job (2026-10-05)
+  if (!isGpu && queueFact && queueFact.pending > 0 && queueFact.pending <= queueFact.limited) {
+    return { tone: "ok" as const, label: t("pool.queueHintCanStart"), detail: t("pool.queueContentionClear", { n: queueFact.pending }) };
+  }
   if (queueFact && queueFact.pending > 0) {
     // The request fits a free slot AND no queued job can take that slot first
     // (too big for it, group-capped, or fenced out by a reservation) —
@@ -1259,19 +1259,15 @@ function bestPartitionPick(
   isGpu: boolean,
   pendingActive: RawJob[],
   cpuRows: CpuProbeRow[],
-  cpuProbeGeneratedAt: number,
   t: TFn,
 ): CollapsedPick | null {
   const multi = pool.partitions.length > 1;
   const prefix = (p: string, text: string) => (multi ? (text ? `${p} · ${text}` : p) : text);
   // CPU pool: sbatch --test-only probes already hold a per-partition verdict.
   if (!isGpu && cpuRows.length > 0) {
-    const rank = (row: CpuProbeRow) => {
-      const s = cpuProbeState(row.probe, cpuProbeGeneratedAt, snap.generated_at, cpuProbeMaxAge(snap));
-      return s === "now" ? 0 : s === "queued" ? 2 : 3;
-    };
+    const rank = (row: CpuProbeRow) => (row.state === "now" ? 0 : row.state === "queued" ? 2 : 3);
     const best = [...cpuRows].sort((a, b) => rank(a) - rank(b))[0];
-    const state = cpuProbeState(best.probe, cpuProbeGeneratedAt, snap.generated_at, cpuProbeMaxAge(snap));
+    const state = best.state;
     return { tone: cpuProbeTone(state), label: cpuProbeLabel(state, t), text: `-p ${best.partition}` };
   }
   const nowMs = Date.now();
@@ -1497,9 +1493,6 @@ function partitionOptionGroups(partitions: string[], t: TFn) {
 function cpuOptionLabel(
   partition: string,
   rows: CpuProbeRow[],
-  probedAt: number,
-  observedAt: number,
-  maxAge: number,
   t: TFn,
 ) {
   const row = rows.find((item) => item.partition === partition);
@@ -1507,23 +1500,17 @@ function cpuOptionLabel(
     ? `${partition} · ${trMaybe(t, `policy.${partition}`, partition)}`
     : partition;
   if (!row) return base;
-  return `${base} · ${cpuProbeLabel(cpuProbeState(row.probe, probedAt, observedAt, maxAge), t)}`;
+  return `${base} · ${cpuProbeLabel(row.state, t)}`;
 }
 
 function CpuProbeInline({
   row,
-  probedAt,
-  observedAt,
-  maxAge,
   t,
 }: {
   row: CpuProbeRow;
-  probedAt: number;
-  observedAt: number;
-  maxAge: number;
   t: TFn;
 }) {
-  const state = cpuProbeState(row.probe, probedAt, observedAt, maxAge);
+  const state = row.state;
   const detail = cpuProbeDetail(row, state, t);
   return (
     <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs">
