@@ -158,7 +158,6 @@ export const ja: Record<TranslationKey, string> = {
   "pool.pendingJobs": "待機ジョブ",
   "pool.pendingShowing": "{shown}/{total} 表示",
   "pool.quickRequest": "すぐに申請",
-  "pool.policy": "ポリシー",
   "pool.mode": "モード",
   "pool.modeInteractive": "対話",
   "pool.modeScript": "スクリプト",

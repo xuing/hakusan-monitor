@@ -158,7 +158,6 @@ export const en = {
   "pool.pendingJobs": "Pending jobs",
   "pool.pendingShowing": "showing {shown}/{total}",
   "pool.quickRequest": "Quick request",
-  "pool.policy": "Policy",
   "pool.mode": "Mode",
   "pool.modeInteractive": "Interactive",
   "pool.modeScript": "Script",

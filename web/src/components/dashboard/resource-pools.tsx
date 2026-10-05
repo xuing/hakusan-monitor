@@ -577,12 +577,12 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
               choices={gpuPartitionChoices}
               value={partition}
               onChange={setPartChoice}
-              label={t("pool.policy")}
+              label={t("col.partition")}
             />
           )}
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
             {!isGpu && pool.partitions.length > 1 && (
-              <Field label={t("pool.policy")}>
+              <Field label={t("col.partition")}>
                 <select value={partition} onChange={(e) => setPartChoice(e.target.value)} className={fieldCls}>
                   {partitionGroups.map((group) => (
                     group.label ? (

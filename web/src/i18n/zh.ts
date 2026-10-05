@@ -158,7 +158,6 @@ export const zh: Record<TranslationKey, string> = {
   "pool.pendingJobs": "排队作业",
   "pool.pendingShowing": "显示 {shown}/{total}",
   "pool.quickRequest": "快速申请",
-  "pool.policy": "策略",
   "pool.mode": "模式",
   "pool.modeInteractive": "交互",
   "pool.modeScript": "脚本",
