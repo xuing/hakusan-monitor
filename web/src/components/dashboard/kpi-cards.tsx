@@ -5,7 +5,7 @@ import { useResourceFilter } from "@/hooks/resource-filter-context";
 import { poolTitle, useT, type TFn } from "@/i18n";
 import { nodeIsSchedulable } from "@/lib/derive";
 import { nf, pct } from "@/lib/format";
-import { poolGpuAvailability } from "@/lib/gpu-fit";
+import { parseGpuCount, poolGpuAvailability } from "@/lib/gpu-fit";
 import { utilTone } from "@/lib/slurm";
 import type { Pool, Snapshot } from "@/types/snapshot";
 
@@ -14,50 +14,15 @@ export function KpiCards() {
   const { filter } = useResourceFilter();
   const t = useT();
   if (!snap) return null;
+  // the whole cluster has no row of its own: every figure it held (nodes,
+  // free nodes, queue) is on the pool cards, the queue card and the
+  // nodes-needing-attention card; a pool in focus keeps its summary
   const pool = filter === "all" ? null : snap.pools.find((p) => p.id === filter);
+  if (!pool) return null;
   return (
     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-      {pool ? <PoolKpis pool={pool} snap={snap} t={t} /> : <ClusterKpis snap={snap} t={t} />}
+      <PoolKpis pool={pool} snap={snap} t={t} />
     </div>
-  );
-}
-
-function ClusterKpis({ snap, t }: { snap: Snapshot; t: TFn }) {
-  const { nodes } = snap.totals;
-  const q = snap.queue;
-  return (
-    <>
-      <SplitCard label={t("kpi.nodes")} stats={[
-        [nodes.available, t("kpi.schedulable"), "text-ok-fg"],
-        [nodes.down, t("kpi.down"), "text-muted-foreground"],
-        [nodes.total, t("kpi.total"), "text-muted-foreground"],
-      ]} />
-      <BarKpi label={t("kpi.gpuNodes")} note={t("kpi.gpuNodesFree")} free={nodes.gpu_free} total={nodes.gpu_total} />
-      <BarKpi label={t("kpi.cpuNodes")} note={t("kpi.cpuNodesFree")} free={nodes.cpu_free} total={nodes.cpu_total} />
-      <SplitCard label={t("kpi.queue")} stats={[
-        [q.running, t("kpi.running"), "text-ok-fg"],
-        [q.pending, t("kpi.pending"), "text-warn-fg"],
-      ]} />
-    </>
-  );
-}
-
-function BarKpi({ label, note, free, total }: { label: string; note: string; free: number; total: number }) {
-  const ratio = total ? free / total : 0;
-  return (
-    <Card>
-      <CardContent className="p-5">
-        <Label>{label}</Label>
-        <div className="tnum mt-1 text-2xl font-semibold leading-tight">
-          <span className={free > 0 ? "text-ok-fg" : "text-muted-foreground"}>{nf(free)}</span>
-          <span className="text-sm font-normal text-muted-foreground"> / {nf(total)}</span>
-          <span className="ml-1.5 text-xs font-normal text-muted-foreground">{note}</span>
-        </div>
-        <div className="mt-2.5 h-2 overflow-hidden rounded-full bg-muted">
-          <div className="h-full rounded-full bg-ok transition-all duration-500" style={{ width: `${ratio * 100}%` }} />
-        </div>
-      </CardContent>
-    </Card>
   );
 }
 
@@ -73,9 +38,14 @@ function PoolKpis({ pool, snap, t }: { pool: Pool; snap: Snapshot; t: TFn }) {
   // "可用" GPUs = what the pool card calls ready (shared verdict), not every
   // idle card — queue-claimed or resource-short ones are not available.
   const free = isGpu && g ? poolGpuAvailability(snap, pool, Date.now()).ready : pool.cores.free;
-  // Same rule as the cluster card's total: in service and not held by the
-  // scheduler (idle+mixed would count MIXED+PLANNED nodes too).
-  const schedulable = snap.nodes.filter((n) => n.pool === pool.id && nodeIsSchedulable(n)).length;
+  // nodes a new job can actually land on: in service, not held by the
+  // scheduler, and with a free GPU (GPU pools) or a free core — a GPU node
+  // with spare cores but every card taken does not count
+  const withRoom = snap.nodes.filter((n) => {
+    if (n.pool !== pool.id || !nodeIsSchedulable(n)) return false;
+    if (isGpu && g) return parseGpuCount(n.gres, g.type) - parseGpuCount(n.gres_used, g.type) > 0;
+    return n.cpus - n.alloc_cpus > 0;
+  }).length;
   const unit = isGpu ? t("unit.gpu") : t("unit.cores");
   return (
     <>
@@ -90,7 +60,7 @@ function PoolKpis({ pool, snap, t }: { pool: Pool; snap: Snapshot; t: TFn }) {
         ],
       ]} />
       <SplitCard label={t("kpi.nodes")} stats={[
-        [schedulable, t("kpi.schedulable"), "text-ok-fg"],
+        [withRoom, t("kpi.withRoom"), "text-ok-fg"],
         [pool.down_nodes, t("kpi.down"), "text-muted-foreground"],
         [pool.nodes, t("kpi.total"), "text-muted-foreground"],
       ]} />
