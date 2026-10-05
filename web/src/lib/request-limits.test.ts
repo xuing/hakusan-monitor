@@ -7,7 +7,7 @@ import { describe, expect, it } from "vitest";
 import { boundaryCommands, requestLimits } from "./request-limits";
 import type { Snapshot } from "@/types/snapshot";
 
-const gpuDefaults = { cores: 26, tasks: 26, gpus_per_node: 1, gpu_request_respected: false, interactive_time_min: 720,
+const gpuDefaults = { cores: 26, tasks: 26, gpus_per_node: 1, gpu_request_respected: true, interactive_time_min: 720,
                       def_mem_per_cpu_mb: 9845, max_mem_per_cpu_mb: 9845 };
 const cpuDefaults = (tasks: number) => ({ cores: tasks, tasks, interactive_time_min: 2880, def_mem_per_cpu_mb: 6000, max_mem_per_cpu_mb: 6000 });
 
@@ -72,9 +72,9 @@ describe("boundaryCommands", () => {
   });
 
   it("includes every multi-GPU layout and skips license-only partitions", () => {
-    expect(rows["GPU-S gpu:p1"]).toBe("-p GPU-S --exclusive");
-    expect(rows["GPU-L gpu:p4"]).toBe("-p GPU-L -N 4 --exclusive");
-    expect(rows["GPU-L gpu:s8"]).toBe("-p GPU-L -N 8 --ntasks-per-node=1 -c 26");
+    expect(rows["GPU-S gpu:p1"]).toBe("-p GPU-S -n 2 -c 26 --gres=gpu:2");
+    expect(rows["GPU-L gpu:p4"]).toBe("-p GPU-L -N 4 --ntasks-per-node=2 -c 26 --gres=gpu:2");
+    expect(rows["GPU-L gpu:s8"]).toBe("-p GPU-L -N 8 --ntasks-per-node=1 -c 26 --gres=gpu:1");
     expect(rows["GPU-1 gpu:p1"]).toBeUndefined();
     expect(Object.keys(rows).some((k) => k.startsWith("MatStudio"))).toBe(false);
   });

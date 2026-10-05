@@ -34,7 +34,6 @@ import {
   isMaterialsStudioPartition,
   matchPartition,
   partitionCap,
-  partitionDefaults,
   partitionPolicy as slurmPartitionPolicy,
   type PartitionCap,
 } from "@/lib/slurm";
@@ -534,16 +533,14 @@ function PartitionRow({
   const gpuTip = gpuAdvice?.gpuTip ?? null;
   const backfillTip = gpuAdvice?.backfillTip ?? null;
   const cap = partitionCap(p.name, policy);
-  const defaults = partitionDefaults(p.name, policy);
   // the partition's node shape (scontrol) — with it, the GPU numbers count
-  // what a job can really get, --exclusive route included (maxJobGpus)
+  // what a job can really get (maxJobGpus)
   const gpuShape = isGpu && p.spec.gpu_per_node > 0
     ? { gpus: p.spec.gpu_per_node, cores: p.spec.cores_per_node, memMb: p.spec.mem_per_node, count: p.nodes }
     : undefined;
   const jobGpus = gpuShape
-    ? maxJobGpus(cap, { gpusPerNode: defaults.gpus_per_node, gpuRequestRespected: defaults.gpu_request_respected,
-                        defaultCores: defaults.cores }, gpuShape, allowsMultiNode(cap, gpuShape.cores))
-    : effectiveGpuLimit(cap, defaults).total;
+    ? maxJobGpus(cap, gpuShape, allowsMultiNode(cap, gpuShape.cores))
+    : effectiveGpuLimit(cap).total;
   const probeState = cpuProbe
     ? cpuProbeState(cpuProbe.probe, probeGeneratedAt, observedAt, probeMaxAge)
     : null;

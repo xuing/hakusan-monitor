@@ -135,9 +135,6 @@ export function PolicySourceSection() {
         : t("guide.policy.checkedOk", { time: fmtDateTime(checkedAt) });
 
   // ---- findings, each only when its condition holds in the data --------------
-  const luaFacts = lua?.partitions ?? policy?.lua?.partitions ?? {};
-  const overwritten = rows.filter((r) => r.defaults.gpu_request_respected === false).map((r) => r.name);
-  const checkedFields = [...new Set(overwritten.flatMap((p) => luaFacts[p]?.gpu_request_fields ?? []))];
   const luaMemIgnored = rows
     .filter((r) => {
       const d = r.defaults;
@@ -152,17 +149,6 @@ export function PolicySourceSection() {
   }
   if (badBounds.length) {
     findings.push({ key: "boundary", tone: "bad", text: t("guide.policy.find.boundary", { list: badBounds.join(", ") }) });
-  }
-  if (overwritten.length) {
-    findings.push({
-      key: "gpu",
-      tone: "warn",
-      text: t("guide.policy.find.gpuOverwritten", {
-        parts: overwritten.join(", "),
-        n: rows.find((r) => r.defaults.gpu_request_respected === false)?.defaults.gpus_per_node ?? 1,
-        fields: checkedFields.length ? checkedFields.map((f) => `job_desc.${f}`).join(", ") : "—",
-      }),
-    });
   }
   if (noGpuCap.length) {
     findings.push({ key: "nogpucap", tone: "info", text: t("guide.policy.find.noGpuCap", { parts: noGpuCap.join(", ") }) });

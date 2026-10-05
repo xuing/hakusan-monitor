@@ -178,16 +178,14 @@ def boundary_issues(r: dict, line: str) -> list[str]:
     nodes = int((_kv(line, "NumNodes") or "1").split("-")[0])
     cpus = int(_kv(line, "NumCPUs") or 0)
     issues = []
-    # --exclusive books whole nodes, but held jobs show the pre-allocation CPUs
-    alloc_cpus = nodes * e["coresPerNode"] if e.get("exclusive") else cpus
-    if e.get("maxCores") and alloc_cpus > e["maxCores"]:
-        issues.append(f"{alloc_cpus} CPUs at allocation > QoS {e['maxCores']} (would pend forever)")
+    if e.get("maxCores") and cpus > e["maxCores"]:
+        issues.append(f"{cpus} CPUs at allocation > QoS {e['maxCores']} (would pend forever)")
     if nodes > e["partitionNodes"]:
         issues.append(f"{nodes} nodes > the partition's {e['partitionNodes']}")
-    if not e.get("exclusive") and math.ceil(cpus / nodes) > e["coresPerNode"]:
+    if math.ceil(cpus / nodes) > e["coresPerNode"]:
         issues.append(f"{math.ceil(cpus / nodes)} CPUs per node > a node's {e['coresPerNode']}")
     gm = re.search(r"gpu(?::[^:=,]+)?[:=](\d+)", _kv(line, "TresPerNode"))
-    gpus = nodes * (e["gpusPerNode"] if e.get("exclusive") else (int(gm.group(1)) if gm else 0))
+    gpus = nodes * (int(gm.group(1)) if gm else 0)
     if e.get("maxGpus") and gpus > e["maxGpus"]:
         issues.append(f"{gpus} GPUs > QoS {e['maxGpus']}")
     if e.get("gpus") and gpus != e["gpus"]:

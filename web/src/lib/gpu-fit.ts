@@ -10,7 +10,7 @@ import {
   type GpuDefaultRequest,
   type GpuNodeFacts,
 } from "@/lib/gpu-availability";
-import { capPerGpu, effectiveGpuLimit, partitionCap, partitionDefaultRequest, partitionDefaults, partitionPolicy, type PartitionCap } from "@/lib/slurm";
+import { capPerGpu, effectiveGpuLimit, partitionCap, partitionDefaultRequest, partitionPolicy, type PartitionCap } from "@/lib/slurm";
 import type { Pool, RawJob, RawNode, Snapshot } from "@/types/snapshot";
 
 export interface GpuFitNeed {
@@ -51,7 +51,7 @@ export interface GpuFitTipData {
 export function gpuFitSnapshot(snap: Snapshot, pool: Pool, cap: PartitionCap, partition: string): GpuFitInfo {
   return gpuFitFromNodes(snap.nodes, snap.jobs, pool, cap, partition,
                          partitionDefaultRequest(partition, snap.policy),
-                         effectiveGpuLimit(cap, partitionDefaults(partition, snap.policy)).total);
+                         effectiveGpuLimit(cap).total);
 }
 
 /** `jobGpus`: GPUs one job really holds (effectiveGpuLimit), which divides
@@ -206,7 +206,7 @@ function partitionVerdict(facts: GpuNodeFacts[], snap: Snapshot, partition: stri
   return gpuAvailability(
     facts,
     partitionDefaultRequest(partition, snap.policy),
-    capPerGpu(cap, effectiveGpuLimit(cap, partitionDefaults(partition, snap.policy)).total),
+    capPerGpu(cap, effectiveGpuLimit(cap).total),
   );
 }
 

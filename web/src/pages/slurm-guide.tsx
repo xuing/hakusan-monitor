@@ -114,8 +114,9 @@ interface Facts {
   nTrap?: { tasks: number; max: number };
   rows: PartRow[];
   multiNode: string[];
-  /** GPU partitions whose --gres the plugin overwrites, and with how many */
-  gpuForced: { parts: string[]; n?: number };
+  /** GPU flags the plugin does not read as a GPU request (it then sets its
+   *  default per node): --gpus when no partition checks tres_per_job, etc. */
+  gpuIgnoredFlags: string[];
   multiGpu: { p: string; n: number }[];
   ptyForced: string;
   license: string[];
@@ -130,15 +131,13 @@ function gpuOf(snap: Snapshot, p: Partition | undefined) {
 function jobGpus(snap: Snapshot, p: Partition): number {
   const policy = snap.policy;
   const cap = partitionCap(p.name, policy);
-  const d = partitionDefaults(p.name, policy);
   if (!p.spec?.gpu_per_node) return 0;
   const shape = { gpus: p.spec.gpu_per_node, cores: p.spec.cores_per_node, memMb: p.spec.mem_per_node, count: p.nodes };
-  return maxJobGpus(cap, { gpusPerNode: d.gpus_per_node, gpuRequestRespected: d.gpu_request_respected, defaultCores: d.cores },
-    shape, allowsMultiNode(cap, shape.cores));
+  return maxJobGpus(cap, shape, allowsMultiNode(cap, shape.cores));
 }
 
 function readFacts(snap: Snapshot | null): Facts {
-  const empty: Facts = { forced: {}, memPerCore: {}, wall: {}, rows: [], multiNode: [], gpuForced: { parts: [] }, multiGpu: [], ptyForced: "", license: [] };
+  const empty: Facts = { forced: {}, memPerCore: {}, wall: {}, rows: [], multiNode: [], gpuIgnoredFlags: [], multiGpu: [], ptyForced: "", license: [] };
   if (!snap?.policy) return empty;
   const policy = snap.policy;
   const byName = new Map(snap.partitions.map((p) => [p.name, p]));
@@ -183,15 +182,11 @@ function readFacts(snap: Snapshot | null): Facts {
     .map((p) => p.name);
 
   const gpuParts = sorted.filter((p) => p.kind === "gpu");
-  // only where it bites: nodes holding more GPUs than the plugin hands out
-  const overwritten = gpuParts.filter((p) => {
-    const d = partitionDefaults(p.name, policy);
-    return d.gpu_request_respected === false && (p.spec?.gpu_per_node ?? 0) > (d.gpus_per_node ?? 0);
-  });
-  facts.gpuForced = {
-    parts: overwritten.map((p) => p.name),
-    n: overwritten.length ? partitionDefaults(overwritten[0].name, policy).gpus_per_node : undefined,
-  };
+  const luaGpu = gpuParts.map((p) => policy.lua?.partitions?.[p.name]?.gpu_request_fields).filter((f): f is string[] => !!f);
+  facts.gpuIgnoredFlags = luaGpu.length
+    ? ([["tres_per_job", "--gpus=N"], ["tres_per_task", "--gpus-per-task=N"]] as const)
+        .filter(([field]) => luaGpu.every((f) => !f.includes(field))).map(([, flag]) => flag)
+    : [];
   facts.multiGpu = gpuParts.map((p) => ({ p: p.name, n: jobGpus(snap, p) })).filter((x) => x.n > 1);
 
   const labels = new Set(gpuParts.map((p) => interactiveForcedLabel(p.name, policy)).filter((l): l is string => !!l));
@@ -376,14 +371,12 @@ export default function SlurmGuidePage() {
           </Advanced>
 
           <Advanced id="multi-gpu" title={t("guide.adv.gpu.title")} hint={t("guide.adv.gpu.hint")}>
-            {facts.gpuForced.parts.length > 0 && facts.gpuForced.n ? (
-              <p>
-                <Rich text={t("guide.adv.gpu.forced", { parts: facts.gpuForced.parts.join(", "), n: facts.gpuForced.n })} />{sp}
-                <Rich text={t("guide.adv.gpu.exclusive")} />
-              </p>
-            ) : (
-              <p><Rich text={t("guide.adv.gpu.respected")} /></p>
-            )}
+            <p>
+              <Rich text={t("guide.adv.gpu.respected")} />
+              {facts.gpuIgnoredFlags.length > 0 && (
+                <>{sp}<Rich text={t("guide.adv.gpu.ignored", { flags: facts.gpuIgnoredFlags.map((x) => `\`${x}\``).join(t("guide.listSep")) })} /></>
+              )}
+            </p>
             {facts.multiGpu.length > 0 && (
               <p>
                 {t("guide.adv.gpu.max", {

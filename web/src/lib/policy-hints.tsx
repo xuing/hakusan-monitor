@@ -6,7 +6,7 @@ import type { TFn } from "@/i18n";
 import { cleanCpuProbeRaw, type CpuProbeRow, type CpuProbeState } from "@/lib/cpu-probes";
 import { clockOf, nf } from "@/lib/format";
 import { maxJobGpus, type GpuNodeShape } from "@/lib/gpu-layout";
-import { allowsMultiNode, effectiveGpuLimit, effectiveJobMemGb, interactiveForcedLabel, partitionDefaults, type PartitionCap, type PartitionPolicy, type Tone } from "@/lib/slurm";
+import { allowsMultiNode, effectiveGpuLimit, effectiveJobMemGb, interactiveForcedLabel, type PartitionCap, type PartitionPolicy, type Tone } from "@/lib/slurm";
 import type { PolicySnapshot } from "@/types/snapshot";
 
 export interface PolicyLimitRow {
@@ -77,7 +77,7 @@ export function fmtPolicyLimit(cap: PartitionCap, isGpu: boolean, t: TFn, partit
                                policy?: PolicySnapshot, shape?: GpuNodeShape, nodeCores?: number) {
   const parts: string[] = [];
   if (isGpu) {
-    const gpu = fmtGpuLimit(cap, partition ? partitionDefaults(partition, policy) : undefined, t, shape);
+    const gpu = fmtGpuLimit(cap, shape);
     if (gpu) parts.push(gpu);
   }
   if (cap.maxCores) {
@@ -98,25 +98,15 @@ export function fmtPolicyLimit(cap: PartitionCap, isGpu: boolean, t: TFn, partit
 }
 
 /** The GPU term of the policy line, "" when nothing can be stated. With the
- *  node shape known it is the most GPUs a job can really get (maxJobGpus —
- *  counts the --exclusive route while the plugin pins 1/node); without it,
- *  the plugin-pinned per-node reading below. */
-export function fmtGpuLimit(cap: PartitionCap, defaults: ReturnType<typeof partitionDefaults> | undefined, t: TFn,
-                            shape?: GpuNodeShape) {
+ *  node shape known it is the most GPUs a job can really get (maxJobGpus);
+ *  without it, the QoS gres cap. */
+export function fmtGpuLimit(cap: PartitionCap, shape?: GpuNodeShape) {
   if (shape && shape.gpus > 0) {
-    const n = maxJobGpus(cap, {
-      gpusPerNode: defaults?.gpus_per_node,
-      gpuRequestRespected: defaults?.gpu_request_respected,
-      defaultCores: defaults?.cores,
-    }, shape, allowsMultiNode(cap, shape.cores));
+    const n = maxJobGpus(cap, shape, allowsMultiNode(cap, shape.cores));
     return n > 0 ? `${n} GPU` : "";
   }
-  const limit = effectiveGpuLimit(cap, defaults);
-  if (!limit.forced) return limit.total ? `${limit.total} GPU` : "";
-  const n = limit.perNode!;
-  if (limit.total && limit.total > n) return t("pool.limitGpuForcedMulti", { total: limit.total, n });
-  if (limit.total) return t("pool.limitGpuForced", { n });
-  return t("pool.limitGpuPerNodeForced", { n });
+  const { total } = effectiveGpuLimit(cap);
+  return total ? `${total} GPU` : "";
 }
 
 export function cpuProbeLabel(state: CpuProbeState, t: TFn) {

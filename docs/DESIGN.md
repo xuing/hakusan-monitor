@@ -321,10 +321,11 @@ What the first run (2026-10-01) established:
   partitions need `-L` and are skipped).
 - The Lua's `pn_min_memory` defaults are never applied: DefMemPerCPU is set
   before the plugin runs, so its `== NO_VAL` test is false.
-- Every GPU partition overwrites the GPU count with 1 per node. The plugin
-  version of 2026-06-11 dropped `job_desc.gres ~= nil` from the "user asked
-  for GPUs" test; `job_desc.gpus` / `gpus_per_node`, which remain, are not
-  fields Slurm fills from `--gres` / `--gpus-per-node`. sacct shows 296 jobs
-  with >1 GPU/node before that date and one after (it used `--exclusive`,
-  which still gets the whole node).
+- GPU partitions honour `--gres=gpu:N` and `--gpus-per-node=N` (the plugin
+  tests `job_desc.gres`, i.e. tres_per_node). `--gpus` (tres_per_job) and
+  `--gpus-per-task` (tres_per_task) are not tested, so the plugin adds its
+  1-GPU-per-node default to them. Multi-GPU layouts run one task per GPU
+  (`-n N -c share --gres=gpu:N`): a bare `--gres=gpu:2` keeps the plugin's
+  26 cores, and `-c 52` alone is refused because the plugin fills in its task
+  count.
 

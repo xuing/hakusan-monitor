@@ -184,31 +184,16 @@ export function capPerGpu(cap: PartitionCap, gpus: number | undefined = cap.maxG
   };
 }
 
-/** How many GPUs a job in this partition can actually get.
- *
- *  Two independent limits apply: the QoS gres cap (`maxGpus`, when the QoS
- *  states one) and the submit plugin. job_submit.lua sets `gres=gpu:N` on
- *  every GPU-partition job and, since 2026-06-11, checks only job_desc.gpus /
- *  gpus_per_node — fields Slurm never fills from --gres — so a user's GPU
- *  request is overwritten (`gpu_request_respected === false`, verified live:
- *  --gres=gpu:2 on GPU-S got 1 GPU). The job then holds N × nodes GPUs.
- *  Nothing is invented: with no QoS cap and no node limit the total stays
- *  undefined and only the per-node figure is reported. */
+/** How many GPUs a job in this partition can get without the node shape:
+ *  the QoS gres cap (`maxGpus`), undefined when the QoS states none. With the
+ *  node shape known, maxJobGpus (gpu-layout) gives the exact figure. */
 export interface GpuLimit {
-  /** GPUs per node the plugin pins (only when it overrides the request) */
-  perNode?: number;
   /** most GPUs one job can hold, when that is knowable */
   total?: number;
-  /** true when the plugin, not the user, decides the GPU count */
-  forced: boolean;
 }
 
-export function effectiveGpuLimit(cap: PartitionCap, defaults?: PartitionDefaults): GpuLimit {
-  const perNode = defaults?.gpu_request_respected === false ? defaults.gpus_per_node : undefined;
-  if (!perNode) return { total: cap.maxGpus, forced: false };
-  const byNodes = cap.maxNodes ? perNode * cap.maxNodes : undefined;
-  const bounds = [cap.maxGpus, byNodes].filter((v): v is number => !!v);
-  return { perNode, total: bounds.length ? Math.min(...bounds) : undefined, forced: true };
+export function effectiveGpuLimit(cap: PartitionCap): GpuLimit {
+  return { total: cap.maxGpus };
 }
 
 /**

@@ -360,12 +360,8 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
     memMb: pool.mem_per_node,
     count: pool.nodes,
   };
-  const layoutFor = (p: string) => {
-    const d = partitionDefaults(p, snap?.policy);
-    return gpuLayouts(partitionCap(p, snap?.policy),
-      { gpusPerNode: d.gpus_per_node, gpuRequestRespected: d.gpu_request_respected, defaultCores: d.cores },
-      gpuShape, allowsMultiNode(partitionCap(p, snap?.policy), gpuShape.cores));
-  };
+  const layoutFor = (p: string) =>
+    gpuLayouts(partitionCap(p, snap?.policy), gpuShape, allowsMultiNode(partitionCap(p, snap?.policy), gpuShape.cores));
   const layoutResult = isGpu ? layoutFor(partition) : null;
   const layouts = layoutResult?.layouts ?? [];
   const layout = layouts.length > 1 ? layouts.find((l) => l.key === gpuKey) ?? null : null;
@@ -871,14 +867,8 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
                   )}
                 </Field>
               </div>
-              {/* multi-GPU notes: why --exclusive (hidden once the plugin honours
-                  --gres again — layout.exclusive turns false by itself), the
-                  interconnect, and the cost of spreading one GPU per node */}
-              {multiGpu && layout?.exclusive && (
-                <div className="mt-1 text-xs leading-relaxed text-warn-fg">
-                  {t("pool.gpuExclusiveWhy", { per: gpuShape.gpus, cores: gpuShape.cores })}
-                </div>
-              )}
+              {/* multi-GPU notes: the interconnect, and the cost of spreading
+                  one GPU per node */}
               {multiGpu && gpuShape.gpus > 1 && (
                 <div className="mt-1 text-xs leading-relaxed text-muted-foreground">{t("pool.gpuNoNvlink")}</div>
               )}
@@ -906,12 +896,12 @@ function gpuLayoutLabel(l: GpuLayout, t: TFn) {
 }
 
 /** Can this layout start now? Packed layouts need nodes with all GPUs free
- *  (whole idle nodes when --exclusive); spread ones need nodes with a free
+ *  plus their cores; spread ones need nodes with a free
  *  GPU plus a GPU's share of cores and memory. Counted from the raw nodes. */
 function multiGpuQueueHint(layout: GpuLayout, snap: Snapshot, pool: Pool, shape: GpuNodeShape,
                            memPerCpuMb: number, t: TFn) {
   const type = pool.gpu?.type ?? "";
-  const coresPerGpu = Math.max(1, Math.floor(shape.cores / Math.max(1, shape.gpus)));
+  const coresPerGpu = layout.coresPerGpu;
   let fits = 0;
   for (const n of snap.nodes) {
     if (n.pool !== pool.id || !nodeIsSchedulable(n)) continue;
@@ -919,7 +909,7 @@ function multiGpuQueueHint(layout: GpuLayout, snap: Snapshot, pool: Pool, shape:
     const freeCores = n.cpus - n.alloc_cpus;
     const freeMem = n.real_memory - n.alloc_memory;
     const ok = layout.packed
-      ? freeGpu >= shape.gpus && (layout.exclusive ? n.alloc_cpus === 0 : freeCores >= coresPerGpu * shape.gpus)
+      ? freeGpu >= shape.gpus && freeCores >= coresPerGpu * shape.gpus && freeMem >= coresPerGpu * shape.gpus * memPerCpuMb
       : freeGpu >= 1 && freeCores >= coresPerGpu && freeMem >= coresPerGpu * memPerCpuMb;
     if (ok) fits += 1;
   }

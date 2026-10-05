@@ -78,11 +78,11 @@ const POLICY: PolicySnapshot = {
   },
   partition_policies: {},
   partition_defaults: {
-    "GPU-1": { cores: 26, gpus_per_node: 1, gpu_request_respected: false, interactive_time_min: 720 },
-    "GPU-S": { cores: 26, gpus_per_node: 1, gpu_request_respected: false, interactive_time_min: 720 },
-    "GPU-L": { cores: 26, gpus_per_node: 1, gpu_request_respected: false, interactive_time_min: 720 },
-    "GPU-1A": { cores: 26, gpus_per_node: 1, gpu_request_respected: false, interactive_time_min: 720 },
-    "GPU-LA": { cores: 26, gpus_per_node: 1, gpu_request_respected: false, interactive_time_min: 720 },
+    "GPU-1": { cores: 26, gpus_per_node: 1, gpu_request_respected: true, interactive_time_min: 720 },
+    "GPU-S": { cores: 26, gpus_per_node: 1, gpu_request_respected: true, interactive_time_min: 720 },
+    "GPU-L": { cores: 26, gpus_per_node: 1, gpu_request_respected: true, interactive_time_min: 720 },
+    "GPU-1A": { cores: 26, gpus_per_node: 1, gpu_request_respected: true, interactive_time_min: 720 },
+    "GPU-LA": { cores: 26, gpus_per_node: 1, gpu_request_respected: true, interactive_time_min: 720 },
     TINY: { cores: 16 },
     DEF: { cores: 16, interactive_time_min: 2880 },
   },
@@ -123,25 +123,9 @@ describe("plugin-forced interactive walltime", () => {
 });
 
 describe("effective GPU limit", () => {
-  const limit = (p: string) => effectiveGpuLimit(POLICY.partition_caps[p], POLICY.partition_defaults![p]);
-
-  it("is the plugin's per-node pin x the node cap when the plugin overwrites --gres", () => {
-    // GPU-S QoS says 2 GPUs, but --gres=gpu:2 measured as 1 GPU on 1 node
-    expect(limit("GPU-S")).toEqual({ perNode: 1, total: 1, forced: true });
-    expect(limit("GPU-1")).toEqual({ perNode: 1, total: 1, forced: true });
-    // multi-node: the QoS gres cap still bounds the total
-    expect(limit("GPU-L")).toEqual({ perNode: 1, total: 8, forced: true });
-  });
-
-  it("does not invent a total where neither the QoS nor a node cap gives one", () => {
-    expect(limit("GPU-1A")).toEqual({ perNode: 1, total: 1, forced: true });
-    expect(limit("GPU-LA")).toEqual({ perNode: 1, total: undefined, forced: true });
-  });
-
-  it("falls back to the QoS gres cap when the plugin honours the request", () => {
-    expect(effectiveGpuLimit({ maxGpus: 2 }, { gpus_per_node: 1, gpu_request_respected: true })).toEqual({ total: 2, forced: false });
-    expect(effectiveGpuLimit({ maxGpus: 2 }, undefined)).toEqual({ total: 2, forced: false });
-    expect(effectiveGpuLimit({}, undefined)).toEqual({ total: undefined, forced: false });
+  it("is the QoS gres cap, undefined when the QoS states none", () => {
+    expect(effectiveGpuLimit({ maxGpus: 2 })).toEqual({ total: 2 });
+    expect(effectiveGpuLimit({})).toEqual({ total: undefined });
   });
 });
 

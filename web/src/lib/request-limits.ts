@@ -78,8 +78,6 @@ export interface BoundaryCommand {
     gpusPerNode: number;
     /** GPUs the layout promises (GPU layouts only) */
     gpus?: number;
-    /** whole nodes via --exclusive: CPUs are counted at allocation */
-    exclusive?: boolean;
   };
 }
 
@@ -122,13 +120,11 @@ export function boundaryCommands(snap: Snapshot): BoundaryCommand[] {
       if (lim.wall) add("time", lim.wall, { timeValue: wallToSlurm(lim.wall) });
       if (isGpu && part.spec.gpu_per_node > 0) {
         const gshape: GpuNodeShape = { gpus: part.spec.gpu_per_node, cores: coresPerNode, memMb: pool.mem_per_node, count: part.nodes };
-        const { layouts } = gpuLayouts(lim.cap, {
-          gpusPerNode: defaults.gpus_per_node, gpuRequestRespected: defaults.gpu_request_respected, defaultCores: defaults.cores,
-        }, gshape, lim.multiNode);
+        const { layouts } = gpuLayouts(lim.cap, gshape, lim.multiNode);
         for (const l of layouts.filter((x) => x.gpus > 1)) {
           out.push({
             partition: p, field: `gpu:${l.key}`, value: String(l.gpus), args: `-p ${p} ${l.flags.join(" ")}`,
-            expect: { ...expect, gpus: l.gpus, exclusive: l.exclusive },
+            expect: { ...expect, gpus: l.gpus },
           });
         }
       }
