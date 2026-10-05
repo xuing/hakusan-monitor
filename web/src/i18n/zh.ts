@@ -723,7 +723,7 @@ export const zh: Record<TranslationKey, string> = {
 
   // 占用资源最多的用户 (components/dashboard/top-users.tsx)
   "users.none": "没有运行中的作业",
-  "users.share": "占 {p}",
+  "users.others": "其余 {n} 位",
   "users.free": "空闲",
   "users.offline": "下线",
   "users.gpuGroup": "GPU 节点",

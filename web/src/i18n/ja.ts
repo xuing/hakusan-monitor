@@ -723,7 +723,7 @@ export const ja: Record<TranslationKey, string> = {
 
   // 使用量の多いユーザー (components/dashboard/top-users.tsx)
   "users.none": "実行中のジョブはありません",
-  "users.share": "全体の {p}",
+  "users.others": "他 {n} 人",
   "users.free": "空き",
   "users.offline": "オフライン",
   "users.gpuGroup": "GPU ノード",

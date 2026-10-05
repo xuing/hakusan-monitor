@@ -5,7 +5,7 @@ import { useLive } from "@/hooks/live-context";
 import { useResourceFilter } from "@/hooks/resource-filter-context";
 import { coresText, poolTitle, useT, type TFn } from "@/i18n";
 import { fmtMB, nf } from "@/lib/format";
-import { fmtShare, groupUsage, poolUsage, type PoolUsage } from "@/lib/user-usage";
+import { groupUsage, poolUsage, type PoolUsage } from "@/lib/user-usage";
 import { cn } from "@/lib/utils";
 
 /** Who holds the cluster: on the overview one map for every GPU pool and one
@@ -78,7 +78,12 @@ function PoolPanel({ usage, t }: { usage: PoolUsage; t: TFn }) {
           </span>
         )}
       </header>
-      <OccupancyMap tiles={usageTiles(usage, t)} ariaLabel={title} className="aspect-[4/3]" />
+      <OccupancyMap
+        tiles={usageTiles(usage, t)}
+        ariaLabel={title}
+        restLabel={(k, amount) => ({ label: t("users.others", { n: k }), amount: unitText(unit, amount, t) })}
+        className="aspect-[4/3]"
+      />
     </section>
   );
 }
@@ -88,7 +93,7 @@ const unitText = (unit: "gpus" | "cores", n: number, t: TFn) =>
 
 /** One tile per user, sized in the panel's unit, then free and offline. */
 function usageTiles(usage: PoolUsage, t: TFn): OccupancyTile[] {
-  const { unit, totals, pools } = usage;
+  const { unit, pools } = usage;
   const users: OccupancyTile[] = usage.users
     .map((u) => {
       const value = unit === "gpus" ? u.held.gpus : u.held.cores;
@@ -103,10 +108,9 @@ function usageTiles(usage: PoolUsage, t: TFn): OccupancyTile[] {
         kind: "user" as const,
         label: u.user,
         amount: unitText(unit, value, t),
-        sub: fmtShare(totals[unit] ? value / totals[unit] : 0),
         queued: u.pending > 0,
         details: [
-          `${t("users.share", { p: fmtShare(totals[unit] ? value / totals[unit] : 0) })} · ${t(u.running === 1 ? "users.job1" : "users.jobs", { n: u.running })}`,
+          t(u.running === 1 ? "users.job1" : "users.jobs", { n: u.running }),
           ...(models ? [models] : []),
           [unit === "gpus" ? coresText(t, u.held.cores) : "", `${t("kpi.memory")} ${fmtMB(u.held.memMb)}`].filter(Boolean).join(" · "),
           ...(u.pending ? [t("users.queuedJobs", { n: u.pending })] : []),

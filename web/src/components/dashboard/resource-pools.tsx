@@ -2180,7 +2180,11 @@ function Occupants({ pool, t }: { pool: Pool; t: TFn }) {
       {/* by usage: the pool as one map, each user's tile its share; a search
           narrows it to a list of the matching users */}
       {groupByUser && !needle ? (
-        <OccupancyMap tiles={poolOccupancyTiles(pool, snap, userGroups, t)} ariaLabel={t("pool.sortUsage")} />
+        <OccupancyMap
+          tiles={poolOccupancyTiles(pool, snap, userGroups, t)}
+          ariaLabel={t("pool.sortUsage")}
+          restLabel={(k, amount) => ({ label: t("users.others", { n: k }), amount: isGpu ? `${nf(amount)} ${t("unit.gpu")}` : coresText(t, amount) })}
+        />
       ) : (
       <div className="max-h-72 space-y-1 overflow-y-auto pr-1">
         {groupByUser ? (
@@ -2210,7 +2214,6 @@ function Occupants({ pool, t }: { pool: Pool; t: TFn }) {
  *  cores otherwise), then what is free and what is offline. */
 function poolOccupancyTiles(pool: Pool, snap: Snapshot, groups: OccupantUserGroup[], t: TFn): OccupancyTile[] {
   const isGpu = pool.kind === "gpu" && !!pool.gpu;
-  const total = isGpu ? pool.gpu!.total : pool.cores.total;
   const unit = (n: number) => (isGpu ? `${nf(n)} ${t("unit.gpu")}` : coresText(t, n));
   const waiting = new Map<string, number>();
   for (const j of snap.jobs) {
@@ -2231,7 +2234,7 @@ function poolOccupancyTiles(pool: Pool, snap: Snapshot, groups: OccupantUserGrou
         sub: `${g.nodes} ${t("spec.nodes")}`,
         queued: queued > 0,
         details: [
-          `${t("users.share", { p: total ? `${((value / total) * 100).toFixed(1)}%` : "—" })} · ${g.nodes} ${t("spec.nodes")} · ${t(g.jobs === 1 ? "users.job1" : "users.jobs", { n: g.jobs })}`,
+          `${g.nodes} ${t("spec.nodes")} · ${t(g.jobs === 1 ? "users.job1" : "users.jobs", { n: g.jobs })}`,
           [isGpu ? coresText(t, g.cpus) : "", `${t("kpi.memory")} ${fmtMB(g.mem_mb)}`].filter(Boolean).join(" · "),
           ...(queued ? [t("users.queuedJobs", { n: queued })] : []),
         ],

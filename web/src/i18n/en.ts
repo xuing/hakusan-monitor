@@ -724,7 +724,7 @@ export const en = {
 
   // top users by resource use (components/dashboard/top-users.tsx)
   "users.none": "No running jobs",
-  "users.share": "{p} of the pool",
+  "users.others": "{n} others",
   "users.free": "free",
   "users.offline": "offline",
   "users.gpuGroup": "GPU nodes",
