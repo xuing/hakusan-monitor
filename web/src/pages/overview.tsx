@@ -33,10 +33,11 @@ export default function OverviewPage() {
             <QueueInsights />
           </div>
         )}
-        <div className="min-w-0 lg:col-span-6">
+        <div className="min-w-0 lg:col-span-12">
           <NodesDown />
         </div>
-        <div className="min-w-0 lg:col-span-6">
+        {/* one panel per pool inside, so the card needs the whole row */}
+        <div className="min-w-0 lg:col-span-12">
           <TopUsers />
         </div>
       </div>

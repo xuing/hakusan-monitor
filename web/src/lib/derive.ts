@@ -83,31 +83,6 @@ export function poolCapacity(snap: Snapshot, poolId: string): PoolCapacity {
   return { freeCores, emptiestNodeFree, idleNodes };
 }
 
-export interface PoolUser {
-  user: string;
-  running: number;
-  cpus: number;
-  gpus: number;
-}
-
-/** Running users on a pool (for the filter-aware "most active users"). */
-export function usersForPool(snap: Snapshot, poolId: string): PoolUser[] {
-  const pp = snap.part_pool;
-  const map = new Map<string, PoolUser>();
-  for (const j of snap.jobs) {
-    if (j.job_state !== "RUNNING") continue;
-    if (pp[String(j.partition).split(",")[0]] !== poolId) continue;
-    const u = map.get(j.user_name) ?? { user: j.user_name, running: 0, cpus: 0, gpus: 0 };
-    u.running += 1;
-    u.cpus += j.cpus;
-    u.gpus += j.gpus;
-    map.set(j.user_name, u);
-  }
-  return [...map.values()].sort((a, b) =>
-    b.running - a.running || b.gpus - a.gpus || b.cpus - a.cpus,
-  ).slice(0, 10);
-}
-
 /** Running jobs occupying a pool, from raw jobs + the partition→pool map. */
 export function occupantsForPool(snap: Snapshot, poolId: string): Occupant[] {
   const pp = snap.part_pool;

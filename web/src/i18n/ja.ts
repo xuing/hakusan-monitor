@@ -746,4 +746,15 @@ export const ja: Record<TranslationKey, string> = {
 
   "state.RUNNING": "実行中",
   "state.PENDING": "実行待ち",
+
+  // 使用量の多いユーザー (components/dashboard/top-users.tsx)
+  "users.none": "実行中のジョブはありません",
+  "users.jobs": "ジョブ {n} 件",
+  "users.job1": "ジョブ 1 件",
+  "users.queuedUnits": "実行待ち {n} 件 ({units})",
+  "users.queuedJobs": "実行待ち {n} 件",
+  "users.others": "他 {n} ユーザー",
+  "users.other1": "他 1 ユーザー",
+  "users.held": "確保済み",
+  "users.queued": "実行待ち",
 };

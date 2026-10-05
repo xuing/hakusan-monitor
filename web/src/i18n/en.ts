@@ -747,6 +747,17 @@ export const en = {
 
   "state.RUNNING": "Running",
   "state.PENDING": "Pending",
+
+  // top users by resource use (components/dashboard/top-users.tsx)
+  "users.none": "No running jobs",
+  "users.jobs": "{n} jobs",
+  "users.job1": "1 job",
+  "users.queuedUnits": "{n} queued ({units})",
+  "users.queuedJobs": "{n} queued",
+  "users.others": "{n} other users",
+  "users.other1": "1 other user",
+  "users.held": "held",
+  "users.queued": "queued",
 } satisfies Record<string, string>;
 
 export type TranslationKey = keyof typeof en;

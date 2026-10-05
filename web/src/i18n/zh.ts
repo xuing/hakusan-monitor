@@ -746,4 +746,15 @@ export const zh: Record<TranslationKey, string> = {
 
   "state.RUNNING": "运行中",
   "state.PENDING": "排队中",
+
+  // 占用资源最多的用户 (components/dashboard/top-users.tsx)
+  "users.none": "没有运行中的作业",
+  "users.jobs": "{n} 个作业",
+  "users.job1": "1 个作业",
+  "users.queuedUnits": "排队 {n} 个作业 ({units})",
+  "users.queuedJobs": "排队 {n} 个作业",
+  "users.others": "其余 {n} 位用户",
+  "users.other1": "其余 1 位用户",
+  "users.held": "已占用",
+  "users.queued": "排队中",
 };
