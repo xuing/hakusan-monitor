@@ -49,7 +49,7 @@ export const ja: Record<TranslationKey, string> = {
   "filter.all": "すべて",
   "filter.label": "リソース",
 
-  "kpi.cpu": "CPU コア",
+  "kpi.cpu": "CPU",
   "kpi.gpu": "GPU",
   "kpi.nodes": "ノード",
   "kpi.queue": "キュー",

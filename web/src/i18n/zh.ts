@@ -49,7 +49,7 @@ export const zh: Record<TranslationKey, string> = {
   "filter.all": "全部",
   "filter.label": "资源",
 
-  "kpi.cpu": "CPU 核心",
+  "kpi.cpu": "CPU",
   "kpi.gpu": "GPU",
   "kpi.nodes": "节点",
   "kpi.queue": "队列",

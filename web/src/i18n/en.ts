@@ -50,8 +50,8 @@ export const en = {
   "filter.all": "All",
   "filter.label": "Resource",
 
-  "kpi.cpu": "CPU cores",
-  "kpi.gpu": "GPUs",
+  "kpi.cpu": "CPU",
+  "kpi.gpu": "GPU",
   "kpi.nodes": "Nodes",
   "kpi.queue": "Queue",
   "kpi.memory": "Memory",
