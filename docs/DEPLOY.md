@@ -120,3 +120,17 @@ service account.
   `X-Forwarded-For`; set `HM_ACCESS_LOG=1` only when request logging is useful.
 - For public or off-campus access, put it behind a reverse proxy with TLS and
   access control, and enable `HM_MASK_USERS=1` at minimum.
+
+## Serving under a path prefix
+
+The same build works at `/` and under any prefix: `index.html` takes the
+prefix from the page URL (everything before the first route segment), and the
+router, API and SSE follow it. The proxy strips the prefix and redirects the
+bare prefix to its trailing-slash form (Caddy):
+
+```caddyfile
+redir /hakusan /hakusan/ 308
+handle_path /hakusan/* {
+	reverse_proxy host.docker.internal:8787
+}
+```
