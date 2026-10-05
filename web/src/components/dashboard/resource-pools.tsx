@@ -535,7 +535,17 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
   const nodeOptions = nodeLimit > 0 ? numberOptions(nodeLimit, [1, 2, 3, 4, 8, 16, 32]) : [];
   const coreOptions = numberOptions(cap.maxCores, [1, 2, 4, 8, 16, 26, 32, 52, 64, 96, 128, 208, 256, 512, 768, 1024, 2048, 4096, 8192],
     Math.max(cap.minCores ?? 1, nodeCount || 1));
-  const timeOptions = timeOptionsFor(cap.wall, t);
+  // what each blank advanced field resolves to: the plugin's default cores,
+  // DefMemPerCPU x cores per node (the Lua --mem default is never applied),
+  // and the QoS wall
+  const partDefaults = partitionDefaults(partition, snap?.policy);
+  const defCores = partDefaults.cores ?? 0;
+  const memCores = coreCount ? Math.ceil(coreCount / (nodeCount || 1)) : defCores;
+  const defMemMb = memCores * (partDefaults.def_mem_per_cpu_mb ?? 0);
+  const defMemLabel = defMemMb > 0 ? `${Math.round(defMemMb / 1024)}G` : "";
+  const defTimeSec = defaultRequestSec(partition, snap?.policy);
+  const defLabel = (v: string | number) => (v ? t("pool.defaultValue", { v }) : t("pool.default"));
+  const timeOptions = timeOptionsFor(cap.wall, t, Number.isFinite(defTimeSec) ? defLabel(fmtDur(defTimeSec)) : undefined);
   const partitionGroups = partitionOptionGroups(pool.partitions, t);
   const gpuPartitionChoices = isGpu && pool.partitions.length > 1
     ? pool.partitions.map((p): GpuPartitionChoice => {
@@ -823,7 +833,7 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
                 {nodeOptions.length > 0 && (
                 <Field label={capSuffix(t("spec.nodes"), nodeLimit)}>
                   <select value={nodeCount ? nodes : ""} onChange={(e) => setNodes(e.target.value)} className={fieldCls}>
-                    <option value="">{t("pool.default")}</option>
+                    <option value="">{defLabel(defaultFit && !defaultFit.fitsOneNode ? "" : 1)}</option>
                     {nodeOptions.map((n) => (
                       <option key={n} value={String(n)}>{n}</option>
                     ))}
@@ -832,7 +842,7 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
                 )}
                 <Field label={capSuffix(t("unit.cores"), cap.maxCores, cap.minCores)}>
                   <select value={coreCount ? cores : ""} onChange={(e) => setCores(e.target.value)} className={fieldCls}>
-                    <option value="">{t("pool.default")}</option>
+                    <option value="">{defLabel(defCores)}</option>
                     {coreOptions.map((n) => (
                       <option key={n} value={String(n)}>{n}</option>
                     ))}
@@ -842,7 +852,7 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
                   <input
                     value={mem}
                     onChange={(e) => setMem(e.target.value)}
-                    placeholder={gpuTip?.mem || t("pool.default")}
+                    placeholder={gpuTip?.mem || defLabel(defMemLabel)}
                     className={cn(fieldCls, memError && "border-bad")}
                   />
                   {memError && <span className="mt-0.5 block text-xs leading-tight text-bad-fg">{memError}</span>}
@@ -875,11 +885,13 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
               {multiGpu && layout && !layout.packed && (
                 <div className="mt-1 text-xs leading-relaxed text-warn-fg">{t("pool.gpuSpreadWarn")}</div>
               )}
-              <div className="text-xs leading-relaxed text-muted-foreground">
-                {multiGpu
-                  ? t("pool.gpuLayoutLocks", { mem: t("pool.gpuLayoutLocksMem") })
-                  : t("pool.nodeRequestHint")}
-              </div>
+              {(multiGpu || nodeCount > 1) && (
+                <div className="text-xs leading-relaxed text-muted-foreground">
+                  {multiGpu
+                    ? t("pool.gpuLayoutLocks", { mem: t("pool.gpuLayoutLocksMem") })
+                    : t("pool.nodeRequestHint")}
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -969,7 +981,7 @@ function numberOptions(max: number | undefined, values: number[], min?: number) 
   return [...out].sort((a, b) => a - b);
 }
 
-function timeOptionsFor(wall: string | undefined, t: TFn) {
+function timeOptionsFor(wall: string | undefined, t: TFn, defaultLabel?: string) {
   const limit = parseWallMinutes(wall);
   const base = [
     { value: "00:30:00", label: "30m", minutes: 30 },
@@ -986,7 +998,7 @@ function timeOptionsFor(wall: string | undefined, t: TFn) {
     { value: "21-00:00:00", label: "21d", minutes: 30240 },
   ];
   return [
-    { value: "", label: t("pool.timeDefault") },
+    { value: "", label: defaultLabel ?? t("pool.timeDefault") },
     ...base.filter((opt) => !limit || opt.minutes <= limit),
   ];
 }
