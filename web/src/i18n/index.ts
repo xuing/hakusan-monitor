@@ -2,6 +2,7 @@ export { I18nProvider } from "./provider";
 export { useI18n, useT, type I18nValue } from "./context";
 export {
   LANGS,
+  coresText,
   poolLabel,
   reasonDescription,
   reasonLabel,

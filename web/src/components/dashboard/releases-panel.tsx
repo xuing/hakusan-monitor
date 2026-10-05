@@ -4,7 +4,7 @@ import { Empty } from "@/components/common/empty";
 import { SectionCard } from "@/components/common/section-card";
 import { useLive } from "@/hooks/live-context";
 import { useResourceFilter } from "@/hooks/resource-filter-context";
-import { useT } from "@/i18n";
+import { coresText, useT } from "@/i18n";
 import { fmtCountdown, parseDur } from "@/lib/format";
 import { matchRelease } from "@/lib/slurm";
 import { cn } from "@/lib/utils";
@@ -49,8 +49,9 @@ function ReleaseRow({
   now: number;
   generatedAt: number;
 }) {
+  const t = useT();
   const remaining = Math.max(0, parseDur(release.time_left) - (now - generatedAt));
-  const resource = release.gpus ? release.gpu : `${release.cpus}c`;
+  const resource = release.gpus ? release.gpu : coresText(t, release.cpus);
   const isGpu = release.gpus > 0;
   const accent = isGpu ? "bg-info" : "bg-ok";
   const fg = isGpu ? "text-info-fg" : "text-ok-fg";

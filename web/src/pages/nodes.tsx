@@ -5,7 +5,7 @@ import { DataTable, type DataFacet } from "@/components/data/data-table";
 import { TableSkeleton } from "@/components/common/table-skeleton";
 import { LivePending } from "@/components/common/live-pending";
 import { useLive } from "@/hooks/live-context";
-import { poolLabel, useT, type TFn } from "@/i18n";
+import { coresText, poolLabel, useT, type TFn } from "@/i18n";
 import { poolKindGroups } from "@/components/data/table-filters";
 import { jobsOnNode } from "@/lib/derive";
 import { fmtCountdown, fmtMB, parseDur } from "@/lib/format";
@@ -93,7 +93,7 @@ function NodeJobCard({ job, t }: { job: Occupant; t: TFn }) {
 function nodeJobResources(job: Occupant, t: TFn) {
   const parts = [];
   if (job.gpus > 0) parts.push(`${job.gpus} ${t("unit.gpu")}`);
-  if (job.cpus > 0) parts.push(`${job.cpus}c`);
+  if (job.cpus > 0) parts.push(coresText(t, job.cpus));
   if (job.mem_mb > 0) parts.push(fmtMB(job.mem_mb));
   return parts.join(" · ") || "—";
 }

@@ -11,7 +11,7 @@ import { UnitBlocks } from "@/components/common/unit-blocks";
 import { gpuSegmentLabel } from "@/components/common/gpu-status";
 import { useLive } from "@/hooks/live-context";
 import { useResourceFilter } from "@/hooks/resource-filter-context";
-import { poolLabel, useT, type TFn } from "@/i18n";
+import { coresText, poolLabel, useT, type TFn } from "@/i18n";
 import type { TranslationKey } from "@/i18n/en";
 import { nodeIsSchedulerHeld, poolCapacity, type PoolCapacity } from "@/lib/derive";
 import { clockOf, fmtMB, nf } from "@/lib/format";
@@ -122,7 +122,7 @@ function heroText(t: TFn, h: Hero): string {
   if (h.unit === "gpu") return `${nf(h.n)} ${t("unit.gpu")}`;
   // "0 台整空节点" reads like a contradiction next to the queue tag — say it in words
   if (h.unit === "nodes") return h.n > 0 ? `${nf(h.n)} ${t("part.wholeNodes")}` : t("part.noWholeNodes");
-  return `${nf(h.n)}c`;
+  return coresText(t, h.n);
 }
 
 export function PartitionPressure() {
@@ -406,7 +406,7 @@ function PoolHeader({
           <span className="font-mono text-xs text-muted-foreground">
             {nf(pool?.nodes ?? 0)} {t("spec.nodes")} · {t("spec.perNode")}{" "}
             {spec.gpu_per_node > 0 && `${spec.gpu_per_node} GPU · `}
-            {spec.cores_per_node}c · {fmtMB(spec.mem_per_node)}
+            {coresText(t, spec.cores_per_node)} · {fmtMB(spec.mem_per_node)}
           </span>
         </div>
         {isGpu && <GpuReleaseHint next={pool?.gpu?.next_free} generatedAt={generatedAt} />}

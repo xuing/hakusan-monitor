@@ -4,7 +4,7 @@ import { Empty } from "@/components/common/empty";
 import { ReasonText } from "@/components/common/reason-text";
 import { SectionCard } from "@/components/common/section-card";
 import { useLive } from "@/hooks/live-context";
-import { reasonLabel, useT } from "@/i18n";
+import { coresText, reasonLabel, useT } from "@/i18n";
 import { fmtAt, fmtEpoch } from "@/lib/format";
 import { partitionDisplayRank, toneClass, type Tone } from "@/lib/slurm";
 import { cn } from "@/lib/utils";
@@ -96,7 +96,7 @@ export function QueueInsights() {
                     <Td>{j.partition || "—"}</Td>
                     <Td>{j.job_id}</Td>
                     <Td className="text-info-fg">{j.user}</Td>
-                    <Td>{j.gpu || `${j.cpus}c`}</Td>
+                    <Td>{j.gpu || coresText(t, j.cpus)}</Td>
                     <Td className="text-muted-foreground">{reasonLabel(t, j.reason)}</Td>
                     <Td className="text-muted-foreground">{fmtEpoch(j.submit_time)}</Td>
                     <Td className="text-muted-foreground">{j.start_est ? fmtAt(j.start_est) : "—"}</Td>

@@ -1,6 +1,7 @@
 import { en, type TranslationKey } from "./en";
 import { ja } from "./ja";
 import { zh } from "./zh";
+import { nf } from "@/lib/format";
 
 export type { TranslationKey } from "./en";
 
@@ -30,6 +31,12 @@ export function reasonDescription(t: TFn, raw: string): string {
     if (t(key) !== key) return t(key);
   }
   return "";
+}
+
+/** A CPU core count with its unit spelled out: "7 核", "7 cores", "1 core",
+ *  "7 コア" — a bare "7c" means nothing to someone new to Slurm. */
+export function coresText(t: TFn, n: number): string {
+  return `${nf(n)} ${t(n === 1 ? "unit.core" : "unit.cores")}`;
 }
 
 /** Localized hardware-pool label, falling back to the id. */

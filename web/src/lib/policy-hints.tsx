@@ -2,7 +2,7 @@
 // Single source for the Overview quick-request box AND the Partitions page —
 // these two used to carry diverging copies (different limit formats, different
 // user-limit chip layouts). Any policy hint shown to users must come from here.
-import type { TFn } from "@/i18n";
+import { coresText, type TFn } from "@/i18n";
 import { cleanCpuProbeRaw, type CpuProbeRow, type CpuProbeState } from "@/lib/cpu-probes";
 import { nf } from "@/lib/format";
 import { maxJobGpus, type GpuNodeShape } from "@/lib/gpu-layout";
@@ -81,7 +81,7 @@ export function fmtPolicyLimit(cap: PartitionCap, isGpu: boolean, t: TFn, partit
     if (gpu) parts.push(gpu);
   }
   if (cap.maxCores) {
-    parts.push(cap.minCores ? `${nf(cap.minCores)}–${nf(cap.maxCores)}c` : `${nf(cap.maxCores)}c`);
+    parts.push(cap.minCores ? `${nf(cap.minCores)}–${nf(cap.maxCores)} ${t("unit.cores")}` : coresText(t, cap.maxCores));
   }
   const memGb = effectiveJobMemGb(cap, nodeMemMb, nodeCores ?? shape?.cores);
   if (memGb) parts.push(fmtCapMem(memGb));

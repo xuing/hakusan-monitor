@@ -12,7 +12,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { PartitionTable, type PartitionAxis, type PartitionTableRow } from "@/components/dashboard/partition-table";
 import { useLive } from "@/hooks/live-context";
 import { useResourceFilter } from "@/hooks/resource-filter-context";
-import { poolLabel, reasonLabel, useT, type TFn, type TranslationKey } from "@/i18n";
+import { coresText, poolLabel, reasonLabel, useT, type TFn, type TranslationKey } from "@/i18n";
 import { nextUpOrder } from "@/lib/pending-order";
 import { nodeIsSchedulable, nodeIsSchedulerHeld, nodeNeedsAttention, occupantsForPool, poolCapacity } from "@/lib/derive";
 import { fmtCountdown, fmtDur, fmtMB, nf, parseDur } from "@/lib/format";
@@ -649,6 +649,18 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
       : t("pool.hintGpuNone", { gpu: pool.gpu?.label ?? "GPU" })
     : null;
   const countLayouts = layouts.filter((l) => l.gpus === gpuCount && l.gpus > 1);
+  // what the chosen layout's GPUs talk over — these nodes have no NVLink;
+  // the network part only once the layout spans nodes
+  const linkNote = multiGpu && layout && gpuShape.gpus > 1
+    ? layout.nodes === 1
+      ? t("pool.gpuLinkNode", { n: layout.gpusPerNode })
+      : layout.gpusPerNode > 1
+        ? t("pool.gpuLinkPacked", { n: layout.gpusPerNode })
+        // a count no whole node divides has only this placement: say why
+        : countLayouts.some((l) => l.gpusPerNode > 1)
+          ? t("pool.gpuLinkSpread")
+          : `${t("pool.gpuLinkSpread")} ${t("pool.gpuSpreadOnly", { n: layout.gpus })}`
+    : "";
   // the count fits now, just not with the placement picked
   const startingAlt = multiGpu && layout && judged && !blockedAll && !layoutStarts(layout)
     ? countLayouts.find((l) => l.key !== layout.key && layoutStarts(l)) ?? null
@@ -972,6 +984,7 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
                       )}
                       <span>{t("pool.perGpuShare", { cores: perGpuCores, mem: fmtGbNear(perGpuCores * memPerCore) })}</span>
                     </div>
+                    {linkNote && <FieldNote>{linkNote}</FieldNote>}
                     {startingAlt && (
                       <p className="text-xs leading-snug text-warn-fg">
                         {t("pool.layoutAltStarts", { layout: layoutPlacementLabel(startingAlt, t) })}
@@ -1263,8 +1276,6 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
                 {!multiGpu && coreCount > 0 && (
                   <p>{multiNodePolicy ? t("pool.taskFlagMany") : t("pool.taskFlagOne", { tasks: partDefaults.tasks ?? defCores })}</p>
                 )}
-                {multiGpu && gpuShape.gpus > 1 && <p>{t("pool.gpuNoNvlink")}</p>}
-                {multiGpu && layout && !layout.packed && <p className="text-warn-fg">{t("pool.gpuSpreadWarn")}</p>}
                 {/* Why the command carries a -n the user did not choose. Stated as
                     a fact about the partition, never as a note about our editing. */}
                 {defaultFit && !defaultFit.fitsOneNode && !coreCount && (
@@ -1987,7 +1998,7 @@ function resourceParts(gpus: number, cores: number, memMb: number, t: TFn) {
 function jobResourceText(job: RawJob, t: TFn) {
   const parts = [];
   if (job.gpus) parts.push(`${nf(job.gpus)} ${t("unit.gpu")}`);
-  if (job.cpus) parts.push(`${nf(job.cpus)} ${t("unit.cores")}`);
+  if (job.cpus) parts.push(coresText(t, job.cpus));
   if (job.min_memory) parts.push(job.min_memory);
   return parts.length ? `(${parts.join(" / ")})` : "";
 }
@@ -1995,7 +2006,7 @@ function jobResourceText(job: RawJob, t: TFn) {
 function missingText(row: GpuFitNode, t: TFn) {
   const parts = [];
   if (row.missingGpu > 0) parts.push(`${nf(row.missingGpu)} ${t("unit.gpu")}`);
-  if (row.missingCores > 0) parts.push(`${nf(row.missingCores)} ${t("unit.cores")}`);
+  if (row.missingCores > 0) parts.push(coresText(t, row.missingCores));
   if (row.missingMemMb > 0) parts.push(`${fmtMemRaw(row.missingMemMb)} ${t("kpi.memory")}`);
   return parts.length ? parts.join(" / ") : "0";
 }
@@ -2090,7 +2101,7 @@ function PendingJobRow({ job, t }: { job: RawJob; t: TFn }) {
 function pendingJobResources(job: RawJob, t: TFn) {
   const parts = [];
   if (job.gpus > 0) parts.push(`${job.gpus} ${t("unit.gpu")}`);
-  if (job.cpus > 0) parts.push(`${job.cpus}c`);
+  if (job.cpus > 0) parts.push(coresText(t, job.cpus));
   if ((job.min_memory_mb ?? 0) > 0) parts.push(fmtMB(job.min_memory_mb));
   if (job.node_count > 0) parts.push(`${job.node_count} ${t("spec.nodes")}`);
   return parts.join(" · ") || "—";
@@ -2285,7 +2296,7 @@ function OccupantUserRow({
   isGpu: boolean;
   t: TFn;
 }) {
-  const primary = isGpu ? `${group.gpus} ${t("unit.gpu")}` : `${group.cpus}c`;
+  const primary = isGpu ? `${group.gpus} ${t("unit.gpu")}` : coresText(t, group.cpus);
   return (
     <div className="rounded-md bg-muted/40 px-2.5 py-1.5 text-xs">
       <div className="flex items-center justify-between gap-2">
@@ -2297,7 +2308,7 @@ function OccupantUserRow({
       <div className="mt-1 flex min-w-0 items-center justify-between gap-2 text-xs text-muted-foreground">
         <span className="truncate">
           {group.jobs} {t("topusers.jobs")}
-          {isGpu && <> · {group.cpus}c</>} · {fmtMB(group.mem_mb)}
+          {isGpu && <> · {coresText(t, group.cpus)}</>} · {fmtMB(group.mem_mb)}
           {group.nodes > 0 && <> · {group.nodes} {t("spec.nodes")}</>}
         </span>
       </div>
@@ -2314,7 +2325,7 @@ function partitionWallSeconds(partition: string, policy?: Snapshot["policy"]) {
 function occupantResources(o: Occupant, t: TFn) {
   const parts = [];
   if (o.gpus > 0) parts.push(`${o.gpus} ${t("unit.gpu")}`);
-  if (o.cpus > 0) parts.push(`${o.cpus}c`);
+  if (o.cpus > 0) parts.push(coresText(t, o.cpus));
   if (o.mem_mb > 0) parts.push(fmtMB(o.mem_mb));
   return parts.join(" · ") || "—";
 }
