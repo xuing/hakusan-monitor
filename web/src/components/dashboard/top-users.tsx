@@ -82,6 +82,8 @@ function PoolPanel({ usage, t }: { usage: PoolUsage; t: TFn }) {
         tiles={usageTiles(usage, t)}
         ariaLabel={title}
         restLabel={(k, amount) => ({ label: t("users.others", { n: k }), amount: unitText(unit, amount, t) })}
+        // a pool in focus is one GPU model, few enough cells to read
+        grid={unit === "gpus" && pools.length === 1}
         className="aspect-[4/3]"
       />
     </section>

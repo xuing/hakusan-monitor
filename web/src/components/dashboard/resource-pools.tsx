@@ -2185,6 +2185,7 @@ function Occupants({ pool, t }: { pool: Pool; t: TFn }) {
           ariaLabel={t("pool.sortUsage")}
           restLabel={(k, amount) => ({ label: t("users.others", { n: k }), amount: isGpu ? `${nf(amount)} ${t("unit.gpu")}` : coresText(t, amount) })}
           perRow={wholeNodePool(pool, snap) || undefined}
+          grid={isGpu}
           nodeWord={t("spec.nodes")}
         />
       ) : (

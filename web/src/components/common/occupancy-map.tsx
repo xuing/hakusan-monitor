@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { gridDims, packColumns } from "@/lib/gpu-grid";
 import { squarify } from "@/lib/treemap";
 import { cn } from "@/lib/utils";
 
@@ -62,6 +63,109 @@ function layoutTiles(tiles: OccupancyTile[], w: number, h: number,
   return [...top, ...strip];
 }
 
+/** One cell per GPU in a columns × rows grid; a user's cells form one block
+ *  (whole columns plus a step), thick gaps between owners, faint lines between
+ *  cells of the same owner. The name and count sit in the block's first cell. */
+/** The grid for these tiles, or null where a grid does not apply (no whole
+ *  units, too many cells, users that do not fit). */
+function gridLayout(tiles: OccupancyTile[]) {
+  const items = tiles
+    .filter((t) => t.value > 0)
+    .map((t) => ({ ...t, n: t.value, filler: t.kind !== "user" }));
+  if (items.some((t) => !Number.isInteger(t.n))) return null;
+  const total = items.reduce((a, t) => a + t.n, 0);
+  if (total === 0 || total > 400) return null;
+  const [cols, rows] = gridDims(total);
+  const grid = packColumns(items, cols, rows);
+  return grid ? { grid, cols, rows } : null;
+}
+
+function CellGrid({ tiles, ariaLabel, className }: { tiles: OccupancyTile[]; ariaLabel: string; className?: string }) {
+  const [tip, setTip] = useState<{ tile: OccupancyTile; x: number; y: number } | null>(null);
+  const layout = gridLayout(tiles);
+  if (!layout) return null;
+  const { grid, cols, rows } = layout;
+  const cells: ReactNode[] = [];
+  const labelled = new Set<string>();
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const it = grid[c][r];
+      if (!it) continue;
+      const first = !labelled.has(it.key) && (r === 0 || grid[c][r - 1]?.key !== it.key) && (c === 0 || grid[c - 1][r]?.key !== it.key);
+      if (first) labelled.add(it.key);
+      const show = (e: { clientX: number; clientY: number }) => setTip({ tile: it, x: e.clientX, y: e.clientY });
+      cells.push(
+        <div
+          key={`${c}-${r}`}
+          tabIndex={first ? 0 : -1}
+          aria-label={first ? [it.label, it.amount, ...it.details].filter(Boolean).join(", ") : undefined}
+          onMouseMove={show}
+          onClick={show}
+          onFocus={(e) => {
+            const b = e.currentTarget.getBoundingClientRect();
+            setTip({ tile: it, x: b.left + b.width / 2, y: b.top + b.height / 2 });
+          }}
+          onBlur={() => setTip(null)}
+          className={cn(
+            "relative min-w-0 overflow-visible text-xs leading-snug outline-none",
+            "shadow-[inset_1px_1px_0_rgb(255_255_255/0.22)]",
+            it.kind === "user" && "bg-info text-white",
+            it.kind === "free" && "bg-ok text-white",
+            it.kind === "off" && "bg-muted-foreground/30 text-foreground",
+            c > 0 && grid[c - 1][r]?.key !== it.key && "border-l-4 border-card",
+            r > 0 && grid[c][r - 1]?.key !== it.key && "border-t-4 border-card",
+          )}
+          style={{ gridColumn: c + 1, gridRow: r + 1 }}
+        >
+          {first && (
+            // the label spans every column the owner holds in this row
+            <div
+              className="pointer-events-none absolute left-1.5 top-1 z-[1] overflow-hidden"
+              style={{ width: `calc(${spanRight(grid, c, r, it.key)} * 100% - 0.75rem)` }}
+            >
+              <div className={cn("truncate", it.kind === "user" ? "font-mono font-semibold" : "font-semibold")}>{it.label ?? it.sub}</div>
+              <div className="truncate font-semibold opacity-90">{it.amount}</div>
+            </div>
+          )}
+          {first && it.queued && <span aria-hidden className="absolute right-1 top-1 z-[2] h-2 w-2 rounded-full bg-warn" />}
+        </div>,
+      );
+    }
+  }
+  return (
+    <div
+      role="img"
+      aria-label={ariaLabel}
+      onMouseLeave={() => setTip(null)}
+      className={cn("relative grid aspect-[16/9] w-full overflow-hidden rounded-lg", className)}
+      style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`, gridTemplateRows: `repeat(${rows}, minmax(0, 1fr))` }}
+    >
+      {cells}
+      {tip && <TipCard tip={tip} />}
+    </div>
+  );
+}
+
+/** Columns from c rightwards whose cell in row r has the same owner. */
+function spanRight(grid: ({ key: string } | null)[][], c: number, r: number, key: string) {
+  let k = 1;
+  while (c + k < grid.length && grid[c + k][r]?.key === key) k += 1;
+  return k;
+}
+
+function TipCard({ tip }: { tip: { tile: OccupancyTile; x: number; y: number } }) {
+  return (
+    <div
+      className="pointer-events-none fixed z-50 max-w-xs rounded-md bg-primary px-3 py-2 text-xs leading-relaxed text-primary-foreground shadow-md"
+      style={{ left: Math.min(tip.x + 14, window.innerWidth - 260), top: tip.y + 14 }}
+    >
+      {tip.tile.label && <div className="font-mono font-semibold">{tip.tile.label}</div>}
+      <div>{tip.tile.amount}</div>
+      {tip.tile.details.map((d) => <div key={d}>{d}</div>)}
+    </div>
+  );
+}
+
 const ROW_MIN_H = 30;
 
 /** One row per node, top to bottom: users first, then free and offline. A
@@ -100,7 +204,7 @@ function layoutRows(tiles: OccupancyTile[], w: number, h: number, perRow: number
  * The pool as one box, each tile's area its share: who holds how much is the
  * first thing seen; cores, memory and jobs come up on hover (or a tap).
  */
-export function OccupancyMap({ tiles, ariaLabel, restLabel, perRow, nodeWord = "", className }: {
+export function OccupancyMap({ tiles, ariaLabel, restLabel, perRow, nodeWord = "", grid, className }: {
   tiles: OccupancyTile[];
   ariaLabel: string;
   /** cores of one node, where every job holds whole nodes: then one row per
@@ -108,6 +212,8 @@ export function OccupancyMap({ tiles, ariaLabel, restLabel, perRow, nodeWord = "
   perRow?: number;
   /** "节点", after the node count each row block prints */
   nodeWord?: string;
+  /** one cell per unit (a GPU): countable, packed by whole columns */
+  grid?: boolean;
   /** "其余 {n} 位" for strip tiles merged when they do not fit across */
   restLabel: (n: number, amount: number) => { label: string; amount: string };
   className?: string;
@@ -122,6 +228,7 @@ export function OccupancyMap({ tiles, ariaLabel, restLabel, perRow, nodeWord = "
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
+  if (grid && gridLayout(tiles)) return <CellGrid tiles={tiles} ariaLabel={ariaLabel} className={className} />;
   const rects = perRow ? layoutRows(tiles, size.w, size.h, perRow) : layoutTiles(tiles, size.w, size.h, restLabel);
   return (
     <div
