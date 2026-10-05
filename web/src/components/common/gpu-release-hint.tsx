@@ -41,7 +41,8 @@ export function GpuReleaseHint({
   );
 }
 
-function dayClockLabel(iso: string, t: TFn): string {
+/** "今天 02:39" / "明天 12:15" / a date: when a release happens, in words. */
+export function dayClockLabel(iso: string, t: TFn): string {
   const offset = clusterDayOffset(iso);
   if (offset === 0) return `${t("day.today")} ${clockOf(iso)}`;
   if (offset === 1) return `${t("day.tomorrow")} ${clockOf(iso)}`;

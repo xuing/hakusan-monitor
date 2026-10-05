@@ -65,23 +65,18 @@ export interface CpuRequest {
   memMb?: number;
 }
 
-export function liveCpuStart(snap: Snapshot, partition: string, req: CpuRequest = {}): "now" | "queued" | null {
-  const d = snap.policy?.partition_defaults?.[partition];
-  if (!d?.cores) return null;
-  const policy = snap.policy?.partition_policies?.[partition];
-  if (policy?.grpJobs && partitionRunningJobs(snap.jobs, partition) >= policy.grpJobs) return "queued";
-  const total = req.cores || d.cores;
-  const needNodes = Math.max(1, req.nodes || 1);
-  const cores = Math.ceil(total / needNodes);   // per node
-  const memPerCore = d.def_mem_per_cpu_mb ?? 0;
-  const memNeed = req.memMb || cores * memPerCore;
+interface CpuSlot { cores: number; memMb: number }
+
+/** The free (cores, memory) slots of a partition's schedulable nodes left
+ *  after the waiters the scheduler would actually place claim theirs: each
+ *  Priority/Resources waiter takes the smallest node its per-node share fits.
+ *  SINGLE's 51 Priority jobs all want a whole 256-core node and never touched
+ *  a 16-core request on a part-used node (measured 2026-10-05, also with the
+ *  2-day walltime). Limit-capped and dependency-held jobs take nothing. */
+function cpuOpenSlots(snap: Snapshot, partition: string): CpuSlot[] {
   const free = snap.nodes
     .filter((n) => n.partitions.includes(partition) && nodeIsSchedulable(n))
     .map((n) => ({ cores: Math.max(0, n.cpus - n.alloc_cpus), memMb: Math.max(0, n.real_memory - n.alloc_memory) }));
-  // Waiters the scheduler would actually place claim the free nodes first,
-  // each only on a node its per-node share fits: SINGLE's 51 Priority jobs
-  // all want a whole 256-core node and never touched a 16-core request on a
-  // part-used node (measured 2026-10-05, also with the 2-day walltime).
   const contenders = snap.jobs
     .filter((j) =>
       String(j.job_state).toUpperCase() === "PENDING"
@@ -95,15 +90,90 @@ export function liveCpuStart(snap: Snapshot, partition: string, req: CpuRequest 
     const i = open.findIndex((f) => f.cores >= need);
     if (i >= 0) open.splice(i, 1);
   }
+  return open;
+}
+
+const isMultiNode = (snap: Snapshot, partition: string) =>
+  (snap.policy?.partition_caps?.[partition]?.maxNodes ?? 2) > 1;
+
+const groupFull = (snap: Snapshot, partition: string) => {
+  const policy = snap.policy?.partition_policies?.[partition];
+  return Boolean(policy?.grpJobs && partitionRunningJobs(snap.jobs, partition) >= policy.grpJobs);
+};
+
+/** Cores one slot can give a request that takes DefMemPerCPU per core. */
+const slotCores = (f: CpuSlot, memPerCore: number) =>
+  Math.min(f.cores, memPerCore ? Math.floor(f.memMb / memPerCore) : f.cores);
+
+export function liveCpuStart(snap: Snapshot, partition: string, req: CpuRequest = {}): "now" | "queued" | null {
+  const d = snap.policy?.partition_defaults?.[partition];
+  if (!d?.cores) return null;
+  if (groupFull(snap, partition)) return "queued";
+  const total = req.cores || d.cores;
+  const needNodes = Math.max(1, req.nodes || 1);
+  const cores = Math.ceil(total / needNodes);   // per node
+  const memPerCore = d.def_mem_per_cpu_mb ?? 0;
+  const memNeed = req.memMb || cores * memPerCore;
+  const open = cpuOpenSlots(snap, partition);
   if (open.filter((f) => f.cores >= cores && f.memMb >= memNeed).length >= needNodes) return "now";
   // multi-node partitions may spread the tasks over partly free nodes when
   // neither -N nor a per-node --mem pins the shape
-  const multiNode = (snap.policy?.partition_caps?.[partition]?.maxNodes ?? 2) > 1;
-  if (multiNode && !req.nodes && !req.memMb) {
-    const spread = open.reduce((sum, f) => sum + Math.min(f.cores, memPerCore ? Math.floor(f.memMb / memPerCore) : f.cores), 0);
-    if (spread >= cores) return "now";
+  if (isMultiNode(snap, partition) && !req.nodes && !req.memMb) {
+    if (open.reduce((sum, f) => sum + slotCores(f, memPerCore), 0) >= total) return "now";
   }
   return "queued";
+}
+
+export interface CpuStartLimits {
+  /** most cores a request with the default memory per core starts with now
+   *  (0 = none); a multi-node partition may spread it over nodes */
+  maxCores: number;
+  /** true when maxCores comes from spreading over several nodes */
+  spread: boolean;
+  /** the partition's group job cap is full: nothing starts, whatever the size */
+  groupFull: boolean;
+}
+
+/** The "no queue" end of the quick request's core slider, from the same
+ *  open slots liveCpuStart judges and for the same shape: -N fixes how many
+ *  nodes share the cores, an explicit --mem replaces DefMemPerCPU x cores as
+ *  the per-node memory. A value at or below it reads "can start", one above
+ *  "will queue". The group cap is reported apart: it is not a property of
+ *  the request's size. */
+export function cpuStartLimits(snap: Snapshot, partition: string, req: Pick<CpuRequest, "nodes" | "memMb"> = {}): CpuStartLimits | null {
+  const d = snap.policy?.partition_defaults?.[partition];
+  if (!d?.cores) return null;
+  const memPerCore = d.def_mem_per_cpu_mb ?? 0;
+  const open = cpuOpenSlots(snap, partition);
+  // cores one slot gives this request: all its free cores when an explicit
+  // --mem fits it, else as many as DefMemPerCPU each lets it hold
+  const give = (f: CpuSlot) => (req.memMb ? (f.memMb >= req.memMb ? f.cores : 0) : slotCores(f, memPerCore));
+  let best: number;
+  let spread = false;
+  if (req.nodes && req.nodes > 0) {
+    // N nodes with the same per-node share: N x the N-th best slot
+    const per = open.map(give).sort((a, b) => b - a);
+    best = per.length >= req.nodes ? per[req.nodes - 1] * req.nodes : 0;
+  } else {
+    const single = Math.max(0, ...open.map(give));
+    const spreadSum = isMultiNode(snap, partition) && !req.memMb ? open.reduce((sum, f) => sum + give(f), 0) : 0;
+    best = Math.max(single, spreadSum);
+    spread = spreadSum > single;
+  }
+  const cap = snap.policy?.partition_caps?.[partition];
+  best = Math.min(cap?.maxCores ?? Number.POSITIVE_INFINITY, best);
+  const maxCores = best >= (cap?.minCores ?? 1) ? best : 0;
+  return { maxCores, spread: spread && maxCores > 0, groupFull: groupFull(snap, partition) };
+}
+
+/** Most --mem (per node, MB) a request of `cores` cores on `nodes` nodes
+ *  starts with now: the needNodes-th largest free memory among open slots
+ *  that hold the per-node cores. 0 = no slot holds the cores at all. */
+export function cpuStartMemMb(snap: Snapshot, partition: string, cores: number, nodes = 0): number {
+  const needNodes = Math.max(1, nodes || 1);
+  const per = Math.ceil(Math.max(1, cores) / needNodes);
+  const mems = cpuOpenSlots(snap, partition).filter((f) => f.cores >= per).map((f) => f.memMb).sort((a, b) => b - a);
+  return mems.length >= needNodes ? mems[needNodes - 1] : 0;
 }
 
 /** The verdict shown for a CPU partition: the live judgement, except that a

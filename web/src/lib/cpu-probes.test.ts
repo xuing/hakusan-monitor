@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { cpuProbeState, liveCpuStart } from "./cpu-probes";
+import { cpuProbeState, cpuStartLimits, cpuStartMemMb, liveCpuStart } from "./cpu-probes";
 import type { CpuSubmitProbe } from "@/types/snapshot";
 
 const probe = (startEpoch: number): CpuSubmitProbe => ({
@@ -75,5 +75,63 @@ describe("liveCpuStart (measured 2026-10-05)", () => {
     const running = Array.from({ length: 3 }, () => ({ job_state: "RUNNING", partition: "DEF" }));
     const s = snapOf([node("a", 0)], running, { partition_policies: { DEF: { grpJobs: 3 } } });
     expect(liveCpuStart(s, "DEF")).toBe("queued");
+  });
+});
+
+describe("cpuStartLimits / cpuStartMemMb (the sliders' no-queue end)", () => {
+  const node = (name: string, alloc: number, part = "SINGLE", allocMem = alloc * 6000) =>
+    ({ name, partitions: [part], state: [alloc ? "MIXED" : "IDLE"], cpus: 256, alloc_cpus: alloc,
+       real_memory: 1543224, alloc_memory: allocMem, gres: "" });
+  const snapOf = (nodes: object[], jobs: object[] = [], caps: Record<string, unknown> = {}) => ({
+    generated_at: 1000, nodes, jobs,
+    policy: {
+      partition_defaults: { SINGLE: { cores: 16, def_mem_per_cpu_mb: 6000 }, SMALL: { cores: 256, def_mem_per_cpu_mb: 6000 } },
+      partition_caps: { SINGLE: { maxCores: 256, maxNodes: 1 }, SMALL: { maxCores: 768 }, ...caps },
+      partition_policies: {},
+    },
+  }) as unknown as Parameters<typeof liveCpuStart>[0];
+
+  it("single node: the largest free node, and the verdict flips exactly there", () => {
+    const s = snapOf([node("a", 32), node("b", 200)]);
+    const lim = cpuStartLimits(s, "SINGLE")!;
+    expect(lim.maxCores).toBe(224);
+    expect(liveCpuStart(s, "SINGLE", { cores: 224 })).toBe("now");
+    expect(liveCpuStart(s, "SINGLE", { cores: 225 })).toBe("queued");
+  });
+
+  it("multi node: the sum over open nodes, capped by the QoS", () => {
+    const parts = (n: string) => ({ ...node(n, 100), partitions: ["SMALL"] });
+    const lim = cpuStartLimits(snapOf([parts("a"), parts("b"), parts("c"), parts("d"), parts("e"), parts("f")]), "SMALL")!;
+    expect(lim.maxCores).toBe(768);   // 6 x 156 = 936 free, QoS 768
+    expect(lim.spread).toBe(true);
+  });
+
+  it("follows -N and --mem the way liveCpuStart does", () => {
+    const two = snapOf([{ ...node("a", 240), partitions: ["SMALL"] }, { ...node("b", 240), partitions: ["SMALL"] }]);
+    // 16 + 16 free: 32 spread, but -N 1 holds only one node's 16
+    expect(cpuStartLimits(two, "SMALL")!.maxCores).toBe(32);
+    expect(cpuStartLimits(two, "SMALL", { nodes: 1 })!.maxCores).toBe(16);
+    expect(liveCpuStart(two, "SMALL", { cores: 24, nodes: 1 })).toBe("queued");
+    expect(cpuStartLimits(two, "SMALL", { nodes: 2 })!.maxCores).toBe(32);
+    // an explicit small --mem frees cores DefMemPerCPU would not
+    const tight = snapOf([node("c", 0, "SINGLE", 1_543_224 - 48_000)]);   // 48 000 MB free: 8 cores at 6000/core
+    expect(cpuStartLimits(tight, "SINGLE")!.maxCores).toBe(8);
+    expect(cpuStartLimits(tight, "SINGLE", { memMb: 1024 })!.maxCores).toBe(256);
+    expect(liveCpuStart(tight, "SINGLE", { cores: 200, memMb: 1024 })).toBe("now");
+  });
+
+  it("memory: the largest free memory on a node that holds the cores", () => {
+    const s = snapOf([node("a", 32, "SINGLE", 100_000), node("b", 200, "SINGLE", 1_000_000)]);
+    expect(cpuStartMemMb(s, "SINGLE", 32)).toBe(1_443_224);    // node a: 224 cores free
+    expect(cpuStartMemMb(s, "SINGLE", 230)).toBe(0);           // no node has 230 free
+  });
+
+  it("reports a full group cap apart from the size limit", () => {
+    const running = Array.from({ length: 2 }, () => ({ job_state: "RUNNING", partition: "SINGLE" }));
+    const s = snapOf([node("a", 0)], running);
+    (s.policy!.partition_policies as Record<string, unknown>).SINGLE = { grpJobs: 2 };
+    const lim = cpuStartLimits(s, "SINGLE")!;
+    expect(lim.groupFull).toBe(true);
+    expect(lim.maxCores).toBe(256);
   });
 });
