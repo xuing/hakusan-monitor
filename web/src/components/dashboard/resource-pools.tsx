@@ -92,31 +92,28 @@ export function ResourcePools() {
       <h2 className="mb-3 text-xs font-medium uppercase tracking-wide text-muted-foreground">{t("section.pools")}</h2>
       <div className="space-y-5">
         {groups.map((g) => (
-          <PoolGroup key={g.key} label={g.label} pools={g.pools} snap={snap} t={t} />
+          <PoolGroup
+            key={g.key}
+            label={g.label}
+            pools={g.pools}
+            snap={snap}
+            t={t}
+            outside={filter === "all" ? (snap.outside_nodes ?? []).filter((o) => (o.gpus > 0) === (g.key === "gpu")) : []}
+          />
         ))}
       </div>
-      {/* hardware the cluster lists but no partition reaches: named, not counted */}
-      {filter === "all" && (snap.outside_nodes ?? []).map((o) => (
-        <p key={o.pool} className="mt-3 flex flex-wrap items-center gap-x-1.5 text-xs text-muted-foreground">
-          <span>
-            {t("pool.outside", { label: o.label || o.pool, nodes: o.nodes, gpus: o.gpus })}
-          </span>
-          <a
-            href="https://www.jaist.ac.jp/iscenter/jaist-cloud/vm/"
-            target="_blank"
-            rel="noreferrer"
-            className="inline-flex items-center gap-1 whitespace-nowrap text-info-fg hover:underline"
-          >
-            {t("pool.outsideLink")}
-            <ExternalLink aria-hidden className="h-3 w-3" />
-          </a>
-        </p>
-      ))}
     </div>
   );
 }
 
-function PoolGroup({ label, pools, snap, t }: { label: string; pools: Pool[]; snap: Snapshot; t: TFn }) {
+function PoolGroup({ label, pools, snap, t, outside = [] }: {
+  label: string;
+  pools: Pool[];
+  snap: Snapshot;
+  t: TFn;
+  /** hardware of this kind no partition reaches: a gray card, not counted */
+  outside?: NonNullable<Snapshot["outside_nodes"]>;
+}) {
   const available = pools.filter((p) => hasAvailableNodes(p, snap)).length;
   const maint = pools.every(isMaintPool);
   return (
@@ -128,12 +125,41 @@ function PoolGroup({ label, pools, snap, t }: { label: string; pools: Pool[]; sn
           {available}/{pools.length} {t("part.available")}
         </span>
       </div>
-      <div className={cn("grid gap-4", pools.length > 1 && "lg:grid-cols-2")}>
+      <div className={cn("grid gap-4", pools.length + outside.length > 1 && "lg:grid-cols-2")}>
         {pools.map((p) => (
           <PoolCard key={p.id} pool={p} snap={snap} t={t} />
         ))}
+        {outside.map((o) => <OutsideCard key={o.pool} o={o} t={t} />)}
       </div>
     </section>
+  );
+}
+
+/** Hardware scontrol lists but no partition schedules: where it would sit,
+ *  grayed, saying why it cannot be used from here. */
+function OutsideCard({ o, t }: { o: NonNullable<Snapshot["outside_nodes"]>[number]; t: TFn }) {
+  return (
+    <Card className="border-dashed bg-muted/30">
+      <CardContent className="space-y-2 p-4">
+        <div className="flex flex-wrap items-baseline gap-2">
+          <span className="h-2.5 w-2.5 self-center rounded-full bg-muted-foreground/45" />
+          <span className="font-semibold text-muted-foreground">{o.label || o.pool}</span>
+          <span className="text-xs text-muted-foreground">
+            {o.nodes} {t("spec.nodes")}{o.gpus ? ` · ${nf(o.gpus)} ${t("unit.gpu")}` : ""}
+          </span>
+        </div>
+        <p className="text-sm text-muted-foreground">{t("pool.outsideCard")}</p>
+        <a
+          href="https://www.jaist.ac.jp/iscenter/jaist-cloud/vm/"
+          target="_blank"
+          rel="noreferrer"
+          className="inline-flex items-center gap-1 text-xs text-info-fg hover:underline"
+        >
+          {t("pool.outsideLink")}
+          <ExternalLink aria-hidden className="h-3 w-3" />
+        </a>
+      </CardContent>
+    </Card>
   );
 }
 
