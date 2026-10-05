@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { useLive } from "@/hooks/live-context";
 import { useResourceFilter } from "@/hooks/resource-filter-context";
-import { poolLabel, useT, type TFn } from "@/i18n";
+import { poolTitle, useT, type TFn } from "@/i18n";
 import { nodeIsSchedulable } from "@/lib/derive";
 import { nf, pct } from "@/lib/format";
 import { poolGpuAvailability } from "@/lib/gpu-fit";
@@ -79,7 +79,7 @@ function PoolKpis({ pool, snap, t }: { pool: Pool; snap: Snapshot; t: TFn }) {
   const unit = isGpu ? t("unit.gpu") : t("unit.cores");
   return (
     <>
-      <GaugeKpi label={poolLabel(t, pool.id)} util={util} value={nf(used)}
+      <GaugeKpi label={poolTitle(t, pool)} util={util} value={nf(used)}
         hint={`${t("kpi.of")} ${nf(total)} ${unit}${offline > 0 ? ` · ${t(isGpu ? "kpi.offlineGpu" : "kpi.offlineCores", { n: nf(offline) })}` : ""}`} />
       <SplitCard label={t("part.available")} stats={[
         [free, unit, "text-ok-fg"],

@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { useLive } from "@/hooks/live-context";
 import { useResourceFilter } from "@/hooks/resource-filter-context";
-import { poolLabel, useT } from "@/i18n";
+import { poolTitle, useT } from "@/i18n";
 import { poolCapacity } from "@/lib/derive";
 import { poolGpuAvailability } from "@/lib/gpu-fit";
 import type { GpuAvailability } from "@/lib/gpu-availability";
@@ -48,7 +48,7 @@ export function ResourceFilterChips({ label }: { label?: string }) {
             key={pool.id}
             pool={pool}
             active={filter === pool.id}
-            label={poolLabel(t, pool.id)}
+            label={poolTitle(t, pool)}
             onClick={() => setFilter(pool.id)}
             gpuAvail={gpuAvail}
           />
@@ -60,7 +60,7 @@ export function ResourceFilterChips({ label }: { label?: string }) {
             key={pool.id}
             pool={pool}
             active={filter === pool.id}
-            label={poolLabel(t, pool.id)}
+            label={poolTitle(t, pool)}
             onClick={() => setFilter(pool.id)}
             cpuFreeCores={poolCapacity(snap, pool.id).freeCores}
           />

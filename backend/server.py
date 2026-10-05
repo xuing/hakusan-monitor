@@ -172,6 +172,7 @@ class Engine:
         now = time.time()
         try:
             nodes, squeue = self.src.fetch()
+            nodes = nz.cluster_nodes(nodes)
             self.sing_version = self.src.singularity   # captured in the same round trip
             raw_nodes = nodes.get("nodes", [])
             # same last-wins dedupe as normalize(): the per-node array the

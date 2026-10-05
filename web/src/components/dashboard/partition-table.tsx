@@ -34,7 +34,9 @@ export interface PartitionAxis {
 
 // columns follow the table's own width (it sits in half-width cards too):
 // the time column from @md, the per-user column from @2xl
-const GRID = "grid grid-cols-[5.25rem_minmax(0,1fr)_5.5rem] items-center gap-x-3 px-3 @md:grid-cols-[5.5rem_minmax(0,1fr)_6.5rem_5.5rem] @2xl:grid-cols-[5.75rem_minmax(0,1fr)_6.5rem_6.5rem_5.5rem]";
+// text columns get room to breathe; the bar takes what is left, and on a
+// wide card the gap grows instead of the bar
+const GRID = "grid grid-cols-[5.5rem_minmax(0,1fr)_5.5rem] items-center gap-x-4 px-4 @md:grid-cols-[5.75rem_minmax(0,1fr)_5.5rem_5.5rem] @2xl:grid-cols-[6rem_minmax(0,1fr)_5.5rem_6.5rem_5.5rem] @2xl:gap-x-8";
 
 /** Partitions side by side on one axis: each row's bar is what a job there
  *  may ask for, its green part what starts now. Clicking a row picks it. */
@@ -76,15 +78,17 @@ export function PartitionTable({
   };
   return (
     <div className="@container overflow-hidden rounded-lg border border-border bg-card">
-      <div className={cn(GRID, "border-b border-border bg-muted/40 py-1.5 text-xs text-muted-foreground")}>
+      <div className={cn(GRID, "border-b border-border bg-muted/40 py-2 text-xs text-muted-foreground")}>
         <span>{headers.name}</span>
         <div className="relative h-4 font-mono">
-          {axis.ticks.map((tk) => {
+          {axis.ticks.map((tk, i) => {
             const p = pos(tk.value);
+            // a phone-width bar holds only the two ends
+            const interior = i > 0 && i < axis.ticks.length - 1;
             return (
               <span
                 key={tk.value}
-                className={cn("absolute whitespace-nowrap", tk.minor && "hidden @xl:inline")}
+                className={cn("absolute whitespace-nowrap", tk.minor ? "hidden @xl:inline" : interior && "hidden @sm:inline")}
                 style={{ left: `${p * 100}%`, transform: `translateX(${p <= 0.001 ? "0" : p >= reach - 0.001 ? "-100%" : "-50%"})` }}
               >
                 {tk.label}
@@ -93,7 +97,7 @@ export function PartitionTable({
           })}
         </div>
         <span className="hidden truncate @md:block">{headers.wall}</span>
-        <span className="hidden text-right @2xl:block">{headers.perUser}</span>
+        <span className="hidden whitespace-nowrap @2xl:block">{headers.perUser}</span>
         <span className="text-right">{headers.verdict}</span>
       </div>
       {rows.map((r) => {
@@ -111,7 +115,7 @@ export function PartitionTable({
             title={r.title}
             className={cn(
               GRID,
-              "min-h-9 w-full border-b border-border/60 text-left outline-none transition-colors last:border-b-0",
+              "min-h-10 w-full border-b border-border/60 text-left outline-none transition-colors last:border-b-0",
               "hover:bg-muted/50 focus-visible:bg-muted/60",
               r.selected && "bg-info-soft/50 hover:bg-info-soft/60",
             )}
@@ -157,13 +161,13 @@ export function PartitionTable({
                 />
               )}
             </span>
-            <span className="hidden truncate font-mono text-xs text-foreground/80 @md:block">{r.wall}</span>
-            <span className="hidden whitespace-nowrap text-right text-xs text-foreground/80 @2xl:block">{r.perUser ?? "—"}</span>
+            <span className="hidden truncate text-xs text-foreground/80 @md:block">{r.wall}</span>
+            <span className="hidden whitespace-nowrap text-xs text-foreground/80 @2xl:block">{r.perUser ?? "—"}</span>
             <span className="flex justify-end">{r.verdict && <Tag tone={r.verdict.tone}>{r.verdict.label}</Tag>}</span>
           </button>
         );
       })}
-      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 bg-muted/25 px-3 py-1.5 text-xs text-muted-foreground">
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 bg-muted/25 px-4 py-2 text-xs text-muted-foreground">
         <span className="min-w-0">{footer}</span>
         <span className="flex items-center gap-3">
           <span className="inline-flex items-center gap-1.5"><span className="h-2 w-4 rounded-full bg-warn/45" />{legend.range}</span>

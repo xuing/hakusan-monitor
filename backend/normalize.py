@@ -10,7 +10,7 @@ from collections import defaultdict, Counter
 # ---- GPU type catalog (label + approx per-GPU memory, GB) --------------------
 GPU_CATALOG = {
     "nvidia_a40":  {"label": "A40",       "mem_gb": 48},
-    "nvidia_a100": {"label": "A100",      "mem_gb": 40},
+    "nvidia_a100": {"label": "A100",      "mem_gb": 80},  # unconfirmed: scripts/probe_gpu_memory.sh
     "h100-80c":    {"label": "H100 80GB", "mem_gb": 80},
     "h100-20c":    {"label": "H100 MIG 20GB", "mem_gb": 20},
 }
@@ -216,6 +216,14 @@ def parse_duration(s):
         return days * 86400 + parts[-3] * 3600 + parts[-2] * 60 + parts[-1]
     except Exception:
         return None
+
+
+def cluster_nodes(nodes_json):
+    """Only nodes some Slurm partition reaches: hardware scontrol lists but no
+    partition schedules (the H100 MIG VM hosts, handed to JAIST's VM service)
+    is not part of this cluster for anyone submitting here."""
+    nodes = (nodes_json or {}).get("nodes", []) or []
+    return {**(nodes_json or {}), "nodes": [nd for nd in nodes if nd.get("partitions")]}
 
 
 def normalize(nodes_json, squeue_json, *, cluster="hakusan", slurm_version="",

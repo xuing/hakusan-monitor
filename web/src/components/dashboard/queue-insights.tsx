@@ -6,7 +6,7 @@ import { SectionCard } from "@/components/common/section-card";
 import { useLive } from "@/hooks/live-context";
 import { coresText, reasonLabel, useT } from "@/i18n";
 import { fmtAt, fmtEpoch } from "@/lib/format";
-import { partitionDisplayRank, toneClass, type Tone } from "@/lib/slurm";
+import { partitionDisplayRank } from "@/lib/slurm";
 import { cn } from "@/lib/utils";
 
 export function QueueInsights() {
@@ -26,12 +26,18 @@ export function QueueInsights() {
   );
 
   return (
-    <SectionCard title={t("section.queue")} className="h-full">
-      <div className="mb-4 flex flex-wrap gap-2">
-        <Chip tone="ok" n={q.running} label={t("queue.running")} />
-        <Chip tone="warn" n={q.pending} label={t("queue.pending")} />
-        {q.container_jobs > 0 && <Chip n={q.container_jobs} label={t("queue.containers")} />}
-      </div>
+    <SectionCard
+      title={t("section.queue")}
+      className="h-full"
+      extra={(
+        // the totals sit on the title row, in the dot colours the pool cards use
+        <span className="flex flex-wrap items-center justify-end gap-x-3 gap-y-1">
+          <Count dot="bg-ok/80" n={q.running} label={t("queue.running")} />
+          <Count dot="bg-warn/45" n={q.pending} label={t("queue.pending")} />
+          {q.container_jobs > 0 && <Count dot="bg-info/60" n={q.container_jobs} label={t("queue.containers")} />}
+        </span>
+      )}
+    >
 
       {reasonTotal > 0 && (
         <div className="mb-4">
@@ -142,11 +148,11 @@ function hashReason(reason: string) {
   return h;
 }
 
-function Chip({ tone, n, label }: { tone?: Tone; n: number; label: string }) {
-  const c = toneClass[tone ?? "neutral"];
+function Count({ dot, n, label }: { dot: string; n: number; label: string }) {
   return (
-    <span className="inline-flex items-center gap-1.5 rounded-full border border-border bg-muted/40 px-3 py-1 text-xs">
-      <b className={cn("font-mono text-sm", c.text)}>{n}</b>
+    <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
+      <span aria-hidden className={cn("h-2 w-2 rounded-full", dot)} />
+      <b className="tnum text-sm font-semibold text-foreground">{n}</b>
       {label}
     </span>
   );

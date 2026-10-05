@@ -12,7 +12,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { PartitionTable, type PartitionAxis, type PartitionTableRow } from "@/components/dashboard/partition-table";
 import { useLive } from "@/hooks/live-context";
 import { useResourceFilter } from "@/hooks/resource-filter-context";
-import { coresText, durText, gpusText, poolLabel, reasonLabel, useT, wallText, type TFn, type TranslationKey } from "@/i18n";
+import { coresText, durText, poolTitle, reasonLabel, useT, wallText, type TFn, type TranslationKey } from "@/i18n";
 import { nextUpOrder } from "@/lib/pending-order";
 import { nodeIsSchedulable, nodeIsSchedulerHeld, nodeNeedsAttention, occupantsForPool, poolCapacity } from "@/lib/derive";
 import { fmtCountdown, fmtDur, fmtMB, nf, parseDur } from "@/lib/format";
@@ -189,7 +189,7 @@ function PoolCard({ pool, snap, t }: { pool: Pool; snap: Snapshot; t: TFn }) {
                       : "bg-bad ring-bad/20",
               )}
             />
-            <span className="font-semibold">{poolLabel(t, pool.id)}</span>
+            <span className="font-semibold">{poolTitle(t, pool)}</span>
             {/* GPU pools carry more cards than nodes (A100: 10 nodes x 2), and
                 every big number on this card counts GPUs — state the pool's GPU
                 total here so "20" never reads as a node count. */}
@@ -197,7 +197,8 @@ function PoolCard({ pool, snap, t }: { pool: Pool; snap: Snapshot; t: TFn }) {
               {pool.nodes} {t("spec.nodes")}
               {isGpu && pool.gpu ? ` · ${nf(pool.gpu.total)} ${t("unit.gpu")}` : ""}
               {" · "}
-              {fmtMB(pool.mem_per_node)}
+              {/* node memory, worded apart from the cards' own */}
+              {t("pool.headMem", { mem: fmtMB(pool.mem_per_node) })}
             </span>
           </div>
           <span className="tnum font-mono text-sm text-muted-foreground">
@@ -242,12 +243,14 @@ function PoolCard({ pool, snap, t }: { pool: Pool; snap: Snapshot; t: TFn }) {
         )}
 
         <div className="mt-2.5 flex flex-wrap items-center gap-x-4 text-xs text-muted-foreground">
-          <span>
-            <b className="text-ok-fg">{pool.queue.running}</b> {t("queue.running")}
+          <span className="inline-flex items-center gap-1.5">
+            <span aria-hidden className="h-2 w-2 rounded-full bg-ok/80" />
+            <b className="tnum text-foreground">{pool.queue.running}</b> {t("queue.running")}
           </span>
-          <span>
-            <b className={pool.queue.pending ? "text-warn-fg" : "text-foreground"}>{pool.queue.pending}</b>{" "}
-            {t("queue.pending")}
+          <span className="inline-flex items-center gap-1.5">
+            {/* the same yellow as every "queues" bar and zone */}
+            <span aria-hidden className={cn("h-2 w-2 rounded-full", pool.queue.pending ? "bg-warn/45" : "bg-muted")} />
+            <b className="tnum text-foreground">{pool.queue.pending}</b> {t("queue.pending")}
           </span>
         </div>
 
@@ -1448,7 +1451,10 @@ function logTicks(max: number) {
   const out = [1, 4, 16, 64, 256, 1024, 4096, 16384]
     .filter((v) => v <= max)
     .map((v) => ({ value: v, label: fmtCount(v), minor: v !== max && (Math.log2(v) % 4 !== 0 || Math.log2(max / v) < 1.5) }));
-  if (max / out[out.length - 1].value >= 1.5) out.push({ value: max, label: fmtCount(max), minor: false });
+  // the end gets its own label; ticks within 1.5 octaves of it would touch
+  if (max / out[out.length - 1].value >= 1.5) {
+    return [...out.filter((tk) => Math.log2(max / tk.value) >= 1.5), { value: max, label: fmtCount(max), minor: false }];
+  }
   return out;
 }
 
@@ -2075,13 +2081,13 @@ function PendingJobs({ pool, t }: { pool: Pool; t: TFn }) {
   return (
     <div className="mt-2 max-h-64 space-y-1 overflow-y-auto pr-1">
       {list.map((j) => (
-        <PendingJobRow key={String(j.job_id)} job={j} gpu={pool.gpu} t={t} />
+        <PendingJobRow key={String(j.job_id)} job={j} t={t} />
       ))}
     </div>
   );
 }
 
-function PendingJobRow({ job, gpu, t }: { job: RawJob; gpu: PoolGpu | null; t: TFn }) {
+function PendingJobRow({ job, t }: { job: RawJob; t: TFn }) {
   const rawReason = job.state_reason || "None";
   return (
     <div className="rounded-md bg-muted/40 px-2.5 py-1.5 text-xs">
@@ -2089,7 +2095,7 @@ function PendingJobRow({ job, gpu, t }: { job: RawJob; gpu: PoolGpu | null; t: T
         <span className="font-mono text-info-fg">{job.user_name}</span>
         <div className="flex items-center gap-2 font-mono text-muted-foreground">
           <span>{job.partition}</span>
-          <span className="text-foreground">{pendingJobResources(job, gpu, t)}</span>
+          <span className="text-foreground">{pendingJobResources(job, t)}</span>
         </div>
       </div>
       <div className="mt-1 truncate text-xs text-muted-foreground">
@@ -2102,9 +2108,9 @@ function PendingJobRow({ job, gpu, t }: { job: RawJob; gpu: PoolGpu | null; t: T
   );
 }
 
-function pendingJobResources(job: RawJob, gpu: PoolGpu | null, t: TFn) {
+function pendingJobResources(job: RawJob, t: TFn) {
   const parts = [];
-  if (job.gpus > 0) parts.push(gpusText(t, job.gpus, gpu));
+  if (job.gpus > 0) parts.push(`${job.gpus} ${t("unit.gpu")}`);
   if (job.cpus > 0) parts.push(coresText(t, job.cpus));
   if ((job.min_memory_mb ?? 0) > 0) parts.push(fmtMB(job.min_memory_mb));
   if (job.node_count > 0) parts.push(`${job.node_count} ${t("spec.nodes")}`);
@@ -2173,11 +2179,11 @@ function Occupants({ pool, t }: { pool: Pool; t: TFn }) {
       <div className="max-h-72 space-y-1 overflow-y-auto pr-1">
         {groupByUser ? (
           userGroups.map((group) => (
-            <OccupantUserRow key={group.user} group={group} isGpu={isGpu} gpu={pool.gpu} t={t} />
+            <OccupantUserRow key={group.user} group={group} isGpu={isGpu} t={t} />
           ))
         ) : (
           list.map((o) => (
-            <OccupantRow key={String(o.job_id)} o={o} now={now} generatedAt={snap.generated_at} poolCap={poolCapSeconds} gpu={pool.gpu} t={t} />
+            <OccupantRow key={String(o.job_id)} o={o} now={now} generatedAt={snap.generated_at} poolCap={poolCapSeconds} t={t} />
           ))
         )}
         {shown === 0 && (
@@ -2235,14 +2241,12 @@ function OccupantRow({
   now,
   generatedAt,
   poolCap,
-  gpu,
   t,
 }: {
   o: Occupant;
   now: number;
   generatedAt: number;
   poolCap: number;
-  gpu: PoolGpu | null;
   t: TFn;
 }) {
   // live remaining = remaining-at-snapshot minus seconds elapsed since the snapshot
@@ -2263,7 +2267,7 @@ function OccupantRow({
       <div className="flex items-center justify-between gap-2">
         <span className="font-mono text-info-fg">{o.user}</span>
         <div className="flex items-center gap-2 font-mono text-muted-foreground">
-          <span className="text-foreground">{occupantResources(o, gpu, t)}</span>
+          <span className="text-foreground">{occupantResources(o, t)}</span>
           <span className="max-w-[8rem] truncate">{o.nodelist}</span>
         </div>
       </div>
@@ -2296,15 +2300,13 @@ function OccupantRow({
 function OccupantUserRow({
   group,
   isGpu,
-  gpu,
   t,
 }: {
   group: OccupantUserGroup;
   isGpu: boolean;
-  gpu: PoolGpu | null;
   t: TFn;
 }) {
-  const primary = isGpu ? gpusText(t, group.gpus, gpu) : coresText(t, group.cpus);
+  const primary = isGpu ? `${group.gpus} ${t("unit.gpu")}` : coresText(t, group.cpus);
   return (
     <div className="rounded-md bg-muted/40 px-2.5 py-1.5 text-xs">
       <div className="flex items-center justify-between gap-2">
@@ -2316,6 +2318,8 @@ function OccupantUserRow({
       <div className="mt-1 flex min-w-0 items-center justify-between gap-2 text-xs text-muted-foreground">
         <span className="truncate">
           {group.jobs} {t("topusers.jobs")}
+          {/* the chip above has the headline; the line repeats it among the rest */}
+          {isGpu && <> · {group.gpus} {t("unit.gpu")}</>}
           {isGpu && <> · {coresText(t, group.cpus)}</>} · {fmtMB(group.mem_mb)}
           {group.nodes > 0 && <> · {group.nodes} {t("spec.nodes")}</>}
         </span>
@@ -2330,9 +2334,9 @@ function partitionWallSeconds(partition: string, policy?: Snapshot["policy"]) {
   return parseWallMinutes(wall) * 60;
 }
 
-function occupantResources(o: Occupant, gpu: PoolGpu | null, t: TFn) {
+function occupantResources(o: Occupant, t: TFn) {
   const parts = [];
-  if (o.gpus > 0) parts.push(gpusText(t, o.gpus, gpu));
+  if (o.gpus > 0) parts.push(`${o.gpus} ${t("unit.gpu")}`);
   if (o.cpus > 0) parts.push(coresText(t, o.cpus));
   if (o.mem_mb > 0) parts.push(fmtMB(o.mem_mb));
   return parts.join(" · ") || "—";

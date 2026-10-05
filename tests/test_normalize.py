@@ -255,3 +255,27 @@ def raw_node(*, name="spcc-a40g01", state, cpus, alloc, gres, gres_used):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ClusterNodesTests(unittest.TestCase):
+    def test_drops_hardware_no_partition_schedules(self):
+        # scontrol lists the H100 MIG VM hosts with no partition (2026-10-05)
+        from backend.normalize import cluster_nodes
+        raw = {"nodes": [{"name": "spcc-cld-g01", "partitions": []},
+                         {"name": "spcc-cld-gl01", "partitions": ["VM-GPU-L"]}],
+               "meta": 1}
+        out = cluster_nodes(raw)
+        self.assertEqual([n["name"] for n in out["nodes"]], ["spcc-cld-gl01"])
+        self.assertEqual(out["meta"], 1)
+
+
+class ClusterNodesTests(unittest.TestCase):
+    def test_drops_hardware_no_partition_schedules(self):
+        # scontrol lists the H100 MIG VM hosts with no partition (2026-10-05)
+        from backend.normalize import cluster_nodes
+        raw = {"nodes": [{"name": "spcc-cld-g01", "partitions": []},
+                         {"name": "spcc-cld-gl01", "partitions": ["VM-GPU-L"]}],
+               "meta": 1}
+        out = cluster_nodes(raw)
+        self.assertEqual([n["name"] for n in out["nodes"]], ["spcc-cld-gl01"])
+        self.assertEqual(out["meta"], 1)

@@ -2,7 +2,7 @@ import { Empty } from "@/components/common/empty";
 import { SectionCard } from "@/components/common/section-card";
 import { useLive } from "@/hooks/live-context";
 import { useResourceFilter } from "@/hooks/resource-filter-context";
-import { coresText, gpusText, poolLabel, useT, type TFn } from "@/i18n";
+import { coresText, poolTitle, useT, type TFn } from "@/i18n";
 import { fmtMB, nf } from "@/lib/format";
 import {
   amountOf,
@@ -45,10 +45,13 @@ export function TopUsers() {
       {panels.length === 0 ? (
         <Empty>{t("users.none")}</Empty>
       ) : (
-        <div className={cn(!focused && "grid gap-x-8 gap-y-5 md:grid-cols-2")}>
+        // columns follow the card's own width, wherever the page puts it
+        <div className="@container">
+          <div className={cn(!focused && "grid gap-x-8 gap-y-5 @2xl:grid-cols-2")}>
           {panels.map(({ usage, shown, rest }) => (
             <PoolPanel key={usage.id} usage={usage} shown={shown} rest={rest} wide={focused} t={t} />
           ))}
+          </div>
         </div>
       )}
     </SectionCard>
@@ -86,9 +89,9 @@ function PoolPanel({
 }) {
   const { pools, totals, unit, pendingJobs } = usage;
   const single = pools.length === 1 ? pools[0] : null;
-  const title = single ? poolLabel(t, single.id) : t(usage.id === "gpu" ? "users.gpuGroup" : "users.cpuGroup");
+  const title = single ? poolTitle(t, single) : t(usage.id === "gpu" ? "users.gpuGroup" : "users.cpuGroup");
   // one pool names its GPU's memory; a group mixes models
-  const total = unit === "gpus" && single ? gpusText(t, totals.gpus, single.gpu) : amountLabel(unit, totals[unit], t);
+  const total = amountLabel(unit, totals[unit], t);
   return (
     <section className="min-w-0">
       <header className="flex items-baseline justify-between gap-3 border-b border-border pb-1.5 text-xs">
@@ -98,11 +101,12 @@ function PoolPanel({
         </div>
         {pendingJobs > 0 && (
           <span className="whitespace-nowrap text-muted-foreground">
-            <b className="text-warn-fg">{nf(pendingJobs)}</b> {t("queue.pending")}
+            <span aria-hidden className="mr-1.5 inline-block h-2 w-2 rounded-full bg-warn/45" />
+            <b className="tnum text-foreground">{nf(pendingJobs)}</b> {t("queue.pending")}
           </span>
         )}
       </header>
-      <div className={cn("mt-2", wide ? "grid gap-x-8 gap-y-2.5 md:grid-cols-2" : "space-y-2.5")}>
+      <div className={cn("mt-2", wide ? "grid gap-x-8 gap-y-2.5 @2xl:grid-cols-2" : "space-y-2.5")}>
         {shown.map((u) => (
           <UserRow key={u.user} u={u} usage={usage} t={t} />
         ))}
@@ -199,7 +203,8 @@ function details(u: UserUsage, usage: PoolUsage, t: TFn): string[] {
   const parts = [jobsLabel(u.running, t)];
   if (usage.pools.length > 1) {
     const byPool = Object.entries(u.gpusByPool).sort((a, b) => b[1] - a[1]);
-    for (const [id, n] of byPool) parts.push(gpusText(t, n, usage.pools.find((p) => p.id === id)?.gpu, true));
+    // "6 A40 · 2 A100": the headline already says GPU, the pool header the memory
+    for (const [id, n] of byPool) parts.push(`${nf(n)} ${usage.pools.find((p) => p.id === id)?.gpu?.label ?? id}`);
   }
   for (const r of RESOURCES) {
     const n = amountOf(u.held, r);

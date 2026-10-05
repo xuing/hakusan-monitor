@@ -59,16 +59,12 @@ export function wallText(t: TFn, wall: string | null | undefined): string {
   return durText(t, Number(m[1]) * (m[2] === "d" ? 86400 : m[2] === "h" ? 3600 : 60));
 }
 
-/** A GPU count with the kind of GPU in parentheses: "1 GPU（48 GB）" where
- *  the context names the model, "7 GPU（A40 48 GB）" where it does not. */
-export function gpusText(t: TFn, n: number, gpu?: { label: string; mem_gb: number | null } | null, withModel = false): string {
-  const count = `${nf(n)} ${t("unit.gpu")}`;
-  if (!gpu) return count;
-  const mem = gpu.mem_gb ? `${gpu.mem_gb} GB` : "";
-  // "H100 80GB" already carries its memory
-  const model = gpu.label.replace(/\s*\d+\s*GB$/i, "");
-  const spec = withModel ? [model, mem].filter(Boolean).join(" ") : mem;
-  return spec ? t("unit.gpuSpec", { n: count, spec }) : count;
+/** A pool's title: its label plus, for a GPU pool, each card's memory
+ *  ("A40 48GB", "H100 80GB" — that label already carries it). */
+export function poolTitle(t: TFn, pool: { id: string; gpu?: { mem_gb: number | null } | null } | undefined, id = pool?.id ?? ""): string {
+  const label = poolLabel(t, id);
+  const mem = pool?.gpu?.mem_gb;
+  return mem && !/\d\s*GB/i.test(label) ? `${label} ${mem}GB` : label;
 }
 
 /** Localized hardware-pool label, falling back to the id. */

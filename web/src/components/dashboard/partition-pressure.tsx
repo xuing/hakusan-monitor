@@ -11,7 +11,7 @@ import { UnitBlocks } from "@/components/common/unit-blocks";
 import { gpuSegmentLabel } from "@/components/common/gpu-status";
 import { useLive } from "@/hooks/live-context";
 import { useResourceFilter } from "@/hooks/resource-filter-context";
-import { coresText, poolLabel, useT, type TFn } from "@/i18n";
+import { coresText, poolTitle, useT, type TFn } from "@/i18n";
 import type { TranslationKey } from "@/i18n/en";
 import { nodeIsSchedulerHeld, poolCapacity, type PoolCapacity } from "@/lib/derive";
 import { clockOf, fmtMB, nf } from "@/lib/format";
@@ -223,7 +223,7 @@ export function PartitionPressure() {
               <div key={group.key}>
                 <PoolHeader
                   pool={pool}
-                  label={poolLabel(t, group.poolKey)}
+                  label={poolTitle(t, pool, group.poolKey)}
                   spec={spec}
                   isGpu={isGpu}
                   pc={pc}

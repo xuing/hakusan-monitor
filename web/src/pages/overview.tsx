@@ -33,12 +33,15 @@ export default function OverviewPage() {
             <QueueInsights />
           </div>
         )}
-        <div className="min-w-0 lg:col-span-12">
-          <NodesDown />
-        </div>
-        {/* one panel per pool inside, so the card needs the whole row */}
-        <div className="min-w-0 lg:col-span-12">
+        {/* side by side once the screen holds both: the users card keeps its
+            two rankings in columns, the node list is narrow by nature */}
+        <div className="min-w-0 lg:col-span-12 xl:col-span-8">
           <TopUsers />
+        </div>
+        {/* beside the users card it takes that card's height (contain:size
+            keeps its own long list from stretching the row) and scrolls */}
+        <div className="min-w-0 lg:col-span-12 xl:col-span-4 xl:min-h-0 xl:overflow-hidden xl:[contain:size]">
+          <NodesDown />
         </div>
       </div>
     </div>
