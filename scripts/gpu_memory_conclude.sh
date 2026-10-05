@@ -18,6 +18,8 @@ out="$dir/conclusion.md"
   for spec in "$@"; do
     IFS=: read -r part label gb jobid <<<"$spec"
     state=$(sacct -n -X -j "$jobid" -o State%20 2>/dev/null | awk 'NR==1{print $1}')
+    # a probe someone cancelled is not a reading
+    [ "$state" = "CANCELLED" ] && continue
     line=$(grep -m1 -i "nvidia" "$dir/$part.out" 2>/dev/null)
     name=$(echo "$line" | cut -d, -f1 | xargs)
     mib=$(echo "$line" | cut -d, -f2 | grep -oE '[0-9]+')
@@ -32,5 +34,4 @@ out="$dir/conclusion.md"
     echo "| $part | $label | $gb | ${name:-—} | ${mib:+$mib MiB} | ${state:-unknown} | $verdict |"
   done
   echo
-  echo "H100 MIG (h100-20c) is not probed: every node of that pool was down when this ran."
 } >"$out"
