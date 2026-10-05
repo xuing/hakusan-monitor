@@ -36,6 +36,7 @@ export function RangeSlider({
   error,
   ariaLabel,
   locked,
+  tip,
 }: {
   label: ReactNode;
   min: number;
@@ -56,6 +57,8 @@ export function RangeSlider({
   ariaLabel: string;
   /** shown, not editable: the value is fixed elsewhere; hovering says why */
   locked?: ReactNode;
+  /** a hover note on an editable slider */
+  tip?: ReactNode;
 }) {
   const span = Math.max(max - min, 1e-9);
   const logSpan = Math.log(Math.max(max, 1e-9) / Math.max(min, 1e-9)) || 1;
@@ -149,11 +152,12 @@ export function RangeSlider({
       {error ? <p className="text-xs leading-snug text-bad-fg">{error}</p> : hint ? <p className="text-xs leading-snug text-warn-fg">{hint}</p> : null}
     </div>
   );
-  if (!locked) return body;
+  const note = locked ?? tip;
+  if (!note) return body;
   return (
     <Tooltip>
       <TooltipTrigger asChild>{body}</TooltipTrigger>
-      <TooltipContent className="max-w-xs leading-relaxed">{locked}</TooltipContent>
+      <TooltipContent className="max-w-xs leading-relaxed">{note}</TooltipContent>
     </Tooltip>
   );
 }

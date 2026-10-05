@@ -679,6 +679,13 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
         </>
       )
     : null;
+  // from the pinned interactive walltime: a new -t is a batch job
+  const switchToScriptTime = (sec: number) => {
+    if (timeLocked && Math.abs(sec - timeShownSec) < 1) return;
+    setMode("script");
+    setTimeText("");
+    setTime(wallSec && Math.abs(sec - wallSec) < 1 ? "" : minutesToSlurmTime(Math.max(1, Math.round(sec / 60))));
+  };
   const typedSec = parseHumanTime(timeText);
   const timeError = timeText.trim()
     ? !typedSec
@@ -729,7 +736,7 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
     const capP = partitionCap(p, snap?.policy);
     const policyP = partitionPolicy(p, snap?.policy);
     const fullP = Boolean(snap && policyP.grpJobs && partitionRunningJobs(snap.jobs, p) >= policyP.grpJobs);
-    const wall = `${capP.wall ?? "—"} / ${interactiveForcedLabel(p, snap?.policy) ?? capP.wall ?? "—"}`;
+    const wall = capP.wall ?? "—";
     const desc = trMaybe(t, `policy.${p}.desc`, "") || undefined;
     if (isGpu) {
       const summary = snap ? partitionRequestSummary(pool, snap, p, true, pendingActive, nowMs, t, optionVerdictSec) : null;
@@ -996,6 +1003,8 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
               )}
 
               {showTimeSlider && <div className={cn("min-w-0", lastCellCls)}>{timeLocked ? (
+                // salloc's walltime is pinned: moving it means batch, so
+                // a drag or a typed time switches the mode and keeps the value
                 <RangeSlider
                   label={<>{t("pool.walltime")} <span className="text-muted-foreground">-t</span></>}
                   ariaLabel={t("pool.walltime")}
@@ -1003,10 +1012,24 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
                   min={timeMin}
                   max={timeMax}
                   value={timeShownSec}
-                  onChange={() => {}}
+                  onChange={switchToScriptTime}
+                  quantize={quantizeWalltime}
+                  snaps={[timeShownSec, ...walltimeTicks(timeMin, timeMax).map((tk) => tk.value)]}
                   ticks={walltimeTicks(timeMin, timeMax)}
-                  valueBox={<SliderValueFixed>{pinnedLabel || fmtDur(timeShownSec)}</SliderValueFixed>}
-                  locked={t("pool.timeLockedTip", { t: pinnedLabel || fmtDur(timeShownSec) })}
+                  valueBox={(
+                    <SliderValueInput
+                      value=""
+                      placeholder={pinnedLabel || fmtDur(timeShownSec)}
+                      ariaLabel={t("pool.walltime")}
+                      onChange={(text) => {
+                        const sec = parseHumanTime(text);
+                        setMode("script");
+                        setTimeText(text);
+                        if (sec > 0 && (!wallSec || sec <= wallSec)) setTime(minutesToSlurmTime(Math.max(1, Math.round(sec / 60))));
+                      }}
+                    />
+                  )}
+                  tip={t("pool.timeSwitchTip", { t: pinnedLabel || fmtDur(timeShownSec) })}
                 />
               ) : (
                 <RangeSlider
