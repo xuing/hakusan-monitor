@@ -56,13 +56,25 @@ export function cpuProbeState(
  *  (2026-10-05). The request is the plugin's default cores with
  *  DefMemPerCPU each; it competes only with pending jobs the scheduler would
  *  actually place (Priority / Resources). null = not enough data. */
-export function liveCpuStart(snap: Snapshot, partition: string): "now" | "queued" | null {
+export interface CpuRequest {
+  /** total CPUs (the -n / -c the quick request emits); 0 = plugin default */
+  cores?: number;
+  /** -N; 0 = Slurm decides */
+  nodes?: number;
+  /** --mem per node in MB; 0 = DefMemPerCPU x cores on that node */
+  memMb?: number;
+}
+
+export function liveCpuStart(snap: Snapshot, partition: string, req: CpuRequest = {}): "now" | "queued" | null {
   const d = snap.policy?.partition_defaults?.[partition];
   if (!d?.cores) return null;
   const policy = snap.policy?.partition_policies?.[partition];
   if (policy?.grpJobs && partitionRunningJobs(snap.jobs, partition) >= policy.grpJobs) return "queued";
-  const cores = d.cores;
+  const total = req.cores || d.cores;
+  const needNodes = Math.max(1, req.nodes || 1);
+  const cores = Math.ceil(total / needNodes);   // per node
   const memPerCore = d.def_mem_per_cpu_mb ?? 0;
+  const memNeed = req.memMb || cores * memPerCore;
   const free = snap.nodes
     .filter((n) => n.partitions.includes(partition) && nodeIsSchedulable(n))
     .map((n) => ({ cores: Math.max(0, n.cpus - n.alloc_cpus), memMb: Math.max(0, n.real_memory - n.alloc_memory) }));
@@ -83,10 +95,11 @@ export function liveCpuStart(snap: Snapshot, partition: string): "now" | "queued
     const i = open.findIndex((f) => f.cores >= need);
     if (i >= 0) open.splice(i, 1);
   }
-  if (open.some((f) => f.cores >= cores && f.memMb >= cores * memPerCore)) return "now";
-  // multi-node partitions may spread the default tasks over partly free nodes
+  if (open.filter((f) => f.cores >= cores && f.memMb >= memNeed).length >= needNodes) return "now";
+  // multi-node partitions may spread the tasks over partly free nodes when
+  // neither -N nor a per-node --mem pins the shape
   const multiNode = (snap.policy?.partition_caps?.[partition]?.maxNodes ?? 2) > 1;
-  if (multiNode) {
+  if (multiNode && !req.nodes && !req.memMb) {
     const spread = open.reduce((sum, f) => sum + Math.min(f.cores, memPerCore ? Math.floor(f.memMb / memPerCore) : f.cores), 0);
     if (spread >= cores) return "now";
   }

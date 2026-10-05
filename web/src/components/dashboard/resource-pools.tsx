@@ -45,7 +45,7 @@ import {
 } from "@/lib/gpu-fit";
 import { allowsMultiNode, defaultRequestSec, interactiveForcedLabel, interactiveForcedSec, isMaterialsStudioPartition, matchPool, minutesToSlurmTime, partitionCap, partitionDefaultRequest, partitionDefaults, partitionPolicy, type PartitionPolicy, type Tone } from "@/lib/slurm";
 import { cn } from "@/lib/utils";
-import { cpuProbeRows, type CpuProbeRow } from "@/lib/cpu-probes";
+import { cpuProbeRows, liveCpuStart, type CpuProbeRow } from "@/lib/cpu-probes";
 import { buildRequestCommand, shouldShowGapShell } from "@/lib/request-command";
 import { gpuLayouts, type GpuLayout, type GpuNodeShape } from "@/lib/gpu-layout";
 import { requestLimits, type PoolShape } from "@/lib/request-limits";
@@ -482,7 +482,7 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
     const verdict = partitionOptionVerdict(s, t);
     return verdict ? `${base} · ${verdict.label}` : base;
   };
-  const queueHint = selectedCpuRow
+  const baseQueueHint = selectedCpuRow
     ? null
     : requestQueueHint({
         part: selectedPart,
@@ -500,6 +500,18 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
         userTimeSec: forcedSec ?? parseWalltimeSec(ptyActive ? ptyTime : timeSel),
         t,
       });
+  // CPU with advanced fields set: the same live judgement as the default
+  // request, on the request the command actually carries. The pending-count
+  // heuristic alone called a hand-set 16 cores "queued" while the default
+  // 16 cores read "can start".
+  const cpuOverrideState = !isGpu && snap && hasAdvancedOverrides
+    ? liveCpuStart(snap, partition, { cores: coreCount, nodes: nodeCount, memMb: memOverrideMb })
+    : null;
+  const queueHint = cpuOverrideState === "now"
+    ? { tone: "ok" as const, label: t("pool.queueHintCanStart"), detail: "" }
+    : cpuOverrideState === "queued"
+      ? (baseQueueHint?.tone === "warn" ? baseQueueHint : { tone: "warn" as const, label: t("pool.queueHintWillQueue"), detail: "" })
+      : baseQueueHint;
   // A multi-GPU layout needs whole idle nodes (packed) or nodes with a free
   // GPU and a GPU's share of cores (spread) — judge exactly that.
   const layoutHint = multiGpu && layout && snap && !groupLimitReached
@@ -690,9 +702,6 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
                 row={selectedCpuRow}
                 t={t}
               />
-            )}
-            {hasAdvancedOverrides && cpuRows.length > 0 && (
-              <div className="mt-1 text-xs leading-relaxed text-muted-foreground">{t("pool.cpuProbeDefaultOnly")}</div>
             )}
             {multiNodeCpuPolicy && <div className="mt-1 text-xs leading-relaxed text-warn-fg">{t("pool.multiNodeHint")}</div>}
             {/* Why the command carries a -n the user did not choose. Stated as

@@ -272,7 +272,6 @@ export const ja: Record<TranslationKey, string> = {
   "pool.cpuProbeNeed": "既定 {cores} コア",
   "pool.cpuProbeStart": "予測 {time}",
   "pool.cpuProbeNoData": "予測データなし",
-  "pool.cpuProbeDefaultOnly": "この予測は既定の設定のみが対象です。詳細設定を変えた場合は投入時に Slurm が判定します。",
   "pool.scatteredNote": "（断片化・空きノードなし）",
   "pool.sortUsage": "使用量順",
   "pool.sortEnding": "終了が早い順",

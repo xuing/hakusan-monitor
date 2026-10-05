@@ -272,7 +272,6 @@ export const en = {
   "pool.cpuProbeNeed": "default {cores} cores",
   "pool.cpuProbeStart": "estimated {time}",
   "pool.cpuProbeNoData": "no probe data",
-  "pool.cpuProbeDefaultOnly": "This prediction covers the default settings only; after Advanced changes, Slurm decides at submit time.",
   "pool.scatteredNote": "(scattered — no whole node is free)",
   "pool.sortUsage": "by usage",
   "pool.sortEnding": "soonest ending",

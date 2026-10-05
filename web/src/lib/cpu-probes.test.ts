@@ -57,6 +57,15 @@ describe("liveCpuStart (measured 2026-10-05)", () => {
     expect(liveCpuStart(snapOf([node("idle", 0)], whole), "DEF")).toBe("queued");
   });
 
+  it("a hand-set request gets the same verdict as the identical default", () => {
+    const whole = Array.from({ length: 51 }, () => ({ ...job("Priority"), cpus: 256, node_count: 1 }));
+    const s = snapOf([node("lcpcc-074", 200)], whole);
+    expect(liveCpuStart(s, "DEF", { cores: 16 })).toBe(liveCpuStart(s, "DEF"));
+    expect(liveCpuStart(s, "DEF", { cores: 56 })).toBe("now");
+    expect(liveCpuStart(s, "DEF", { cores: 57 })).toBe("queued");
+    expect(liveCpuStart(s, "DEF", { cores: 16, memMb: 400_000 })).toBe("queued");
+  });
+
   it("queues when Priority/Resources waiters outnumber the free slots", () => {
     expect(liveCpuStart(snapOf([node("a", 200)], [job("Priority")]), "DEF")).toBe("queued");
     expect(liveCpuStart(snapOf([node("a", 250)], []), "DEF")).toBe("queued");

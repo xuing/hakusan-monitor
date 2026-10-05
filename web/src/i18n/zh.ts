@@ -272,7 +272,6 @@ export const zh: Record<TranslationKey, string> = {
   "pool.cpuProbeNeed": "默认 {cores} 核",
   "pool.cpuProbeStart": "预计 {time}",
   "pool.cpuProbeNoData": "无预测数据",
-  "pool.cpuProbeDefaultOnly": "这个预测只针对默认参数；改了高级参数后，以 Slurm 实际调度为准。",
   "pool.scatteredNote": "（零散，无整空节点）",
   "pool.sortUsage": "按占用",
   "pool.sortEnding": "最快结束",
