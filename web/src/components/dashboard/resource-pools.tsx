@@ -89,11 +89,11 @@ export function ResourcePools() {
 
   return (
     <div>
-      <h2 className="mb-3 text-xs font-medium uppercase tracking-wide text-muted-foreground">{t("section.pools")}</h2>
       <div className="space-y-5">
         {groups.map((g) => (
           <PoolGroup
             key={g.key}
+            groupKey={g.key}
             label={g.label}
             pools={g.pools}
             snap={snap}
@@ -106,7 +106,8 @@ export function ResourcePools() {
   );
 }
 
-function PoolGroup({ label, pools, snap, t, outside = [] }: {
+function PoolGroup({ groupKey, label, pools, snap, t, outside = [] }: {
+  groupKey: string;
   label: string;
   pools: Pool[];
   snap: Snapshot;
@@ -116,21 +117,44 @@ function PoolGroup({ label, pools, snap, t, outside = [] }: {
 }) {
   const available = pools.filter((p) => hasAvailableNodes(p, snap)).length;
   const maint = pools.every(isMaintPool);
+  // collapsed groups stay collapsed for this viewer
+  const storeKey = `hm_pool_group_${groupKey}`;
+  const [open, setOpen] = useState(() => {
+    try {
+      return localStorage.getItem(storeKey) !== "closed";
+    } catch {
+      return true;
+    }
+  });
+  const toggle = () => {
+    setOpen(!open);
+    try {
+      localStorage.setItem(storeKey, open ? "closed" : "open");
+    } catch {
+      /* storage unavailable: the choice lasts this visit */
+    }
+  };
   return (
     <section className="space-y-2">
-      <div className="flex flex-wrap items-center gap-2 border-b border-border pb-1.5">
+      <button
+        type="button"
+        onClick={toggle}
+        aria-expanded={open}
+        className="flex w-full flex-wrap items-center gap-2 border-b border-border pb-1.5 text-left hover:text-foreground"
+      >
+        <ChevronRight className={cn("h-3.5 w-3.5 text-muted-foreground transition-transform", open && "rotate-90")} />
         <span className={cn("h-2.5 w-2.5 rounded-full", maint ? "bg-muted-foreground/45" : available > 0 ? "bg-ok" : "bg-bad")} />
         <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{label}</span>
         <span className="font-mono text-xs text-muted-foreground">
           {available}/{pools.length} {t("part.available")}
         </span>
-      </div>
-      <div className={cn("grid gap-4", pools.length + outside.length > 1 && "lg:grid-cols-2")}>
+      </button>
+      {open && <div className={cn("grid gap-4", pools.length + outside.length > 1 && "lg:grid-cols-2")}>
         {pools.map((p) => (
           <PoolCard key={p.id} pool={p} snap={snap} t={t} />
         ))}
         {outside.map((o) => <OutsideCard key={o.pool} o={o} t={t} />)}
-      </div>
+      </div>}
     </section>
   );
 }

@@ -134,7 +134,6 @@ export const en = {
   "dim.gpu": "GPU",
   "spec.perNode": "per node",
   "pool.offline": "{n} GPUs offline",
-  "section.pools": "Resources",
   "unit.core": "core",
   "unit.cores": "cores",
   "unit.gpu": "GPU",

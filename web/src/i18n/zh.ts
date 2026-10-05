@@ -134,7 +134,6 @@ export const zh: Record<TranslationKey, string> = {
   "dim.gpu": "GPU",
   "spec.perNode": "每台",
   "pool.offline": "{n} 张 GPU 下线",
-  "section.pools": "资源",
   "unit.core": "核",
   "unit.cores": "核",
   "unit.gpu": "GPU",

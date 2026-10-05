@@ -134,7 +134,6 @@ export const ja: Record<TranslationKey, string> = {
   "dim.gpu": "GPU",
   "spec.perNode": "ノードあたり",
   "pool.offline": "{n} GPU がオフライン",
-  "section.pools": "リソース",
   "unit.core": "コア",
   "unit.cores": "コア",
   "unit.gpu": "GPU",
