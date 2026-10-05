@@ -63,9 +63,9 @@ export const zh: Record<TranslationKey, string> = {
   "kpi.down": "需关注",
   "kpi.total": "总计",
   "kpi.gpuNodes": "GPU 节点",
-  "kpi.gpuNodesFree": "有空闲 GPU",
+  "kpi.gpuNodesFree": "台有空闲 GPU",
   "kpi.cpuNodes": "CPU 节点",
-  "kpi.cpuNodesFree": "有空闲核",
+  "kpi.cpuNodesFree": "台有空闲核",
 
   "section.releases": "即将结束的作业",
   "section.queue": "排队情况",

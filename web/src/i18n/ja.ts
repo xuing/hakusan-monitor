@@ -63,9 +63,9 @@ export const ja: Record<TranslationKey, string> = {
   "kpi.down": "要対応",
   "kpi.total": "合計",
   "kpi.gpuNodes": "GPU ノード",
-  "kpi.gpuNodesFree": "空き GPU あり",
+  "kpi.gpuNodesFree": "台に空き GPU あり",
   "kpi.cpuNodes": "CPU ノード",
-  "kpi.cpuNodesFree": "空きコアあり",
+  "kpi.cpuNodesFree": "台に空きコアあり",
 
   "section.releases": "まもなく終わるジョブ",
   "section.queue": "キューの状況",
