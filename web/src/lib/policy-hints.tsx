@@ -2,7 +2,7 @@
 // Single source for the Overview quick-request box AND the Partitions page —
 // these two used to carry diverging copies (different limit formats, different
 // user-limit chip layouts). Any policy hint shown to users must come from here.
-import { coresText, type TFn } from "@/i18n";
+import { coresText, wallText, type TFn } from "@/i18n";
 import { cleanCpuProbeRaw, type CpuProbeRow, type CpuProbeState } from "@/lib/cpu-probes";
 import { nf } from "@/lib/format";
 import { maxJobGpus, type GpuNodeShape } from "@/lib/gpu-layout";
@@ -91,8 +91,8 @@ export function fmtPolicyLimit(cap: PartitionCap, isGpu: boolean, t: TFn, partit
     // showing "7d" alone reads as a promise interactive can't keep
     const forced = partition ? interactiveForcedLabel(partition, policy) : null;
     parts.push(forced && forced !== cap.wall
-      ? t("pool.wallSplit", { wall: cap.wall, forced })
-      : cap.wall);
+      ? t("pool.wallSplit", { wall: wallText(t, cap.wall), forced: wallText(t, forced) })
+      : wallText(t, cap.wall));
   }
   return parts.join(" / ");
 }

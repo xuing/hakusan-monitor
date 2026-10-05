@@ -311,13 +311,6 @@ export interface DownNode {
   reason: string;
 }
 
-export interface TopUser {
-  user: string;
-  running: number;
-  cpus: number;
-  gpus: number;
-}
-
 export interface Snapshot {
   schema_version: 1;
   cluster: string;
@@ -334,7 +327,6 @@ export interface Snapshot {
   cpu_submit_probe_interval?: number;
   policy?: PolicySnapshot;
   nodes_down: DownNode[];
-  top_users: TopUser[];
   /** raw data shipped in the same payload — tables/occupancy derive from this */
   nodes: RawNode[];
   jobs: RawJob[];

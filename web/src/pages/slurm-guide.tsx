@@ -9,7 +9,7 @@ import { SectionCard } from "@/components/common/section-card";
 import { CopyButton } from "@/components/common/copy-button";
 import { Segmented } from "@/components/common/segmented";
 import { useLive } from "@/hooks/live-context";
-import { useT, type TFn, type TranslationKey } from "@/i18n";
+import { useT, wallText, type TFn, type TranslationKey } from "@/i18n";
 import { fmtMB } from "@/lib/format";
 import { maxJobGpus } from "@/lib/gpu-layout";
 import {
@@ -288,7 +288,7 @@ export default function SlurmGuidePage() {
               <Flag flag="-t">
                 <Rich
                   text={facts.wall[kind]
-                    ? t("guide.s2.flag.t", { p: EXAMPLE_PARTITION[kind], wall: facts.wall[kind]! })
+                    ? t("guide.s2.flag.t", { p: EXAMPLE_PARTITION[kind], wall: wallText(t, facts.wall[kind]) })
                     : t("guide.s2.flag.tNoData")}
                 />
               </Flag>
@@ -592,7 +592,7 @@ function PartitionRow({ row, t }: { row: PartRow; t: TFn }) {
     ? t("guide.part.gpu", { gpu: row.gpuLabel, mem: row.gpuMemGb ?? "—" })
     : t(`guide.part.${row.name}` as TranslationKey);
   const chips = [
-    row.wall && t("guide.part.wall", { t: row.wall }),
+    row.wall && t("guide.part.wall", { t: wallText(t, row.wall) }),
     row.maxCores && t("guide.part.cores", { n: row.maxCores }),
     row.gpus && t("guide.part.gpus", { n: row.gpus }),
     row.perUser && t("guide.part.perUser", { n: row.perUser }),

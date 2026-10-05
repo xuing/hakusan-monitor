@@ -33,7 +33,7 @@ export interface PartitionAxis {
 
 // columns follow the table's own width (it sits in half-width cards too):
 // the time column from @md, the per-user column from @2xl
-const GRID = "grid grid-cols-[5.25rem_minmax(0,1fr)_5.5rem] items-center gap-x-3 px-3 @md:grid-cols-[5.5rem_minmax(0,1fr)_6.5rem_5.5rem] @2xl:grid-cols-[5.75rem_minmax(0,1fr)_6.5rem_3.75rem_5.5rem]";
+const GRID = "grid grid-cols-[5.25rem_minmax(0,1fr)_5.5rem] items-center gap-x-3 px-3 @md:grid-cols-[5.5rem_minmax(0,1fr)_6.5rem_5.5rem] @2xl:grid-cols-[5.75rem_minmax(0,1fr)_6.5rem_5.5rem_5.5rem]";
 
 /** Partitions side by side on one axis: each row's bar is what a job there
  *  may ask for, its green part what starts now. Clicking a row picks it. */

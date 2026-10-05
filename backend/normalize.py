@@ -19,7 +19,6 @@ GPU_ORDER = ["nvidia_a40", "nvidia_a100", "h100-80c", "h100-20c"]
 # GPU model names may contain dots (QoS seminar: gres/gpu:nvidia_rtx_pro_6000_
 # blackwell_server_edition_1g.24gb) — a class without "." parsed them as 0.
 _GRES_RE = re.compile(r"gpu:([A-Za-z0-9_.\-]+):(\d+)")
-_TRES_GPU_RE = re.compile(r"gres/gpu:?([A-Za-z0-9_.\-]*)=(\d+)")
 
 
 def num(v, default=0):
@@ -39,20 +38,6 @@ def parse_gres(s):
     for m in _GRES_RE.finditer(s):
         out[m.group(1)] += int(m.group(2))
     return out
-
-
-def parse_tres_gpu(s):
-    """Total GPUs requested from a tres_req_str, plus a short label."""
-    if not s:
-        return 0, ""
-    total = 0
-    parts = []
-    for m in _TRES_GPU_RE.finditer(s):
-        typ, n = m.group(1), int(m.group(2))
-        total += n
-        label = GPU_CATALOG.get(typ, {}).get("label", typ or "gpu")
-        parts.append(f"{label}×{n}")
-    return total, ", ".join(parts)
 
 
 # ---- node state bucketing ----------------------------------------------------
@@ -373,7 +358,6 @@ def normalize(nodes_json, squeue_json, *, cluster="hakusan", slurm_version="",
     pend_reason_by_part = defaultdict(Counter)
     pend_reasons = Counter()
     running = pending = container_jobs = 0
-    user_run = defaultdict(lambda: {"running": 0, "cpus": 0, "gpus": 0})
     pending_jobs = []
     longest_pending_by_part = {}
     releases = []                # running jobs that will free resources, by end time
@@ -410,11 +394,6 @@ def normalize(nodes_json, squeue_json, *, cluster="hakusan", slurm_version="",
                     pool_releasing[pool]["jobs"] += 1
                     pool_releasing[pool]["nodes"] |= hosts
             u = j.get("user_name", "")
-            gpus_req, _ = parse_tres_gpu(j.get("tres_req_str"))
-            ur = user_run[u]
-            ur["running"] += 1
-            ur["cpus"] += num(j.get("cpus")) or 0
-            ur["gpus"] += gpus_req
             end = j.get("end_time") or ""
             if end:
                 gp = num(j.get("gpus")) or 0
@@ -593,10 +572,7 @@ def normalize(nodes_json, squeue_json, *, cluster="hakusan", slurm_version="",
                          "maint": dd >= tt,                # whole type is offline
                          "next_free": next_free.get(t) if dd < tt else None})
 
-    # ---- top users / pending preview ----------------------------------------
-    top_users = sorted(
-        ({"user": mask_user(u, mask_users), **v} for u, v in user_run.items()),
-        key=lambda x: (-x["running"], -x["gpus"], -x["cpus"]))[:8]
+    # ---- pending preview -------------------------------------------------------
     pending_jobs.sort(key=pending_sort_key)
     top_pending = pending_jobs[:12]
     longest_pending = sorted(longest_pending_by_part.values(), key=lambda x: x["partition"])
@@ -650,7 +626,6 @@ def normalize(nodes_json, squeue_json, *, cluster="hakusan", slurm_version="",
             "container_jobs": container_jobs,
         },
         "nodes_down": nodes_down,
-        "top_users": top_users,
         "part_pool": part_pool,    # partition -> pool id (lets the client group raw jobs)
         "diagnostics": {"duplicate_nodes": duplicate_nodes},
     }

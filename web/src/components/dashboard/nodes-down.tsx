@@ -15,6 +15,8 @@ export function NodesDown() {
   if (!snap) return null;
   // when filtered, only show down nodes of the selected pool
   const nd = filter === "all" ? snap.nodes_down : snap.nodes_down.filter((n) => n.pool === filter);
+  // a pool the cards show as "in maintenance" (every GPU offline)
+  const maintPools = new Set(snap.pools.filter((p) => p.gpu?.maint).map((p) => p.id));
 
   return (
     <SectionCard title={t("section.nodesdown")} extra={nd.length ? t("nodesdown.count", { n: nd.length }) : ""}>
@@ -24,7 +26,7 @@ export function NodesDown() {
         <div className="max-h-72 overflow-y-auto pr-1">
           <div className="divide-y divide-border">
             {nd.map((n) => {
-              const level = nodeAttention(n);
+              const level = nodeAttention(n, maintPools.has(n.pool ?? ""));
               return (
                 <div key={n.name} className="grid gap-x-3 gap-y-1 py-2 text-xs sm:grid-cols-[7.5rem_minmax(0,1fr)] sm:items-center">
                   <div className="min-w-0 truncate font-mono">{n.name}</div>
@@ -59,8 +61,13 @@ export function NodesDown() {
   );
 }
 
-function nodeAttention(node: DownNode): { value: number; tone: Tone; text: string } {
+function nodeAttention(node: DownNode, poolInMaint: boolean): { value: number; tone: Tone; text: string } {
   const states = new Set(node.state.map((s) => s.toUpperCase()));
+  // maintenance is not a fault: gray, like every other offline thing —
+  // a node marked for it, or one in a pool that is wholly offline
+  if (poolInMaint || states.has("MAINT") || /^maint/i.test(node.reason || "")) {
+    return { value: 0.45, tone: "neutral", text: "text-muted-foreground" };
+  }
   if (states.has("DOWN") || states.has("NOT_RESPONDING")) {
     return { value: 1, tone: "bad", text: "text-bad-fg" };
   }

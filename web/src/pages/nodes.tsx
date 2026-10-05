@@ -5,12 +5,12 @@ import { DataTable, type DataFacet } from "@/components/data/data-table";
 import { TableSkeleton } from "@/components/common/table-skeleton";
 import { LivePending } from "@/components/common/live-pending";
 import { useLive } from "@/hooks/live-context";
-import { coresText, poolLabel, useT, type TFn } from "@/i18n";
+import { coresText, gpusText, poolLabel, useT, type TFn } from "@/i18n";
 import { poolKindGroups } from "@/components/data/table-filters";
 import { jobsOnNode } from "@/lib/derive";
 import { fmtCountdown, fmtMB, parseDur } from "@/lib/format";
 import { cn } from "@/lib/utils";
-import type { Occupant, RawNode, Snapshot } from "@/types/snapshot";
+import type { Occupant, PoolGpu, RawNode, Snapshot } from "@/types/snapshot";
 
 const nodeWeight = (n: RawNode) => {
   const s = new Set(n.state.map((x) => x.toUpperCase()));
@@ -57,14 +57,14 @@ function NodeJobs({ snap, node, t }: { snap: Snapshot; node: RawNode; t: TFn }) 
       </div>
       <div className="grid grid-cols-[repeat(auto-fit,minmax(13rem,1fr))] gap-1.5">
         {jobs.map((j) => (
-          <NodeJobCard key={String(j.job_id)} job={j} t={t} />
+          <NodeJobCard key={String(j.job_id)} job={j} gpu={snap.pools.find((p) => p.id === node.pool)?.gpu ?? null} t={t} />
         ))}
       </div>
     </div>
   );
 }
 
-function NodeJobCard({ job, t }: { job: Occupant; t: TFn }) {
+function NodeJobCard({ job, gpu, t }: { job: Occupant; gpu: PoolGpu | null; t: TFn }) {
   const isGpu = job.gpus > 0;
   const accent = isGpu ? "bg-info" : "bg-ok";
   const fg = isGpu ? "text-info-fg" : "text-ok-fg";
@@ -82,7 +82,7 @@ function NodeJobCard({ job, t }: { job: Occupant; t: TFn }) {
         </span>
       </div>
       <div className="mt-0.5 flex items-center gap-1.5 pl-3 text-xs text-muted-foreground">
-        <span className={cn("font-medium", fg)}>{nodeJobResources(job, t)}</span>
+        <span className={cn("font-medium", fg)}>{nodeJobResources(job, gpu, t)}</span>
         <span className="text-muted-foreground/40">·</span>
         <span className="truncate">#{job.job_id}</span>
       </div>
@@ -90,9 +90,9 @@ function NodeJobCard({ job, t }: { job: Occupant; t: TFn }) {
   );
 }
 
-function nodeJobResources(job: Occupant, t: TFn) {
+function nodeJobResources(job: Occupant, gpu: PoolGpu | null, t: TFn) {
   const parts = [];
-  if (job.gpus > 0) parts.push(`${job.gpus} ${t("unit.gpu")}`);
+  if (job.gpus > 0) parts.push(gpusText(t, job.gpus, gpu));
   if (job.cpus > 0) parts.push(coresText(t, job.cpus));
   if (job.mem_mb > 0) parts.push(fmtMB(job.mem_mb));
   return parts.join(" · ") || "—";

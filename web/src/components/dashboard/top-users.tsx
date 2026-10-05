@@ -2,15 +2,15 @@ import { Empty } from "@/components/common/empty";
 import { SectionCard } from "@/components/common/section-card";
 import { useLive } from "@/hooks/live-context";
 import { useResourceFilter } from "@/hooks/resource-filter-context";
-import { coresText, poolLabel, useT, type TFn } from "@/i18n";
+import { coresText, gpusText, poolLabel, useT, type TFn } from "@/i18n";
 import { fmtMB, nf } from "@/lib/format";
 import {
   amountOf,
   fmtShare,
+  groupUsage,
   poolUsage,
   shareOf,
   topUsers,
-  usageByPool,
   type PoolUsage,
   type Resource,
   type UsageTail,
@@ -18,14 +18,15 @@ import {
 } from "@/lib/user-usage";
 import { cn } from "@/lib/utils";
 
-/** Rows per pool: five on the overview grid, ten when one pool is in focus. */
-const ROWS_ALL = 5;
+/** Rows per panel: eight per group on the overview, ten for one pool. */
+const ROWS_GROUP = 8;
 const ROWS_FOCUSED = 10;
 
-/** One panel per hardware pool, each ranking its users by the share of that
- *  pool they hold in their dominant resource (GPUs, cores or memory). A GPU
- *  and a CPU user never share a bar, and the bar's denominator is the pool's
- *  own total, stated in the panel header. */
+/** Two rankings on the overview — every GPU pool, every CPU pool — and one
+ *  for the pool in focus (each pool card lists its own users too). A user is
+ *  ranked by the share they hold of the panel's capacity in their dominant
+ *  resource (GPUs, cores or memory); GPU and CPU users never share a bar,
+ *  and the denominator is stated in the panel header. */
 export function TopUsers() {
   const { snap } = useLive();
   const { filter } = useResourceFilter();
@@ -33,10 +34,9 @@ export function TopUsers() {
   if (!snap) return null;
 
   const focused = filter !== "all";
-  const pools = focused
-    ? [poolUsage(snap, filter)].filter((u): u is PoolUsage => !!u && u.users.length > 0)
-    : usageByPool(snap);
-  const limit = focused ? ROWS_FOCUSED : ROWS_ALL;
+  const pools = (focused ? [poolUsage(snap, filter)] : [groupUsage(snap, "gpu"), groupUsage(snap, "cpu")])
+    .filter((u): u is PoolUsage => !!u && u.users.length > 0);
+  const limit = focused ? ROWS_FOCUSED : ROWS_GROUP;
   const panels = pools.map((usage) => ({ usage, ...topUsers(usage, limit) }));
   const anyQueued = panels.some((p) => p.shown.some((u) => u.pending > 0));
 
@@ -45,9 +45,9 @@ export function TopUsers() {
       {panels.length === 0 ? (
         <Empty>{t("users.none")}</Empty>
       ) : (
-        <div className={cn(!focused && "grid gap-x-6 gap-y-5 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4")}>
+        <div className={cn(!focused && "grid gap-x-8 gap-y-5 md:grid-cols-2")}>
           {panels.map(({ usage, shown, rest }) => (
-            <PoolPanel key={usage.pool.id} usage={usage} shown={shown} rest={rest} wide={focused} t={t} />
+            <PoolPanel key={usage.id} usage={usage} shown={shown} rest={rest} wide={focused} t={t} />
           ))}
         </div>
       )}
@@ -84,13 +84,17 @@ function PoolPanel({
   wide: boolean;
   t: TFn;
 }) {
-  const { pool, totals, unit, pendingJobs } = usage;
+  const { pools, totals, unit, pendingJobs } = usage;
+  const single = pools.length === 1 ? pools[0] : null;
+  const title = single ? poolLabel(t, single.id) : t(usage.id === "gpu" ? "users.gpuGroup" : "users.cpuGroup");
+  // one pool names its GPU's memory; a group mixes models
+  const total = unit === "gpus" && single ? gpusText(t, totals.gpus, single.gpu) : amountLabel(unit, totals[unit], t);
   return (
     <section className="min-w-0">
       <header className="flex items-baseline justify-between gap-3 border-b border-border pb-1.5 text-xs">
         <div className="flex min-w-0 items-baseline gap-2">
-          <span className="truncate font-medium text-foreground">{poolLabel(t, pool.id)}</span>
-          <span className="tnum whitespace-nowrap text-muted-foreground">{amountLabel(unit, totals[unit], t)}</span>
+          <span className="truncate font-medium text-foreground">{title}</span>
+          <span className="tnum whitespace-nowrap text-muted-foreground">{total}</span>
         </div>
         {pendingJobs > 0 && (
           <span className="whitespace-nowrap text-muted-foreground">
@@ -188,12 +192,19 @@ function amountLabel(r: Resource, n: number, t: TFn): string {
 
 const jobsLabel = (n: number, t: TFn) => (n === 1 ? t("users.job1") : t("users.jobs", { n: nf(n) }));
 
-/** Jobs, then the resources the headline number leaves out, then what the
- *  user's waiting jobs ask for in the headline unit. */
+/** Jobs, the GPUs by model where the panel spans several pools, the
+ *  resources the headline number leaves out, then what the user's waiting
+ *  jobs ask for in the headline unit. */
 function details(u: UserUsage, usage: PoolUsage, t: TFn): string[] {
   const parts = [jobsLabel(u.running, t)];
+  if (usage.pools.length > 1) {
+    const byPool = Object.entries(u.gpusByPool).sort((a, b) => b[1] - a[1]);
+    for (const [id, n] of byPool) parts.push(gpusText(t, n, usage.pools.find((p) => p.id === id)?.gpu, true));
+  }
   for (const r of RESOURCES) {
     const n = amountOf(u.held, r);
+    // a group's GPUs are listed by model above
+    if (r === "gpus" && usage.pools.length > 1) continue;
     if (r !== u.dominant && n > 0) parts.push(amountLabel(r, n, t));
   }
   if (u.pending > 0) {

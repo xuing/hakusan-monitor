@@ -39,6 +39,38 @@ export function coresText(t: TFn, n: number): string {
   return `${nf(n)} ${t(n === 1 ? "unit.core" : "unit.cores")}`;
 }
 
+/** A duration in words — "5 天", "12 小时 30 分钟", "1 day", "30 min" — for
+ *  sentences, tables and chips; slider axes and value boxes keep "5d". */
+export function durText(t: TFn, sec: number): string {
+  sec = Math.max(0, Math.floor(sec));
+  const d = Math.floor(sec / 86400);
+  const h = Math.floor((sec % 86400) / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const part = (n: number, unit: "d" | "h" | "m") => t(`dur.${unit}${n === 1 ? "1" : ""}` as TranslationKey, { n });
+  if (d > 0) return h ? `${part(d, "d")} ${part(h, "h")}` : part(d, "d");
+  if (h > 0) return m ? `${part(h, "h")} ${part(m, "m")}` : part(h, "h");
+  return part(m, "m");
+}
+
+/** A Slurm limit label ("7d", "30m", "12h") in words; anything else as is. */
+export function wallText(t: TFn, wall: string | null | undefined): string {
+  const m = String(wall ?? "").match(/^(\d+)([mhd])$/);
+  if (!m) return wall ?? "";
+  return durText(t, Number(m[1]) * (m[2] === "d" ? 86400 : m[2] === "h" ? 3600 : 60));
+}
+
+/** A GPU count with the kind of GPU in parentheses: "1 GPU（48 GB）" where
+ *  the context names the model, "7 GPU（A40 48 GB）" where it does not. */
+export function gpusText(t: TFn, n: number, gpu?: { label: string; mem_gb: number | null } | null, withModel = false): string {
+  const count = `${nf(n)} ${t("unit.gpu")}`;
+  if (!gpu) return count;
+  const mem = gpu.mem_gb ? `${gpu.mem_gb} GB` : "";
+  // "H100 80GB" already carries its memory
+  const model = gpu.label.replace(/\s*\d+\s*GB$/i, "");
+  const spec = withModel ? [model, mem].filter(Boolean).join(" ") : mem;
+  return spec ? t("unit.gpuSpec", { n: count, spec }) : count;
+}
+
 /** Localized hardware-pool label, falling back to the id. */
 export function poolLabel(t: TFn, id: string): string {
   const key = `pool.${id}` as TranslationKey;

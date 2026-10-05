@@ -39,6 +39,8 @@ export interface UserUsage {
   /** running jobs in this pool */
   running: number;
   held: Amounts;
+  /** GPUs held per pool id (a group spans several GPU models) */
+  gpusByPool: Record<string, number>;
   /** pending jobs in this pool and what they ask for */
   pending: number;
   queued: Amounts;
@@ -49,7 +51,10 @@ export interface UserUsage {
 }
 
 export interface PoolUsage {
-  pool: Pool;
+  /** a pool id, or "gpu" / "cpu" for a group of pools */
+  id: string;
+  /** the one pool, or the group's pools */
+  pools: Pool[];
   totals: PoolTotals;
   /** the unit users compete for here: GPUs on a GPU pool, cores otherwise */
   unit: "gpus" | "cores";
@@ -134,14 +139,31 @@ function compareUsers(a: UserUsage, b: UserUsage): number {
 /** Usage of one pool by user; null when the pool is not in the snapshot. */
 export function poolUsage(snap: Snapshot, poolId: string): PoolUsage | null {
   const pool = snap.pools.find((p) => p.id === poolId);
-  if (!pool) return null;
-  const totals = poolTotals(pool, snap.nodes);
+  return pool ? usageOf(snap, [pool], poolId) : null;
+}
+
+/** Usage of every GPU pool, or every CPU pool, as one ranking: amounts and
+ *  capacities summed over the pools; a pool that is wholly in maintenance
+ *  adds no capacity. null when nobody runs there. */
+export function groupUsage(snap: Snapshot, kind: "gpu" | "cpu"): PoolUsage | null {
+  const pools = snap.pools.filter((p) => p.kind === kind && !p.gpu?.maint);
+  if (pools.length === 0) return null;
+  const usage = usageOf(snap, pools, kind);
+  return usage.users.length > 0 ? usage : null;
+}
+
+function usageOf(snap: Snapshot, pools: Pool[], id: string): PoolUsage {
+  const totals = pools
+    .map((pool) => poolTotals(pool, snap.nodes))
+    .reduce((a, b) => ({ cores: a.cores + b.cores, gpus: a.gpus + b.gpus, memMb: a.memMb + b.memMb }), { cores: 0, gpus: 0, memMb: 0 });
   const unit: "gpus" | "cores" = totals.gpus > 0 ? "gpus" : "cores";
+  const ids = pools.map((p) => p.id);
 
   interface Acc {
     user: string;
     running: number;
     held: Amounts;
+    gpusByPool: Record<string, number>;
     pending: number;
     queued: Amounts;
   }
@@ -149,7 +171,7 @@ export function poolUsage(snap: Snapshot, poolId: string): PoolUsage | null {
   const acc = (user: string): Acc => {
     let a = byUser.get(user);
     if (!a) {
-      a = { user, running: 0, held: zero(), pending: 0, queued: zero() };
+      a = { user, running: 0, held: zero(), gpusByPool: {}, pending: 0, queued: zero() };
       byUser.set(user, a);
     }
     return a;
@@ -159,12 +181,14 @@ export function poolUsage(snap: Snapshot, poolId: string): PoolUsage | null {
   for (const job of snap.jobs) {
     const state = String(job.job_state || "").toUpperCase();
     if (state === "RUNNING") {
-      if (!runsInPool(job, snap.part_pool, poolId)) continue;
+      const poolId = ids.find((p) => runsInPool(job, snap.part_pool, p));
+      if (!poolId) continue;
       const a = acc(job.user_name);
       a.running += 1;
       add(a.held, job);
+      if (job.gpus) a.gpusByPool[poolId] = (a.gpusByPool[poolId] ?? 0) + job.gpus;
     } else if (state === "PENDING") {
-      if (!pendsInPool(job, snap.part_pool, poolId)) continue;
+      if (!ids.some((p) => pendsInPool(job, snap.part_pool, p))) continue;
       pendingJobs += 1;
       const a = acc(job.user_name);
       a.pending += 1;
@@ -183,18 +207,7 @@ export function poolUsage(snap: Snapshot, poolId: string): PoolUsage | null {
     users.push({ ...a, shares, dominant: dominantOf(shares, unit) });
   }
   users.sort(compareUsers);
-  return { pool, totals, unit, users, pendingJobs };
-}
-
-/** Every pool with at least one running job, in the snapshot's pool order
- *  (GPU pools first, the way the backend lists them). */
-export function usageByPool(snap: Snapshot): PoolUsage[] {
-  const out: PoolUsage[] = [];
-  for (const pool of snap.pools) {
-    const usage = poolUsage(snap, pool.id);
-    if (usage && usage.users.length > 0) out.push(usage);
-  }
-  return out;
+  return { id, pools, totals, unit, users, pendingJobs };
 }
 
 /** The first `limit` users plus one aggregate for everyone after them, so

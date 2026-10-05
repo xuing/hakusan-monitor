@@ -65,7 +65,11 @@ function PoolKpis({ pool, snap, t }: { pool: Pool; snap: Snapshot; t: TFn }) {
   const isGpu = pool.kind === "gpu";
   const g = pool.gpu;
   const used = isGpu && g ? g.used : pool.cores.alloc;
-  const total = isGpu && g ? g.total : pool.cores.total;
+  // capacity in service: a GPU or core on a down / drained node cannot be
+  // had — H100 80GB with one card in maintenance is 3 / 3, full, not 3 / 4
+  const offline = isGpu && g ? g.down + (g.reserved ?? 0) : pool.cores.unavailable ?? 0;
+  const total = Math.max(0, (isGpu && g ? g.total : pool.cores.total) - offline);
+  const util = total > 0 ? used / total : pool.util;
   // "可用" GPUs = what the pool card calls ready (shared verdict), not every
   // idle card — queue-claimed or resource-short ones are not available.
   const free = isGpu && g ? poolGpuAvailability(snap, pool, Date.now()).ready : pool.cores.free;
@@ -75,8 +79,8 @@ function PoolKpis({ pool, snap, t }: { pool: Pool; snap: Snapshot; t: TFn }) {
   const unit = isGpu ? t("unit.gpu") : t("unit.cores");
   return (
     <>
-      <GaugeKpi label={poolLabel(t, pool.id)} util={pool.util} value={nf(used)}
-        hint={`${t("kpi.of")} ${nf(total)} ${unit}`} />
+      <GaugeKpi label={poolLabel(t, pool.id)} util={util} value={nf(used)}
+        hint={`${t("kpi.of")} ${nf(total)} ${unit}${offline > 0 ? ` · ${t(isGpu ? "kpi.offlineGpu" : "kpi.offlineCores", { n: nf(offline) })}` : ""}`} />
       <SplitCard label={t("part.available")} stats={[
         [free, unit, "text-ok-fg"],
         [

@@ -16,7 +16,7 @@ import {
   VM_CPU_RUNNING,
   snapshotWith,
 } from "./user-usage.fixtures";
-import { fmtShare, poolTotals, poolUsage, topUsers, usageByPool } from "./user-usage";
+import { fmtShare, groupUsage, poolTotals, poolUsage, topUsers } from "./user-usage";
 
 const order = (users: { user: string }[]) => users.map((u) => u.user);
 
@@ -143,30 +143,43 @@ describe("display mode: memory-dominant user (derived from biovia's real job)", 
   });
 });
 
-describe("which pools get a panel", () => {
-  it("shows every pool with a running job, in the snapshot's order, and skips the idle ones", () => {
-    const snap = snapshotWith([...A40_RUNNING, ...H100_80_RUNNING, ...CPU_RUNNING, ...VM_CPU_RUNNING]);
-    // a100 had no job in this fixture, h100-20c was all down, VM-LM was idle
-    expect(usageByPool(snap).map((u) => u.pool.id)).toEqual(["a40", "h100-80", "cpu", "vm-cpu"]);
+describe("display mode: overview groups (all GPU pools, all CPU pools)", () => {
+  const snap = snapshotWith([...A40_RUNNING, ...H100_80_RUNNING, ...CPU_RUNNING, ...VM_CPU_RUNNING]);
+
+  it("GPU: one ranking over every GPU pool; a pool wholly in maintenance adds no capacity", () => {
+    const gpu = groupUsage(snap, "gpu")!;
+    // A40 40 + A100 20 + H100 80GB 4; the 16 MIG slices were all down
+    expect(gpu.totals.gpus).toBe(64);
+    expect(gpu.pools.map((p) => p.id)).toEqual(["a40", "a100", "h100-80"]);
+    const top = gpu.users[0];
+    expect(top.dominant).toBe("gpus");
+    // the breakdown names the pool each GPU sits in
+    expect(Object.values(top.gpusByPool).reduce((a, b) => a + b, 0)).toBe(top.held.gpus);
   });
 
-  it("gives a one-user pool a one-row panel", () => {
-    const [vm] = usageByPool(snapshotWith(VM_CPU_RUNNING));
-    expect(vm.pool.id).toBe("vm-cpu");
+  it("CPU: the CPU pools summed, GPU jobs left out", () => {
+    const cpu = groupUsage(snap, "cpu")!;
+    expect(cpu.totals.cores).toBe(31_744 + 1_408 + 96);
+    expect(cpu.users.every((u) => u.held.gpus === 0)).toBe(true);
+    expect(cpu.users.map((u) => u.user)).toContain("s2510166");   // the VM-CPU job
+  });
+
+  it("no group without a running job", () => {
+    expect(groupUsage(snapshotWith(A40_PENDING), "gpu")).toBeNull();
+    expect(groupUsage(snapshotWith([]), "cpu")).toBeNull();
+  });
+
+  it("a pool in focus keeps its own one-user ranking", () => {
+    const vm = poolUsage(snapshotWith(VM_CPU_RUNNING), "vm-cpu")!;
     expect(vm.users).toHaveLength(1);
     expect(vm.users[0]).toMatchObject({ user: "s2510166", dominant: "cores", held: { cores: 32, memMb: 468_992 } });
     expect(topUsers(vm, 5).rest).toBeNull();
-  });
-
-  it("shows nothing for a snapshot with no running job", () => {
-    expect(usageByPool(snapshotWith(A40_PENDING))).toEqual([]);
-    expect(usageByPool(snapshotWith([]))).toEqual([]);
   });
 });
 
 describe("privacy", () => {
   it("shows exactly the names the snapshot carries, so backend masking passes through", () => {
-    // server.py masks snap.jobs[].user_name with the same rule as top_users
+    // server.py masks snap.jobs[].user_name (first two characters + ***)
     // (first two characters + ***) when HM_MASK_USERS is on.
     const mask = (u: string) => (u.length > 2 ? `${u.slice(0, 2)}***` : "***");
     const masked = A40_RUNNING.map((j) => ({ ...j, user_name: mask(j.user_name) }));
