@@ -112,10 +112,9 @@ function CellGrid({ tiles, ariaLabel, className }: { tiles: OccupancyTile[]; ari
           onMouseMove={show}
           onClick={show}
           className={cn(
-            "min-w-0 shadow-[inset_1px_1px_0_rgb(255_255_255/0.22)]",
-            it.kind === "user" && "bg-info",
-            it.kind === "free" && "bg-ok",
-            it.kind === "off" && "bg-muted-foreground/30",
+            "min-w-0",
+            TONE[it.kind],
+            CELL_LINE[it.kind],
             c > 0 && grid[c - 1][r]?.key !== it.key && "border-l-4 border-card",
             r > 0 && grid[c][r - 1]?.key !== it.key && "border-t-4 border-card",
           )}
@@ -146,7 +145,7 @@ function CellGrid({ tiles, ariaLabel, className }: { tiles: OccupancyTile[]; ari
         onBlur={() => setTip(null)}
         className={cn(
           "pointer-events-none relative z-[1] min-w-0 overflow-hidden px-2 py-1.5 text-xs leading-snug outline-none focus-visible:ring-2 focus-visible:ring-primary/60",
-          t.kind === "off" ? "text-foreground" : "text-white",
+          TONE[t.kind].split(" ")[1],
         )}
         style={{ gridColumn: `${b.c + 1} / span ${b.w}`, gridRow: `${b.r + 1} / span ${b.h}` }}
       >
@@ -197,6 +196,26 @@ function TipCard({ tip }: { tip: { tile: OccupancyTile; x: number; y: number } }
     </div>
   );
 }
+
+// soft tints with dark text: large areas stay calm; the hue keeps its
+// meaning (blue held, green free, gray offline) and Radix flips it in dark mode
+const TONE = {
+  user: "bg-[var(--blue-4)] text-[var(--blue-12)]",
+  free: "bg-[var(--green-4)] text-[var(--green-12)]",
+  off: "bg-[var(--gray-4)] text-[var(--gray-11)]",
+} as const;
+const HOVER = {
+  user: "hover:bg-[var(--blue-5)]",
+  free: "hover:bg-[var(--green-5)]",
+  off: "hover:bg-[var(--gray-5)]",
+} as const;
+const HUE = { user: "blue", free: "green", off: "gray" } as const;
+// faint lines between one owner's cells, in its own hue
+const CELL_LINE = {
+  user: "shadow-[inset_1px_1px_0_var(--blue-6)]",
+  free: "shadow-[inset_1px_1px_0_var(--green-6)]",
+  off: "shadow-[inset_1px_1px_0_var(--gray-6)]",
+} as const;
 
 const ROW_MIN_H = 30;
 
@@ -275,7 +294,7 @@ export function OccupancyMap({ tiles, ariaLabel, restLabel, perRow, nodeWord = "
         // one faint line per node inside a block of several
         const nodes = perRow ? Math.max(1, Math.round(t.value / perRow)) : 1;
         const lines = nodes > 1
-          ? { backgroundImage: `repeating-linear-gradient(to bottom, transparent 0, transparent ${h / nodes - 1}px, rgb(255 255 255 / 0.22) ${h / nodes - 1}px, rgb(255 255 255 / 0.22) ${h / nodes}px)` }
+          ? { backgroundImage: `repeating-linear-gradient(to bottom, transparent 0, transparent ${h / nodes - 1}px, var(--${HUE[t.kind]}-6) ${h / nodes - 1}px, var(--${HUE[t.kind]}-6) ${h / nodes}px)` }
           : undefined;
         const roomy = !strip && w > 84 && h > 62;
         const named = w > 40 && h > 22;
@@ -296,10 +315,8 @@ export function OccupancyMap({ tiles, ariaLabel, restLabel, perRow, nodeWord = "
             onBlur={() => setTip(null)}
             className={cn(
               "absolute overflow-hidden rounded-md border-2 border-card px-2 py-1.5 text-xs leading-snug outline-none transition-[filter]",
-              "hover:brightness-110 focus-visible:brightness-110",
-              t.kind === "user" && "bg-info text-white",
-              t.kind === "free" && "bg-ok text-white",
-              t.kind === "off" && "bg-muted-foreground/30 text-foreground",
+              TONE[t.kind],
+              HOVER[t.kind],
             )}
             style={{ left: x, top: y, width: w, height: h, ...lines }}
           >
