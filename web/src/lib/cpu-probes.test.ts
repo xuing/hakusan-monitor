@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { cpuProbeState, cpuStartLimits, cpuStartMemMb, liveCpuStart } from "./cpu-probes";
+import { cpuDefaultSpreads, cpuProbeState, cpuStartLimits, cpuStartMemMb, liveCpuStart } from "./cpu-probes";
 import type { CpuSubmitProbe } from "@/types/snapshot";
 
 const probe = (startEpoch: number): CpuSubmitProbe => ({
@@ -124,6 +124,27 @@ describe("cpuStartLimits / cpuStartMemMb (the sliders' no-queue end)", () => {
     const s = snapOf([node("a", 32, "SINGLE", 100_000), node("b", 200, "SINGLE", 1_000_000)]);
     expect(cpuStartMemMb(s, "SINGLE", 32)).toBe(1_443_224);    // node a: 224 cores free
     expect(cpuStartMemMb(s, "SINGLE", 230)).toBe(0);           // no node has 230 free
+  });
+
+  it("without -N an explicit --mem spreads too, and must fit every node used", () => {
+    // 16 free cores on each; 100 000 MB and 300 000 MB free
+    const two = snapOf([
+      { ...node("a", 240, "SMALL", 1_443_224), partitions: ["SMALL"] },
+      { ...node("b", 240, "SMALL", 1_243_224), partitions: ["SMALL"] },
+    ]);
+    expect(cpuStartMemMb(two, "SMALL", 24)).toBe(100_000);     // both nodes needed: the smaller free memory
+    expect(cpuStartMemMb(two, "SMALL", 16)).toBe(300_000);     // node b alone holds 16
+    expect(liveCpuStart(two, "SMALL", { cores: 24, memMb: 100_000 })).toBe("now");
+    expect(liveCpuStart(two, "SMALL", { cores: 24, memMb: 100_001 })).toBe("queued");
+    expect(cpuStartLimits(two, "SMALL", { memMb: 100_000 })!.maxCores).toBe(32);
+    expect(cpuStartLimits(two, "SMALL", { memMb: 200_000 })!.maxCores).toBe(16);
+  });
+
+  it("knows when the default request has no single node to sit on", () => {
+    const two = snapOf([{ ...node("a", 240), partitions: ["SMALL"] }, { ...node("b", 240), partitions: ["SMALL"] }]);
+    expect(cpuDefaultSpreads(two, "SMALL", 24)).toBe(true);
+    expect(cpuDefaultSpreads(two, "SMALL", 16)).toBe(false);
+    expect(cpuDefaultSpreads(snapOf([node("c", 240)]), "SINGLE", 24)).toBe(false);   // single-node partition
   });
 
   it("reports a full group cap apart from the size limit", () => {

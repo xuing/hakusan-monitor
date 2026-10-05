@@ -12,6 +12,9 @@ export interface PartitionTableRow {
   hi: number;
   /** most of it that starts now; below `lo` = none */
   now: number;
+  /** false: the row's command is refused as it stands — a plain bar, no
+   *  starts-now / queues split */
+  judged?: boolean;
   wall: string;
   perUser?: number;
   verdict: { tone: Tone; label: string } | null;
@@ -30,7 +33,7 @@ export interface PartitionAxis {
 
 // columns follow the table's own width (it sits in half-width cards too):
 // the time column from @md, the per-user column from @2xl
-const GRID = "grid grid-cols-[5.25rem_minmax(0,1fr)_5.5rem] items-center gap-x-3 px-3 @md:grid-cols-[5.5rem_minmax(0,1fr)_6.5rem_5.5rem] @2xl:grid-cols-[5.75rem_minmax(0,1fr)_6.5rem_2.5rem_5.5rem]";
+const GRID = "grid grid-cols-[5.25rem_minmax(0,1fr)_5.5rem] items-center gap-x-3 px-3 @md:grid-cols-[5.5rem_minmax(0,1fr)_6.5rem_5.5rem] @2xl:grid-cols-[5.75rem_minmax(0,1fr)_6.5rem_3.75rem_5.5rem]";
 
 /** Partitions side by side on one axis: each row's bar is what a job there
  *  may ask for, its green part what starts now. Clicking a row picks it. */
@@ -95,7 +98,8 @@ export function PartitionTable({
       {rows.map((r) => {
         const a = r.lo <= axis.min ? 0 : pos(r.lo);
         const b = pos(r.hi);
-        const g = r.now >= r.lo ? pos(Math.min(r.now, r.hi)) : a;
+        const judged = r.judged !== false;
+        const g = judged && r.now >= r.lo ? pos(Math.min(r.now, r.hi)) : a;
         const labelAfter = a < 0.12;
         return (
           <button
@@ -125,7 +129,7 @@ export function PartitionTable({
               } : undefined}
             >
               <span
-                className="absolute top-1/2 h-2 -translate-y-1/2 rounded-full bg-warn/45"
+                className={cn("absolute top-1/2 h-2 -translate-y-1/2 rounded-full", judged ? "bg-warn/45" : "bg-muted-foreground/20")}
                 style={{ left: `${a * 100}%`, width: `max(0.5rem, ${(b - a) * 100}%)` }}
               />
               {g > a && (
@@ -146,7 +150,7 @@ export function PartitionTable({
                 <span
                   className={cn(
                     "absolute top-1/2 h-3.5 w-[3px] -translate-x-1/2 -translate-y-1/2 rounded-full ring-2 ring-info-soft",
-                    r.marker > r.now ? "bg-warn" : "bg-primary",
+                    !judged ? "bg-muted-foreground" : r.marker > r.now ? "bg-warn" : "bg-primary",
                   )}
                   style={{ left: `${pos(r.marker) * 100}%` }}
                 />

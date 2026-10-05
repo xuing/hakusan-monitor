@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { Lock } from "lucide-react";
+import { Info, Lock } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 
@@ -8,11 +8,42 @@ export interface SliderTick {
   label: string;
 }
 
+/** A request field's name: the name itself, then the Slurm flag it sets and
+ *  any qualifier ("per node") in the secondary style, then extras (🔗). */
+export function FieldLabel({ label, flag, qualifier, children }: {
+  label: ReactNode;
+  flag?: string;
+  qualifier?: ReactNode;
+  children?: ReactNode;
+}) {
+  return (
+    <span className="inline-flex min-w-0 items-center gap-1.5 whitespace-nowrap">
+      <span className="text-sm font-medium text-foreground">{label}</span>
+      {flag && <code className="font-mono text-xs text-muted-foreground">{flag}</code>}
+      {qualifier && <span className="text-xs text-muted-foreground">{qualifier}</span>}
+      {children}
+    </span>
+  );
+}
+
+/** A field's explanatory note: secondary text behind an info mark, so it
+ *  never reads as a label or a warning. */
+export function FieldNote({ children, className }: { children: ReactNode; className?: string }) {
+  return (
+    <span className={cn("inline-flex min-w-0 items-start gap-1 text-xs leading-snug text-muted-foreground", className)}>
+      <Info aria-hidden className="mt-0.5 h-3 w-3 shrink-0 opacity-70" />
+      <span className="min-w-0">{children}</span>
+    </span>
+  );
+}
+
 /**
- * One request parameter: label + value box on top, a track whose green part
- * is "starts now" (from `min` to `green`), the scale's ticks, and an optional
- * hint line. The thumb turns amber past the green part, the moment the
- * request starts queueing.
+ * One request parameter: label + value box on top, a track, the scale's
+ * ticks, and an optional hint line. With the other fields as they are, the
+ * green part (`min`…`green`) starts now and the amber rest is allowed but
+ * queues; `green` below `min` paints all of it amber. No `green` = not
+ * judged (no live data, or a command that is refused): a plain track. The
+ * thumb turns amber past the green part, the moment the request queues.
  *
  * Dragging goes through a transparent native range input laid over the
  * drawn track (keyboard and screen readers keep working); values snap to
@@ -21,6 +52,9 @@ export interface SliderTick {
  */
 export function RangeSlider({
   label,
+  flag,
+  qualifier,
+  labelExtra,
   min,
   max,
   value,
@@ -37,8 +71,15 @@ export function RangeSlider({
   ariaLabel,
   locked,
   tip,
+  thumb = true,
 }: {
   label: ReactNode;
+  /** the Slurm flag the field sets ("--mem", "-t") */
+  flag?: string;
+  /** "per node" and the like */
+  qualifier?: ReactNode;
+  /** controls after the label (the 🔗 toggle) */
+  labelExtra?: ReactNode;
   min: number;
   max: number;
   value: number;
@@ -59,6 +100,9 @@ export function RangeSlider({
   locked?: ReactNode;
   /** a hover note on an editable slider */
   tip?: ReactNode;
+  /** false: the field has no single value on this scale right now (the
+   *  track still sets one) */
+  thumb?: boolean;
 }) {
   const span = Math.max(max - min, 1e-9);
   const logSpan = Math.log(Math.max(max, 1e-9) / Math.max(min, 1e-9)) || 1;
@@ -91,10 +135,10 @@ export function RangeSlider({
   const body = (
     <div className={cn("flex min-w-0 flex-col gap-1.5", locked && "cursor-not-allowed rounded-md outline-none focus-visible:ring-2 focus-visible:ring-primary/45")} tabIndex={locked ? 0 : undefined}>
       <div className="flex items-center justify-between gap-2">
-        <span className="inline-flex items-center gap-1 text-xs text-foreground/80">
-          {label}
+        <FieldLabel label={label} flag={flag} qualifier={qualifier}>
+          {labelExtra}
           {locked && <Lock aria-hidden className="h-3 w-3 text-muted-foreground" />}
-        </span>
+        </FieldLabel>
         {valueBox}
       </div>
       <div className="relative h-5">
@@ -121,14 +165,16 @@ export function RangeSlider({
           disabled={Boolean(locked)}
           className={cn("peer absolute inset-0 z-10 h-full w-full opacity-0", locked ? "pointer-events-none" : "cursor-pointer")}
         />
-        <div
-          className={cn(
-            "pointer-events-none absolute top-1/2 h-4 w-4 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 bg-background shadow-sm transition-colors",
-            "peer-focus-visible:ring-2 peer-focus-visible:ring-primary/45",
-            locked ? "border-muted-foreground/45" : queued ? "border-warn" : "border-primary",
-          )}
-          style={{ left: `${valuePos * 100}%` }}
-        />
+        {thumb && (
+          <div
+            className={cn(
+              "pointer-events-none absolute top-1/2 h-4 w-4 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 bg-background shadow-sm transition-colors",
+              "peer-focus-visible:ring-2 peer-focus-visible:ring-primary/45",
+              locked ? "border-muted-foreground/45" : queued ? "border-warn" : "border-primary",
+            )}
+            style={{ left: `${valuePos * 100}%` }}
+          />
+        )}
       </div>
       <div className="relative h-4 font-mono text-xs text-muted-foreground">
         {placed.map((tk, i) => (

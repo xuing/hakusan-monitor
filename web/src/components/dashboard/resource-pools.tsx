@@ -3,7 +3,7 @@ import { Link } from "react-router";
 import { ChevronRight, Link2, Link2Off } from "lucide-react";
 import { CopyButton } from "@/components/common/copy-button";
 import { dayClockLabel, GpuReleaseHint } from "@/components/common/gpu-release-hint";
-import { RangeSlider, SliderValueFixed, SliderValueInput, type SliderTick } from "@/components/common/range-slider";
+import { FieldLabel, FieldNote, RangeSlider, SliderValueFixed, SliderValueInput, type SliderTick } from "@/components/common/range-slider";
 import { Segmented } from "@/components/common/segmented";
 import { Tag } from "@/components/common/tag";
 import { UnitBlocks } from "@/components/common/unit-blocks";
@@ -46,7 +46,7 @@ import {
 } from "@/lib/gpu-fit";
 import { allowsMultiNode, wallLabelSec, defaultRequestSec, interactiveForcedLabel, interactiveForcedSec, isMaterialsStudioPartition, matchPool, minutesToSlurmTime, partitionCap, partitionDefaultRequest, partitionDefaults, partitionPolicy, type PartitionPolicy, type Tone } from "@/lib/slurm";
 import { cn } from "@/lib/utils";
-import { cpuProbeRows, cpuStartLimits, cpuStartMemMb, liveCpuStart, type CpuProbeRow } from "@/lib/cpu-probes";
+import { cpuDefaultSpreads, cpuProbeRows, cpuStartLimits, cpuStartMemMb, liveCpuStart, type CpuProbeRow } from "@/lib/cpu-probes";
 import { buildRequestCommand, shouldShowGapShell } from "@/lib/request-command";
 import { gpuLayouts, type GpuLayout, type GpuNodeShape } from "@/lib/gpu-layout";
 import { requestLimits, type PoolShape } from "@/lib/request-limits";
@@ -564,29 +564,63 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
   const memShownMb = memValue ? parsedMemMb : defMemMb;
   const coreMin = cap.minCores ?? 1;
   const coreMax = Math.max(coreMin, cap.maxCores ?? poolCoresPerNode(pool));
-  // judged for the shape the command carries: its -N and any explicit --mem
-  const cpuLimits = snap && !isGpu ? cpuStartLimits(snap, partition, { nodes: nodeCount, memMb: memOverrideMb }) : null;
-  // no green part while the group cap is full: that blocks every size alike,
-  // and its own sentence says so under the command
-  const coreGreen = cpuLimits && !cpuLimits.groupFull ? cpuLimits.maxCores : undefined;
   const setCoreCount = (v: number) => setCores(v === defCores && !nodeCount ? "" : String(v));
-  const coreHint = coreGreen !== undefined && coresNow > coreGreen
-    ? coreGreen >= coreMin
-      ? (
-          <>
-            {t(cpuLimits?.spread ? "pool.hintCoresOverMulti" : "pool.hintCoresOverSingle", { n: coreGreen })}
-            <HintAction label={t("pool.useCores", { n: coreGreen })} onClick={() => setCoreCount(coreGreen)} />
-          </>
-        )
-      : t("pool.hintCoresNone", { n: coreMin })
+
+  // -L decides first: no license where one is required, or a default name
+  // the cluster lacks, is refused at submit; a used-up license queues
+  const licenseRejected = (licPlan.kind === "required" && !license) || licPlan.kind === "missing";
+  const licenseQueued = licenseBusy(licPlan);
+  // a probe rejection applies only while the command is the probed one
+  const probeRejected = Boolean(selectedCpuRow && !licPlan.flag && selectedCpuRow.state === "failed");
+
+  // ---- what starts now, per slider -----------------------------------------
+  // One rule for every track, with the other fields held as they are: green
+  // = the values that start now, amber = the values the partition allows
+  // that queue. A plain track = locked, or nothing to judge (no live data, a
+  // command the cluster refuses). A cause no value of a slider fixes (the
+  // group cap, a used-up license, no free GPU or cores at all) paints every
+  // track amber and is said once, under the command; a cause a slider's own
+  // value creates is said under that slider, with the value that fixes it.
+  const judged = Boolean(snap) && !licenseRejected && !probeRejected;
+  const blockedAll = groupLimitReached || licenseQueued;
+  // the walltime the verdict judges (the pinned one for salloc)
+  const verdictSec = forcedSec ?? parseWalltimeSec(ptyActive ? ptyTime : timeSel);
+  // GPU: the request's own verdict at another --mem or walltime, so a zone
+  // ends exactly where the verdict pill flips
+  const gpuToneAt = (memMb: number, timeSec: number) => {
+    if (!snap || !gpuFit) return null;
+    const fit = memMb > 0 ? gpuFitWithMemOverride(gpuFit, memMb) : gpuFit;
+    return requestQueueHint({
+      part: selectedPart, policy, groupRunning, nodeCount, coreCount, multiNode: multiNodePolicy, isGpu,
+      poolFree: poolCapacity(snap, pool.id),
+      queueFact: poolQueueFact(snap.jobs, snap.part_pool, pool.id, isGpu, pool, fit.schedulable),
+      gpuFit: fit, pendingActive, userTimeSec: timeSec, t,
+    })?.tone ?? null;
+  };
+
+  // cores: the most that start now for the -N and --mem as set
+  const cpuLimits = judged && !isGpu ? cpuStartLimits(snap!, partition, { nodes: nodeCount, memMb: memOverrideMb }) : null;
+  const coreGreen = !cpuLimits ? undefined : blockedAll ? 0 : cpuLimits.maxCores;
+  const coreHint = coreGreen !== undefined && coreGreen >= coreMin && coresNow > coreGreen
+    ? (
+        <>
+          {t(cpuLimits?.spread ? "pool.hintCoresOverMulti" : "pool.hintCoresOverSingle", { n: coreGreen })}
+          <HintAction label={t("pool.useCores", { n: coreGreen })} onClick={() => setCoreCount(coreGreen)} />
+        </>
+      )
+    : null;
+  // not even the smallest request fits: a pool-wide fact, said under the command
+  const coreNoneReason = coreGreen === 0 && !blockedAll
+    ? nodeCount ? t("pool.hintNodesNone", { n: nodeCount }) : t("pool.hintCoresNone", { n: coreMin })
     : null;
 
+  // GPUs: one when the single-GPU request as set (its --mem, its walltime)
+  // starts, more when a multi-GPU layout finds its nodes
   const gpuCounts = [...new Set(layouts.map((l) => l.gpus))].sort((a, b) => a - b);
   const gpuCount = layout?.gpus ?? 1;
   const showGpuSlider = isGpu && gpuCounts.length > 1;
-  const defaultSummary = snap ? partitionRequestSummary(pool, snap, partition, isGpu, pendingActive, nowMs, t, optionVerdictSec) : null;
-  const gpuGreen = isGpu && snap && !groupLimitReached
-    ? gpuStartCount(layouts, snap, pool, gpuShape, memPerCore, defaultSummary, t)
+  const gpuGreen = isGpu && judged
+    ? blockedAll ? 0 : gpuStartCount(layouts, snap!, pool, gpuShape, memPerCore, queueHint?.tone === "ok", t)
     : undefined;
   const layoutStarts = (l: GpuLayout) => Boolean(snap) && multiGpuQueueHint(l, snap!, pool, gpuShape, memPerCore, t).tone === "ok";
   const setGpuCount = (n: number) => {
@@ -600,62 +634,73 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
     const l = options.find(layoutStarts) ?? options[0];
     if (l) setGpuKey(l.key);
   };
-  const gpuHint = isGpu && gpuGreen !== undefined && gpuCount > gpuGreen
-    ? gpuGreen === 0
-      ? (pool.gpu?.next_free
-          ? t("pool.hintGpuNoneNext", { gpu: pool.gpu.label, when: dayClockLabel(pool.gpu.next_free.at, t), n: Math.max(1, pool.gpu.next_free.gpus ?? 1) })
-          : t("pool.hintGpuNone", { gpu: pool.gpu?.label ?? "GPU" }))
-      : (
-          <>
-            {t("pool.hintGpuOver", { n: gpuGreen })}
-            <HintAction label={t("pool.useGpus", { n: gpuGreen })} onClick={() => setGpuCount(gpuGreen)} />
-          </>
-        )
-    : null;
-  const countLayouts = layouts.filter((l) => l.gpus === gpuCount && l.gpus > 1);
-  // the count fits now, just not with the placement picked
-  const startingAlt = multiGpu && layout && !groupLimitReached && !layoutStarts(layout)
-    ? countLayouts.find((l) => l.key !== layout.key && layoutStarts(l)) ?? null
-    : null;
-
-  // memory that still starts now: CPU — the free memory on a node that holds
-  // the cores (none while the cores alone queue: their sentence covers it);
-  // GPU — the bypass value when the default memory strands a free GPU, else
-  // the most free memory on a fitting node no queued job claims first
-  const clearFitMemMb = gpuFit
-    ? Math.max(0, ...gpuFit.fitNodes
-        .filter((row) => !slotBlocked(slotContention(row, pendingActive, nowMs), requestSec))
-        .map((row) => row.freeMemMb))
-    : 0;
-  const memGreenMb = !snap || groupLimitReached
-    ? undefined
-    : isGpu
-      ? gpuTip
-        ? parseMemoryInputMb(gpuTip.mem)
-        : clearFitMemMb || undefined
-      : coreGreen !== undefined && coresNow > coreGreen
-        ? undefined
-        // 0 = no single node holds the cores (a spread request): per-node
-        // memory has no one answer there, so no zone at all
-        : cpuStartMemMb(snap, partition, coresNow, nodeCount) || undefined;
-  const memFix = gpuTip ? gpuTip.mem : memGreenMb ? fmtGb(memGreenMb) : "";
-  const memHint = memGreenMb !== undefined && memGreenMb >= 1024 && memShownMb > memGreenMb
+  const gpuHint = gpuGreen !== undefined && gpuGreen >= 1 && gpuCount > gpuGreen
     ? (
         <>
-          {isGpu
-            ? gpuTip
-              ? t("pool.hintMemOverGpuNode", { mem: fmtGb(memGreenMb), node: gpuTip.node })
-              : t("pool.hintMemOverGpu", { mem: fmtGb(memGreenMb) })
-            : t("pool.hintMemOverCpu", { mem: fmtGb(memGreenMb), cores: perNodeCores })}
-          {memFix && <HintAction label={t("pool.useMem", { mem: memFix })} onClick={() => setMem(memFix)} />}
+          {t("pool.hintGpuOver", { n: gpuGreen })}
+          <HintAction label={t("pool.useGpus", { n: gpuGreen })} onClick={() => setGpuCount(gpuGreen)} />
         </>
       )
     : null;
+  const gpuNoneReason = gpuGreen === 0 && !blockedAll
+    ? pool.gpu?.next_free
+      ? t("pool.hintGpuNoneNext", { gpu: pool.gpu.label, when: dayClockLabel(pool.gpu.next_free.at, t), n: Math.max(1, pool.gpu.next_free.gpus ?? 1) })
+      : t("pool.hintGpuNone", { gpu: pool.gpu?.label ?? "GPU" })
+    : null;
+  const countLayouts = layouts.filter((l) => l.gpus === gpuCount && l.gpus > 1);
+  // the count fits now, just not with the placement picked
+  const startingAlt = multiGpu && layout && judged && !blockedAll && !layoutStarts(layout)
+    ? countLayouts.find((l) => l.key !== layout.key && layoutStarts(l)) ?? null
+    : null;
+
+  // memory: a multi-GPU layout sets the per-node memory itself (locked)
+  const layoutMemMb = multiGpu && layout ? layout.coresPerGpu * layout.gpusPerNode * memPerCore : 0;
+  // CPU, no -N and no --mem on a multi-node partition, and no node holds
+  // all the cores: each node gets DefMemPerCPU x its share — no one value
+  const memSpreadLinked = Boolean(judged && !isGpu && !memValue && !nodeCount && cpuDefaultSpreads(snap!, partition, coresNow));
+  // CPU: the exact --mem where liveCpuStart flips for the cores and -N as
+  // set; GPU: the request's own verdict searched over whole GiB
+  const memSearchMb = !judged || layoutMemMb > 0 || !effMemGb
+    ? undefined
+    : blockedAll
+      ? 0
+      : isGpu
+        ? largestPassing(1, effMemGb, (gb) => gpuToneAt(gb * 1024, verdictSec) === "ok") * 1024
+        : cpuStartMemMb(snap!, partition, coresNow, nodeCount);
+  // the default point agrees with the verdict pill (GPU's own default
+  // memory can sit between two whole GiB)
+  const memGreenMb = isGpu && memSearchMb !== undefined && !blockedAll && !memValue
+    ? queueHint?.tone === "ok" ? Math.max(memSearchMb, defMemMb) : Math.min(memSearchMb, Math.max(0, defMemMb - 1))
+    : memSearchMb;
+  // the stranded node the --mem bypass names, when it is that node's memory
+  const memNode = gpuTip && memGreenMb !== undefined
+    && gpuFit?.stranded.some((r) => r.node.name === gpuTip.node && Math.floor(r.freeMemMb / 1024) === Math.floor(memGreenMb / 1024))
+    ? gpuTip.node
+    : "";
+  // without -N the cores may land on several nodes, each needing the --mem
+  const memSpreads = !isGpu && judged && !nodeCount && memGreenMb !== undefined
+    && memGreenMb > cpuStartMemMb(snap!, partition, coresNow, 1);
+  const memFix = memGreenMb !== undefined && memGreenMb >= 1024 ? fmtGb(memGreenMb) : "";
+  const memHint = memFix && !memSpreadLinked && memShownMb > memGreenMb!
+    ? (
+        <>
+          {isGpu
+            ? memNode
+              ? t("pool.hintMemOverGpuNode", { mem: memFix, node: memNode })
+              : t("pool.hintMemOverGpu", { mem: memFix })
+            : memSpreads
+              ? t("pool.hintMemOverSpread", { mem: memFix, cores: coresNow })
+              : t("pool.hintMemOverCpu", { mem: memFix, cores: perNodeCores })}
+          <HintAction label={t("pool.useMem", { mem: memFix })} onClick={() => setMem(memFix)} />
+        </>
+      )
+    : null;
+  // the default as a value box shows it: rounded, but never past the ceiling
+  // (GPU-1: 26 x 9845 MB = 249.97G under a 249G limit)
+  const defMemLabel = fmtGbNear(effMemGb ? Math.min(defMemMb, effMemGb * 1024) : defMemMb);
   // only the default point itself means "no --mem": any other position is an
   // explicit request (4 x 6000M rounds to 23G, but 23G is less than it asks)
   const setMemGb = (gb: number) => setMem(Math.abs(gb * 1024 - defMemMb) < 1 ? "" : `${Math.round(gb)}G`);
-  // a multi-GPU layout sets the per-node memory itself
-  const layoutMemMb = multiGpu && layout ? layout.coresPerGpu * layout.gpusPerNode * memPerCore : 0;
 
   // -t: shown always; locked where the plugin pins the interactive walltime
   const timeLocked = forcedSec !== null;
@@ -664,18 +709,29 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
   const timeMin = Math.min(600, timeMax);
   const timeDefaultSec = timeLocked ? (forcedSec ?? timeMax) : ptyActive && pinnedSec ? pinnedSec : wallSec;
   const timeShownSec = timeLocked ? timeDefaultSec : timeSel ? parseWalltimeSec(timeSel) : timeDefaultSec;
-  // a backfill gap is green only once the memory it also needs is met
-  const bfMemOk = !bfTip?.mem || memShownMb <= parseMemoryInputMb(bfTip.mem);
-  const timeGreenSec = isGpu && bfTip && bfVariant === "script" && bfMemOk ? bfWindowSec : undefined;
+  // the longest walltime that still starts now: one GPU — the verdict
+  // searched over whole minutes (a backfill gap ends it); a CPU or
+  // multi-GPU start does not depend on it
+  const timeGreenSec = !judged || !showTimeSlider
+    ? undefined
+    : blockedAll
+      ? 0
+      : isGpu && !multiGpu
+        ? largestPassing(Math.ceil(timeMin / 60), Math.floor(timeMax / 60), (m) => gpuToneAt(memOverrideMb, m * 60) === "ok") * 60
+        : (isGpu ? layoutHint?.tone : cpuOverrideState === "now" ? "ok" : null) === "ok" ? timeMax : 0;
   const setTimeSec = (sec: number) => {
     setTimeText("");
     // only the default point itself means "no -t"
     setTime(Math.abs(sec - timeDefaultSec) < 1 ? "" : minutesToSlurmTime(Math.max(1, Math.round(sec / 60))));
   };
-  const timeHint = timeGreenSec !== undefined && bfTip && timeShownSec > timeGreenSec
+  // salloc's pinned walltime is not the user's value: the backfill tip
+  // (a gap shell) is the fix there, not this hint
+  const timeHint = !timeLocked && timeGreenSec !== undefined && timeGreenSec >= timeMin && timeShownSec > timeGreenSec
     ? (
         <>
-          {t("pool.hintTimeOver", { t: fmtDur(timeGreenSec), node: bfTip.node, until: clockShort(bfTip.untilMs) })}
+          {bfTip
+            ? t("pool.hintTimeOver", { t: fmtDur(timeGreenSec), node: bfTip.node, until: clockShort(bfTip.untilMs) })
+            : t("pool.hintTimeOverPlain", { t: fmtDur(timeGreenSec) })}
           <HintAction label={t("pool.useTime", { t: fmtDur(timeGreenSec) })} onClick={() => setTimeSec(timeGreenSec)} />
         </>
       )
@@ -696,23 +752,19 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
         : null
     : null;
 
-  // a probe rejection applies only while the command is the probed one
-  const probeRejected = Boolean(selectedCpuRow && !licPlan.flag && selectedCpuRow.state === "failed");
   const baseVerdict = probeRejected
     ? { tone: cpuProbeTone("failed"), label: cpuProbeLabel("failed", t) }
     : shownHint
       ? { tone: shownHint.tone, label: shownHint.label }
       : null;
-  // -L decides first: no license where one is required, or a default name
-  // the cluster lacks, is refused at submit; a used-up license queues
-  const licenseRejected = (licPlan.kind === "required" && !license) || licPlan.kind === "missing";
-  const licenseQueued = licenseBusy(licPlan);
   const verdict = licenseRejected
     ? { tone: "bad" as const, label: t("pool.verdictRejected") }
     : licenseQueued && baseVerdict?.tone === "ok"
       ? { tone: "warn" as const, label: t("pool.queueHintWillQueue") }
       : baseVerdict;
-  const sliderHintShown = Boolean(coreHint || memHint || timeHint || startingAlt || (showGpuSlider && gpuHint));
+  const sliderHintShown = Boolean(coreHint || memHint || timeHint || startingAlt || gpuHint);
+  // the backfill box below the command carries its own reason and fix
+  const bfTipShown = Boolean(bfTip && bfVariant && (bfVariant !== "script" || bfTip.mem));
   // a reason no slider owns goes under the command
   const commandReason = licPlan.kind === "required" && !license
     ? t("pool.licenseRequired", { p: partition })
@@ -721,12 +773,10 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
       : licenseQueued && licPlan.license
         ? t("pool.licenseBusy", { name: licPlan.license.name, used: licPlan.license.used, total: licPlan.license.total })
         : groupLimitReached && policy.grpJobs
-    ? t("pool.groupFullReason", { p: partition, n: groupRunning, max: policy.grpJobs })
-    : !sliderHintShown && isGpu && !showGpuSlider && gpuHint
-      ? gpuHint
-      : !sliderHintShown && verdict?.tone === "warn" && shownHint?.detail && !showGpuFitDetails
-        ? shownHint.detail
-        : null;
+          ? t("pool.groupFullReason", { p: partition, n: groupRunning, max: policy.grpJobs })
+          : verdict?.tone !== "warn" || sliderHintShown || bfTipShown
+            ? null
+            : gpuNoneReason ?? coreNoneReason ?? (shownHint?.detail && !showGpuFitDetails ? shownHint.detail : null);
   const probeFailed = probeRejected && selectedCpuRow ? cpuProbeDetail(selectedCpuRow, "failed", t) : "";
 
   // ---- the partition table -------------------------------------------------
@@ -743,10 +793,12 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
       const summary = snap ? partitionRequestSummary(pool, snap, p, true, pendingActive, nowMs, t, optionVerdictSec) : null;
       const pLayouts = layoutFor(p).layouts;
       const hi = Math.max(1, ...pLayouts.map((l) => l.gpus));
-      const now = snap && !fullP ? gpuStartCount(pLayouts, snap, pool, gpuShape, partitionDefaults(p, snap.policy).def_mem_per_cpu_mb ?? 0, summary, t) : 0;
+      const now = snap && !fullP
+        ? gpuStartCount(pLayouts, snap, pool, gpuShape, partitionDefaults(p, snap.policy).def_mem_per_cpu_mb ?? 0, summary?.hint?.tone === "ok", t)
+        : 0;
       return {
         name: p, title: desc, lo: 1, hi, now, wall, perUser: policyP.maxJobsPerUser,
-        verdict: partitionOptionVerdict(summary, t),
+        verdict: partitionOptionVerdict(summary, t), judged: Boolean(snap),
         selected: p === partition, marker: p === partition ? gpuCount : undefined,
       };
     }
@@ -764,10 +816,13 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
         : licenseBusy(planP) && state === "now"
           ? { tone: "warn" as const, label: t("pool.queueHintWillQueue") }
           : { tone: cpuProbeTone(state), label: cpuProbeLabel(state, t) };
+    // the same rule as the sliders: a refused command is not judged, a
+    // full group or a used-up license starts nothing
+    const refused = planP.kind === "required" || planP.kind === "missing" || state === "failed";
     return {
       name: p, title: desc, lo, hi: Math.max(lo, capP.maxCores ?? poolCoresPerNode(pool)),
-      now: lim && !lim.groupFull ? lim.maxCores : 0, wall, perUser: policyP.maxJobsPerUser,
-      verdict: rowVerdict,
+      now: lim && !lim.groupFull && !licenseBusy(planP) ? lim.maxCores : 0, wall, perUser: policyP.maxJobsPerUser,
+      verdict: rowVerdict, judged: Boolean(lim) && !refused,
       selected: p === partition, marker: p === partition ? coresNow : undefined,
     };
   };
@@ -879,6 +934,7 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
                   <div className="flex min-w-0 flex-col gap-2">
                     <RangeSlider
                       label={t("pool.gpuSlider")}
+                      flag="--gres"
                       ariaLabel={t("pool.gpuSlider")}
                       min={1}
                       max={Math.max(2, gpuCounts[gpuCounts.length - 1] ?? 1)}
@@ -926,6 +982,7 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
               ) : (
                 <RangeSlider
                   label={t("pool.cores")}
+                  flag={multiNodePolicy ? "-n" : "-c"}
                   ariaLabel={t("pool.cores")}
                   min={coreMin}
                   max={coreMax}
@@ -949,7 +1006,9 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
 
               {layoutMemMb > 0 && effMemGb ? (
                 <RangeSlider
-                  label={<>{t("kpi.memory")} <span className="text-muted-foreground">{t("pool.memPerNode")}</span></>}
+                  label={t("kpi.memory")}
+                  flag="--mem"
+                  qualifier={t("pool.perNode")}
                   ariaLabel={t("kpi.memory")}
                   min={1}
                   max={effMemGb}
@@ -961,35 +1020,35 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
                 />
               ) : effMemGb ? (
                 <RangeSlider
-                  label={(
-                    <>
-                      {t("kpi.memory")} <span className="text-muted-foreground">{t("pool.memPerNode")}</span>
-                      {!isGpu && memPerCore > 0 && (
-                        <MemLinkToggle
-                          linked={!memValue}
-                          per={fmtMemRaw(memPerCore)}
-                          onToggle={() => setMem(memValue ? "" : fmtGbNear(defMemMb))}
-                          t={t}
-                        />
-                      )}
-                    </>
+                  label={t("kpi.memory")}
+                  flag="--mem"
+                  qualifier={t("pool.perNode")}
+                  labelExtra={!isGpu && memPerCore > 0 && (
+                    <MemLinkToggle
+                      linked={!memValue}
+                      per={fmtMemRaw(memPerCore)}
+                      onToggle={() => setMem(memValue ? "" : defMemLabel)}
+                      t={t}
+                    />
                   )}
                   ariaLabel={t("kpi.memory")}
                   min={1}
                   max={effMemGb}
                   value={Math.min(effMemGb, Math.max(1, memShownMb / 1024))}
                   onChange={setMemGb}
-                  snaps={[defMemMb / 1024, ...(memGreenMb ? [Math.floor(memGreenMb / 1024)] : [])]}
-                  green={memGreenMb !== undefined ? (memGreenMb >= 1024 ? Math.floor(memGreenMb / 1024) : 0) : undefined}
-                  greenLabel={memGreenMb !== undefined && memGreenMb > 1024 && memGreenMb / 1024 < effMemGb ? fmtGb(memGreenMb) : undefined}
+                  snaps={[...(memSpreadLinked ? [] : [defMemMb / 1024]), ...(memGreenMb && memGreenMb >= 1024 ? [Math.floor(memGreenMb / 1024)] : [])]}
+                  green={memGreenMb !== undefined ? memGreenMb / 1024 : undefined}
+                  greenLabel={memGreenMb !== undefined && memGreenMb >= 1024 && memGreenMb / 1024 < effMemGb ? fmtGb(memGreenMb) : undefined}
                   ticks={[{ value: 1, label: "1G" }, { value: effMemGb, label: `${effMemGb}G` }]}
+                  thumb={!memSpreadLinked}
+                  tip={memSpreadLinked ? t("pool.memSpreadTip", { per: fmtMemRaw(memPerCore) }) : undefined}
                   valueBox={(
                     <SliderValueInput
                       value={mem}
-                      placeholder={fmtGbNear(defMemMb) || t("pool.default")}
+                      placeholder={memSpreadLinked ? t("pool.memPerCoreShort", { per: fmtMemRaw(memPerCore) }) : defMemLabel || t("pool.default")}
                       ariaLabel={t("kpi.memory")}
                       invalid={Boolean(memError)}
-                      width="w-[4.5rem]"
+                      width={memSpreadLinked ? "w-28" : "w-[4.5rem]"}
                       onChange={setMem}
                     />
                   )}
@@ -999,12 +1058,10 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
               ) : (
                 <div className="flex min-w-0 flex-col gap-1.5">
                   <div className="flex items-center justify-between gap-2">
-                    <span className="text-xs text-foreground/80">
-                      {t("kpi.memory")} <span className="text-muted-foreground">{t("pool.memPerNode")}</span>
-                    </span>
+                    <FieldLabel label={t("kpi.memory")} flag="--mem" qualifier={t("pool.perNode")} />
                     <SliderValueInput
                       value={mem}
-                      placeholder={fmtGbNear(defMemMb) || t("pool.default")}
+                      placeholder={defMemLabel || t("pool.default")}
                       ariaLabel={t("kpi.memory")}
                       invalid={Boolean(memError)}
                       width="w-[4.5rem]"
@@ -1019,7 +1076,8 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
                 // salloc's walltime is pinned: moving it means batch, so
                 // a drag or a typed time switches the mode and keeps the value
                 <RangeSlider
-                  label={<>{t("pool.walltime")} <span className="text-muted-foreground">-t</span></>}
+                  label={t("pool.walltime")}
+                  flag="-t"
                   ariaLabel={t("pool.walltime")}
                   scale="log"
                   min={timeMin}
@@ -1027,7 +1085,9 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
                   value={timeShownSec}
                   onChange={switchToScriptTime}
                   quantize={quantizeWalltime}
-                  snaps={[timeShownSec, ...walltimeTicks(timeMin, timeMax).map((tk) => tk.value)]}
+                  snaps={[timeShownSec, ...(timeGreenSec && timeGreenSec >= timeMin ? [timeGreenSec] : []), ...walltimeTicks(timeMin, timeMax).map((tk) => tk.value)]}
+                  green={timeGreenSec}
+                  greenLabel={timeGreenSec !== undefined && timeGreenSec >= timeMin ? fmtDur(timeGreenSec) : undefined}
                   ticks={walltimeTicks(timeMin, timeMax)}
                   valueBox={(
                     <SliderValueInput
@@ -1046,7 +1106,8 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
                 />
               ) : (
                 <RangeSlider
-                  label={<>{t("pool.walltime")} <span className="text-muted-foreground">-t</span></>}
+                  label={t("pool.walltime")}
+                  flag="-t"
                   ariaLabel={t("pool.walltime")}
                   scale="log"
                   min={timeMin}
@@ -1054,9 +1115,9 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
                   value={Math.min(timeMax, Math.max(timeMin, timeShownSec))}
                   onChange={setTimeSec}
                   quantize={quantizeWalltime}
-                  snaps={[timeDefaultSec, ...(timeGreenSec ? [timeGreenSec] : []), ...walltimeTicks(timeMin, timeMax).map((tk) => tk.value)]}
+                  snaps={[timeDefaultSec, ...(timeGreenSec && timeGreenSec >= timeMin ? [timeGreenSec] : []), ...walltimeTicks(timeMin, timeMax).map((tk) => tk.value)]}
                   green={timeGreenSec}
-                  greenLabel={timeGreenSec ? fmtDur(timeGreenSec) : undefined}
+                  greenLabel={timeGreenSec !== undefined && timeGreenSec >= timeMin ? fmtDur(timeGreenSec) : undefined}
                   ticks={walltimeTicks(timeMin, timeMax)}
                   valueBox={(
                     <SliderValueInput
@@ -1080,12 +1141,12 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
 
             {licPlan.kind === "required" && clusterLicenses.length > 0 && (
               <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 px-3 pb-3 text-xs">
-                <span className="text-foreground/80">{t("pool.licenseField")}</span>
+                <FieldLabel label={t("pool.licenseLabel")} flag="-L" />
                 <div className="subtle-scroll min-w-0 max-w-full overflow-x-auto">
                   <Segmented
                     value={license}
                     onChange={setLicense}
-                    ariaLabel={t("pool.licenseField")}
+                    ariaLabel={t("pool.licenseLabel")}
                     itemClassName="whitespace-nowrap font-mono"
                     options={clusterLicenses.map((l) => ({
                       value: l.name,
@@ -1098,13 +1159,13 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
 
             {!multiGpu && nodeOptions.length > 0 && (
               <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 px-3 pb-3 text-xs">
-                <span className="text-foreground/80">{t("pool.nodesField")}</span>
+                <FieldLabel label={t("pool.nodesLabel")} flag="-N" />
                 {/* scrolls sideways on a phone instead of overflowing the card */}
                 <div className="subtle-scroll min-w-0 max-w-full overflow-x-auto">
                   <Segmented
                     value={nodeCount ? String(nodeCount) : ""}
                     onChange={(v) => setNodes(v)}
-                    ariaLabel={t("pool.nodesField")}
+                    ariaLabel={t("pool.nodesLabel")}
                     itemClassName="min-w-8 justify-center whitespace-nowrap font-mono"
                     options={[
                       { value: "", label: t("pool.nodesAuto") },
@@ -1113,9 +1174,9 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
                   />
                 </div>
                 {/* what -N means here, for the state it is in */}
-                <span className="min-w-0 text-muted-foreground">
-                  {nodeCount ? t("pool.nodeRequestHint") : multiNodeCpuPolicy ? t("pool.multiNodeHint") : ""}
-                </span>
+                {(nodeCount || multiNodeCpuPolicy) && (
+                  <FieldNote>{nodeCount ? t("pool.nodeRequestHint") : t("pool.multiNodeHint")}</FieldNote>
+                )}
               </div>
             )}
 
@@ -1305,11 +1366,11 @@ function CommandVerdict({ tone, label }: { tone: Tone; label: string }) {
 }
 
 /** Most GPUs one job in this partition starts with now: one when the
- *  default request can (or can with less --mem), more when a multi-GPU
- *  layout finds its nodes. */
+ *  single-GPU request starts as it stands (a --mem bypass is not applied
+ *  until someone applies it), more when a multi-GPU layout finds its nodes. */
 function gpuStartCount(layouts: GpuLayout[], snap: Snapshot, pool: Pool, shape: GpuNodeShape, memPerCore: number,
-                       summary: PartitionRequestSummary | null, t: TFn) {
-  const single = summary?.hint?.tone === "ok" || summary?.gpuTip ? 1 : 0;
+                       singleStarts: boolean, t: TFn) {
+  const single = singleStarts ? 1 : 0;
   const multi = layouts
     .filter((l) => l.gpus > 1 && multiGpuQueueHint(l, snap, pool, shape, memPerCore, t).tone === "ok")
     .map((l) => l.gpus);
@@ -1327,6 +1388,20 @@ function layoutPlacementLabel(l: GpuLayout, t: TFn) {
 const fmtGb = (mb: number) => (mb > 0 ? `${Math.floor(mb / 1024)}G` : "");
 /** A default in GiB as the slider shows it (rounded). */
 const fmtGbNear = (mb: number) => (mb > 0 ? `${Math.round(mb / 1024)}G` : "");
+
+/** The largest integer in lo..hi a monotone test still passes (fewer
+ *  resources never hurt); lo - 1 when none does. */
+function largestPassing(lo: number, hi: number, ok: (v: number) => boolean) {
+  if (hi < lo || !ok(lo)) return lo - 1;
+  let a = lo;
+  let b = hi;
+  while (a < b) {
+    const m = Math.ceil((a + b) / 2);
+    if (ok(m)) a = m;
+    else b = m - 1;
+  }
+  return a;
+}
 
 /** Ticks for a linear count axis: the ends plus ~3 round steps between. */
 function linearTicks(lo: number, hi: number): SliderTick[] {
