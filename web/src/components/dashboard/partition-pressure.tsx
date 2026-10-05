@@ -648,7 +648,9 @@ function PartitionRow({
                   {t("pool.cpuProbeNeed", { cores: cpuProbe.cores })}
                 </span>
               )}
-              <span className="min-w-0 truncate text-muted-foreground">{cpuProbeDetail(cpuProbe, probeState, t)}</span>
+              {cpuProbeDetail(cpuProbe, probeState, t) && (
+                <span className="min-w-0 truncate text-muted-foreground">{cpuProbeDetail(cpuProbe, probeState, t)}</span>
+              )}
             </div>
           )}
         </div>

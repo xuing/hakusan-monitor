@@ -126,7 +126,7 @@ export function cpuProbeTone(state: CpuProbeState): Tone {
 export function cpuProbeDetail(row: CpuProbeRow, state: CpuProbeState | null, t: TFn) {
   const probe = row.probe;
   if (!probe) return t("pool.cpuProbeNoData");
-  if (state === "now") return probe.nodes ? t("pool.cpuProbeNodes", { nodes: probe.nodes }) : "";
+  if (state === "now") return "";
   if (state === "queued" && probe.start_time) return t("pool.cpuProbeStart", { time: clockOf(probe.start_time) });
   return truncateProbeRaw(cleanCpuProbeRaw(probe.raw));
 }

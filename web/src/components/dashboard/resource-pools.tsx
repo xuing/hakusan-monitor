@@ -885,6 +885,14 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
               {multiGpu && layout && !layout.packed && (
                 <div className="mt-1 text-xs leading-relaxed text-warn-fg">{t("pool.gpuSpreadWarn")}</div>
               )}
+              {/* each flag's note appears only while the command carries it */}
+              {!multiGpu && coreCount > 0 && (
+                <div className="text-xs leading-relaxed text-muted-foreground">
+                  {multiNodePolicy
+                    ? t("pool.taskFlagMany")
+                    : t("pool.taskFlagOne", { tasks: partDefaults.tasks ?? defCores })}
+                </div>
+              )}
               {(multiGpu || nodeCount > 1) && (
                 <div className="text-xs leading-relaxed text-muted-foreground">
                   {multiGpu
