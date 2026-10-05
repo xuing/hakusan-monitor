@@ -15,13 +15,13 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-WorkingDirectory=%h/temp/hakusan-monitor
+WorkingDirectory=%h/others/hakusan-monitor
 # HM_SSH_HOST (and any overrides) come from the repo .env — see .env.example.
 # The server loads .env at startup; EnvironmentFile keeps systemd in sync too.
-EnvironmentFile=-%h/temp/hakusan-monitor/.env
+EnvironmentFile=-%h/others/hakusan-monitor/.env
 Environment=HM_SOURCE=ssh
 Environment=HM_PORT=8787
-Environment=HM_DB=%h/temp/hakusan-monitor/data/hakusan.sqlite
+Environment=HM_DB=%h/others/hakusan-monitor/data/hakusan.sqlite
 Environment=TZ=Asia/Tokyo
 # SSH auth uses the dedicated passphrase-less key set via HM_SSH_OPTS in .env
 # (see docs/DEPLOY.md "SSH auth") — no ssh-agent needed, so collection keeps

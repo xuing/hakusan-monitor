@@ -41,7 +41,7 @@ Build the static frontend first, then restart the backend so the API and the
 browser bundle switch versions together:
 
 ```bash
-cd ~/temp/hakusan-monitor
+cd ~/others/hakusan-monitor
 (cd web && npm ci && npm run build)
 systemctl --user restart hakusan-monitor
 curl -fsS http://127.0.0.1:8787/api/health
