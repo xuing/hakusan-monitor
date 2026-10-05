@@ -33,3 +33,24 @@ describe("packColumns (A40, 2026-10-05 19:15)", () => {
     expect(grid.flat().map((c) => c?.key)).toEqual(["a", "a", "a", "free"]);
   });
 });
+
+describe("packRects", () => {
+  it("A40: every user a rectangle or a rectangle with a short tail, counts exact", async () => {
+    const { packRects } = await import("./gpu-grid");
+    const users = [7, 6, 5, 5, 4, 4, 3, 2, 2, 1, 1].map((n, i) => ({ key: `u${i}`, n }));
+    const out = packRects(users, 8, 5)!;
+    const count = new Map<string, number>();
+    for (const col of out.grid) for (const c of col) if (c) count.set(c.key, (count.get(c.key) ?? 0) + 1);
+    for (const u of users) expect(count.get(u.key)).toBe(u.n);
+    // the 6 is a 3 x 2 (or 2 x 3) rectangle
+    const b = out.blocks.get("u1")!;
+    expect(b.w * b.h).toBe(6);
+  });
+
+  it("leaves the fillers' cells for free / offline", async () => {
+    const { packRects } = await import("./gpu-grid");
+    const out = packRects([{ key: "a", n: 3 }, { key: "free", n: 1, filler: true }], 2, 2)!;
+    expect(out.grid.flat().filter((c) => c?.key === "free")).toHaveLength(1);
+    expect(out.grid.flat().filter((c) => c?.key === "a")).toHaveLength(3);
+  });
+});

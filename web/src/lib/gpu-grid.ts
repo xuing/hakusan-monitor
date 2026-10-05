@@ -81,3 +81,118 @@ export function packColumns<T extends GridItem>(items: T[], cols: number, rows: 
   }
   return grid;
 }
+
+export interface PlacedBlock {
+  /** the block's main rectangle, in cells */
+  c: number;
+  r: number;
+  w: number;
+  h: number;
+}
+
+/** Shapes for n cells, best first: rectangles nearest square, then a
+ *  rectangle with a horizontal tail (part of one more row under it). Cells
+ *  are [dc, dr] offsets from the shape's top-left cell. */
+function shapesFor(n: number, cols: number, rows: number) {
+  const out: { cells: [number, number][]; main: { w: number; h: number }; score: number }[] = [];
+  for (let h = 1; h <= rows; h++) {
+    if (n % h) continue;
+    const w = n / h;
+    if (w > cols) continue;
+    const cells: [number, number][] = [];
+    for (let r = 0; r < h; r++) for (let c = 0; c < w; c++) cells.push([c, r]);
+    out.push({ cells, main: { w, h }, score: Math.abs(Math.log(w / h)) });
+  }
+  for (let h = 1; h < rows; h++) {
+    for (let w = 2; w <= cols; w++) {
+      const tail = n - w * h;
+      if (tail <= 0 || tail >= w) continue;
+      const cells: [number, number][] = [];
+      for (let r = 0; r < h; r++) for (let c = 0; c < w; c++) cells.push([c, r]);
+      for (let c = 0; c < tail; c++) cells.push([c, h]);
+      out.push({ cells, main: { w, h }, score: 10 + Math.abs(Math.log(w / (h + 1))) });
+    }
+  }
+  return out.sort((a, b) => a.score - b.score);
+}
+
+/**
+ * One cell per unit, each user a rectangle where the counts allow it (else a
+ * rectangle with a short horizontal tail), found by a bounded search that
+ * fills the grid from the top-left; fillers (free, offline) take the cells
+ * the users leave. Falls back to packColumns when the search runs out.
+ */
+export function packRects<T extends GridItem>(items: T[], cols: number, rows: number, budget = 60000):
+  { grid: (T | null)[][]; blocks: Map<string, PlacedBlock> } | null {
+  const users = items.filter((i) => !i.filler && i.n > 0);
+  const fillers = items.filter((i) => i.filler && i.n > 0);
+  const holes = fillers.reduce((a, f) => a + f.n, 0);
+  const owner: (T | null | undefined)[][] = Array.from({ length: cols }, () => Array<T | null | undefined>(rows).fill(undefined));
+  const blocks = new Map<string, PlacedBlock>();
+  const shapes = new Map(users.map((u) => [u.key, shapesFor(u.n, cols, rows)]));
+  const used = new Set<string>();
+  let steps = 0;
+  const firstEmpty = (): [number, number] | null => {
+    for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) if (owner[c][r] === undefined) return [c, r];
+    return null;
+  };
+  const dfs = (holesLeft: number): boolean => {
+    if (++steps > budget) return false;
+    const at = firstEmpty();
+    if (!at) return used.size === users.length;
+    const [c0, r0] = at;
+    for (const u of users) {
+      if (used.has(u.key)) continue;
+      for (const s of shapes.get(u.key)!) {
+        if (!s.cells.every(([dc, dr]) => c0 + dc < cols && r0 + dr < rows && owner[c0 + dc][r0 + dr] === undefined)) continue;
+        for (const [dc, dr] of s.cells) owner[c0 + dc][r0 + dr] = u;
+        used.add(u.key);
+        blocks.set(u.key, { c: c0, r: r0, w: s.main.w, h: s.main.h });
+        if (dfs(holesLeft)) return true;
+        for (const [dc, dr] of s.cells) owner[c0 + dc][r0 + dr] = undefined;
+        used.delete(u.key);
+        blocks.delete(u.key);
+        if (steps > budget) return false;
+      }
+    }
+    // leave this cell to the fillers
+    if (holesLeft > 0) {
+      owner[c0][r0] = null;
+      if (dfs(holesLeft - 1)) return true;
+      owner[c0][r0] = undefined;
+    }
+    return false;
+  };
+  if (!dfs(holes)) {
+    const grid = packColumns(items, cols, rows);
+    if (!grid) return null;
+    // blocks for the column layout: each owner's first full-height run
+    const fb = new Map<string, PlacedBlock>();
+    for (let c = 0; c < cols; c++) for (let r = 0; r < rows; r++) {
+      const it = grid[c][r];
+      if (!it || fb.has(it.key)) continue;
+      let h = 1;
+      while (r + h < rows && grid[c][r + h]?.key === it.key) h += 1;
+      let w = 1;
+      while (c + w < cols && Array.from({ length: h }, (_, k) => grid[c + w][r + k]?.key === it.key).every(Boolean)) w += 1;
+      fb.set(it.key, { c, r, w, h });
+    }
+    return { grid, blocks: fb };
+  }
+  // fillers into the cells left, in reading order
+  const grid: (T | null)[][] = owner.map((col) => col.map((x) => x ?? null));
+  const open: [number, number][] = [];
+  for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) if (grid[c][r] === null) open.push([c, r]);
+  let k = 0;
+  for (const f of fillers) {
+    const start = k;
+    for (let i = 0; i < f.n && k < open.length; i++, k++) grid[open[k][0]][open[k][1]] = f;
+    if (k > start) {
+      const [c, r] = open[start];
+      let w = 1;
+      while (c + w < cols && grid[c + w][r]?.key === f.key) w += 1;
+      blocks.set(f.key, { c, r, w, h: 1 });
+    }
+  }
+  return { grid, blocks };
+}

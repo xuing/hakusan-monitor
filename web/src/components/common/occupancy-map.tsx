@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { gridDims, packColumns } from "@/lib/gpu-grid";
+import { gridDims, packRects } from "@/lib/gpu-grid";
 import { squarify } from "@/lib/treemap";
 import { cn } from "@/lib/utils";
 
@@ -76,64 +76,102 @@ function gridLayout(tiles: OccupancyTile[]) {
   const total = items.reduce((a, t) => a + t.n, 0);
   if (total === 0 || total > 400) return null;
   const [cols, rows] = gridDims(total);
-  const grid = packColumns(items, cols, rows);
-  return grid ? { grid, cols, rows } : null;
+  const packed = packRects(items, cols, rows);
+  return packed ? { ...packed, cols, rows } : null;
 }
 
+/** One cell per GPU in a columns × rows grid; each owner a rectangle where
+ *  the counts allow it, thick gaps between owners, faint lines between one
+ *  owner's cells. The text sits over the block's rectangle and says as much
+ *  as fits: name, count, nodes, then the hover card's lines. */
 function CellGrid({ tiles, ariaLabel, className }: { tiles: OccupancyTile[]; ariaLabel: string; className?: string }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [size, setSize] = useState({ w: 0, h: 0 });
   const [tip, setTip] = useState<{ tile: OccupancyTile; x: number; y: number } | null>(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => setSize({ w: el.clientWidth, h: el.clientHeight }));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
   const layout = gridLayout(tiles);
   if (!layout) return null;
-  const { grid, cols, rows } = layout;
+  const { grid, blocks, cols, rows } = layout;
+  const cw = size.w / cols;
+  const ch = size.h / rows;
   const cells: ReactNode[] = [];
-  const labelled = new Set<string>();
   for (let r = 0; r < rows; r++) {
     for (let c = 0; c < cols; c++) {
       const it = grid[c][r];
       if (!it) continue;
-      const first = !labelled.has(it.key) && (r === 0 || grid[c][r - 1]?.key !== it.key) && (c === 0 || grid[c - 1][r]?.key !== it.key);
-      if (first) labelled.add(it.key);
       const show = (e: { clientX: number; clientY: number }) => setTip({ tile: it, x: e.clientX, y: e.clientY });
       cells.push(
         <div
           key={`${c}-${r}`}
-          tabIndex={first ? 0 : -1}
-          aria-label={first ? [it.label, it.amount, ...it.details].filter(Boolean).join(", ") : undefined}
           onMouseMove={show}
           onClick={show}
-          onFocus={(e) => {
-            const b = e.currentTarget.getBoundingClientRect();
-            setTip({ tile: it, x: b.left + b.width / 2, y: b.top + b.height / 2 });
-          }}
-          onBlur={() => setTip(null)}
           className={cn(
-            "relative min-w-0 overflow-visible text-xs leading-snug outline-none",
-            "shadow-[inset_1px_1px_0_rgb(255_255_255/0.22)]",
-            it.kind === "user" && "bg-info text-white",
-            it.kind === "free" && "bg-ok text-white",
-            it.kind === "off" && "bg-muted-foreground/30 text-foreground",
+            "min-w-0 shadow-[inset_1px_1px_0_rgb(255_255_255/0.22)]",
+            it.kind === "user" && "bg-info",
+            it.kind === "free" && "bg-ok",
+            it.kind === "off" && "bg-muted-foreground/30",
             c > 0 && grid[c - 1][r]?.key !== it.key && "border-l-4 border-card",
             r > 0 && grid[c][r - 1]?.key !== it.key && "border-t-4 border-card",
           )}
           style={{ gridColumn: c + 1, gridRow: r + 1 }}
-        >
-          {first && (
-            // the label spans every column the owner holds in this row
-            <div
-              className="pointer-events-none absolute left-1.5 top-1 z-[1] overflow-hidden"
-              style={{ width: `calc(${spanRight(grid, c, r, it.key)} * 100% - 0.75rem)` }}
-            >
-              <div className={cn("truncate", it.kind === "user" ? "font-mono font-semibold" : "font-semibold")}>{it.label ?? it.sub}</div>
-              <div className="truncate font-semibold opacity-90">{it.amount}</div>
-            </div>
-          )}
-          {first && it.queued && <span aria-hidden className="absolute right-1 top-1 z-[2] h-2 w-2 rounded-full bg-warn" />}
-        </div>,
+        />,
       );
     }
   }
+  const labels: ReactNode[] = [];
+  for (const t of tiles) {
+    const b = blocks.get(t.key);
+    if (!b) continue;
+    const w = b.w * cw;
+    const h = b.h * ch;
+    const named = w > 40 && h > 22;
+    const roomy = w > 70 && h > 44;
+    const withSub = w > 70 && h > 62;
+    const full = w > 150 && h > 104;
+    labels.push(
+      <div
+        key={t.key}
+        tabIndex={0}
+        aria-label={[t.label, t.amount, ...t.details].filter(Boolean).join(", ")}
+        onFocus={(e) => {
+          const r = e.currentTarget.getBoundingClientRect();
+          setTip({ tile: t, x: r.left + r.width / 2, y: r.top + r.height / 2 });
+        }}
+        onBlur={() => setTip(null)}
+        className={cn(
+          "pointer-events-none relative z-[1] min-w-0 overflow-hidden px-2 py-1.5 text-xs leading-snug outline-none focus-visible:ring-2 focus-visible:ring-primary/60",
+          t.kind === "off" ? "text-foreground" : "text-white",
+        )}
+        style={{ gridColumn: `${b.c + 1} / span ${b.w}`, gridRow: `${b.r + 1} / span ${b.h}` }}
+      >
+        {t.kind === "user" ? (
+          <>
+            {named && <div className="truncate font-mono font-semibold">{t.label}</div>}
+            {roomy && <div className="truncate text-sm font-bold">{t.amount}</div>}
+            {withSub && !full && t.sub && <div className="truncate opacity-85">{t.sub}</div>}
+            {full && t.details.map((d) => <div key={d} className="truncate opacity-90">{d}</div>)}
+          </>
+        ) : (
+          named && (
+            <>
+              <div className="truncate font-semibold">{t.sub}</div>
+              {roomy && <div className="truncate opacity-90">{t.amount}</div>}
+            </>
+          )
+        )}
+        {t.queued && <span aria-hidden className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-warn" />}
+      </div>,
+    );
+  }
   return (
     <div
+      ref={ref}
       role="img"
       aria-label={ariaLabel}
       onMouseLeave={() => setTip(null)}
@@ -141,16 +179,10 @@ function CellGrid({ tiles, ariaLabel, className }: { tiles: OccupancyTile[]; ari
       style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`, gridTemplateRows: `repeat(${rows}, minmax(0, 1fr))` }}
     >
       {cells}
+      {labels}
       {tip && <TipCard tip={tip} />}
     </div>
   );
-}
-
-/** Columns from c rightwards whose cell in row r has the same owner. */
-function spanRight(grid: ({ key: string } | null)[][], c: number, r: number, key: string) {
-  let k = 1;
-  while (c + k < grid.length && grid[c + k][r]?.key === key) k += 1;
-  return k;
 }
 
 function TipCard({ tip }: { tip: { tile: OccupancyTile; x: number; y: number } }) {
