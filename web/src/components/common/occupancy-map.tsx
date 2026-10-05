@@ -84,7 +84,7 @@ function gridLayout(tiles: OccupancyTile[]) {
  *  the counts allow it, thick gaps between owners, faint lines between one
  *  owner's cells. The text sits over the block's rectangle and says as much
  *  as fits: name, count, nodes, then the hover card's lines. */
-function CellGrid({ tiles, ariaLabel, className }: { tiles: OccupancyTile[]; ariaLabel: string; className?: string }) {
+function CellGrid({ tiles, ariaLabel, dashed, className }: { tiles: OccupancyTile[]; ariaLabel: string; dashed?: boolean; className?: string }) {
   const ref = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ w: 0, h: 0 });
   const [tip, setTip] = useState<{ tile: OccupancyTile; x: number; y: number } | null>(null);
@@ -114,9 +114,9 @@ function CellGrid({ tiles, ariaLabel, className }: { tiles: OccupancyTile[]; ari
           className={cn(
             "min-w-0",
             TONE[it.kind],
-            CELL_LINE[it.kind],
-            c > 0 && grid[c - 1][r]?.key !== it.key && "border-l-4 border-card",
-            r > 0 && grid[c][r - 1]?.key !== it.key && "border-t-4 border-card",
+            dashed ? CELL_DASH[it.kind] : CELL_LINE[it.kind],
+            c > 0 && grid[c - 1][r]?.key !== it.key && "border-l-4 border-l-card",
+            r > 0 && grid[c][r - 1]?.key !== it.key && "border-t-4 border-t-card",
           )}
           style={{ gridColumn: c + 1, gridRow: r + 1 }}
         />,
@@ -217,6 +217,13 @@ const CELL_LINE = {
   off: "shadow-[inset_1px_1px_0_var(--gray-6)]",
 } as const;
 
+// cores are many and small: a dashed hairline on the right and bottom edges
+const CELL_DASH = {
+  user: "border-b border-r border-dashed border-[var(--blue-7)]",
+  free: "border-b border-r border-dashed border-[var(--green-7)]",
+  off: "border-b border-r border-dashed border-[var(--gray-7)]",
+} as const;
+
 const ROW_MIN_H = 30;
 
 /** One row per node, top to bottom: users first, then free and offline. A
@@ -255,7 +262,7 @@ function layoutRows(tiles: OccupancyTile[], w: number, h: number, perRow: number
  * The pool as one box, each tile's area its share: who holds how much is the
  * first thing seen; cores, memory and jobs come up on hover (or a tap).
  */
-export function OccupancyMap({ tiles, ariaLabel, restLabel, perRow, nodeWord = "", grid, className }: {
+export function OccupancyMap({ tiles, ariaLabel, restLabel, perRow, nodeWord = "", grid, dashed, className }: {
   tiles: OccupancyTile[];
   ariaLabel: string;
   /** cores of one node, where every job holds whole nodes: then one row per
@@ -263,8 +270,10 @@ export function OccupancyMap({ tiles, ariaLabel, restLabel, perRow, nodeWord = "
   perRow?: number;
   /** "节点", after the node count each row block prints */
   nodeWord?: string;
-  /** one cell per unit (a GPU): countable, packed by whole columns */
+  /** one cell per unit (a GPU, or a core on a small pool): countable */
   grid?: boolean;
+  /** dashed lines between one owner's cells (cores, finer than GPUs) */
+  dashed?: boolean;
   /** "其余 {n} 位" for strip tiles merged when they do not fit across */
   restLabel: (n: number, amount: number) => { label: string; amount: string };
   className?: string;
@@ -279,7 +288,7 @@ export function OccupancyMap({ tiles, ariaLabel, restLabel, perRow, nodeWord = "
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
-  if (grid && gridLayout(tiles)) return <CellGrid tiles={tiles} ariaLabel={ariaLabel} className={className} />;
+  if (grid && gridLayout(tiles)) return <CellGrid tiles={tiles} ariaLabel={ariaLabel} dashed={dashed} className={className} />;
   const rects = perRow ? layoutRows(tiles, size.w, size.h, perRow) : layoutTiles(tiles, size.w, size.h, restLabel);
   return (
     <div

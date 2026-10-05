@@ -2255,7 +2255,10 @@ function Occupants({ pool, t }: { pool: Pool; t: TFn }) {
           ariaLabel={t("pool.sortUsage")}
           restLabel={(k, amount) => ({ label: t("users.others", { n: k }), amount: isGpu ? `${nf(amount)} ${t("unit.gpu")}` : coresText(t, amount) })}
           perRow={wholeNodePool(pool, snap) || undefined}
-          grid={isGpu}
+          // one cell per GPU, or per core where a pool is that small (the
+          // 96-core large-memory node); bigger CPU pools keep the treemap
+          grid={isGpu || pool.cores.total <= GRID_MAX_CORES}
+          dashed={!isGpu}
           nodeWord={t("spec.nodes")}
         />
       ) : (
@@ -2277,6 +2280,8 @@ function Occupants({ pool, t }: { pool: Pool; t: TFn }) {
     </div>
   );
 }
+
+const GRID_MAX_CORES = 128;
 
 /** Cores per node where no job here can outgrow one node (VM-CPU: 32-core
  *  VMs, QoS max 32 cores): the map then draws one row per node. 0 otherwise. */
