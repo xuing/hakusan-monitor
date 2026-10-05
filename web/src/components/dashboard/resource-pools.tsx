@@ -15,6 +15,7 @@ import { useLive } from "@/hooks/live-context";
 import { useResourceFilter } from "@/hooks/resource-filter-context";
 import { coresText, durText, poolTitle, reasonLabel, useT, wallText, type TFn, type TranslationKey } from "@/i18n";
 import { nextUpOrder } from "@/lib/pending-order";
+import { occupancyMode } from "@/lib/occupancy-mode";
 import { nodeIsSchedulable, nodeIsSchedulerHeld, nodeNeedsAttention, occupantsForPool, poolCapacity } from "@/lib/derive";
 import { fmtCountdown, fmtDur, fmtMB, nf, parseDur } from "@/lib/format";
 import type { GpuAvailabilitySegment } from "@/lib/gpu-availability";
@@ -2254,12 +2255,8 @@ function Occupants({ pool, t }: { pool: Pool; t: TFn }) {
           tiles={poolOccupancyTiles(pool, snap, userGroups, t)}
           ariaLabel={t("pool.sortUsage")}
           restLabel={(k, amount) => ({ label: t("users.others", { n: k }), amount: isGpu ? `${nf(amount)} ${t("unit.gpu")}` : coresText(t, amount) })}
-          perRow={wholeNodePool(pool, snap) || undefined}
-          // one cell per GPU, or per core where a pool is that small (the
-          // 96-core large-memory node); bigger CPU pools keep the treemap
-          grid={isGpu || pool.cores.total <= GRID_MAX_CORES}
-          dashed={!isGpu}
           nodeWord={t("spec.nodes")}
+          {...occupancyMode(pool, snap)}
         />
       ) : (
       <div className="max-h-72 space-y-1 overflow-y-auto pr-1">
@@ -2279,20 +2276,6 @@ function Occupants({ pool, t }: { pool: Pool; t: TFn }) {
       )}
     </div>
   );
-}
-
-const GRID_MAX_CORES = 128;
-
-/** Cores per node where no job here can outgrow one node (VM-CPU: 32-core
- *  VMs, QoS max 32 cores): the map then draws one row per node. 0 otherwise. */
-function wholeNodePool(pool: Pool, snap: Snapshot): number {
-  if (pool.kind === "gpu" || pool.partitions.length === 0) return 0;
-  const perNode = poolCoresPerNode(pool);
-  const fits = pool.partitions.every((p) => {
-    const max = partitionCap(p, snap.policy).maxCores;
-    return max !== undefined && max <= perNode;
-  });
-  return fits ? perNode : 0;
 }
 
 /** Tiles for a pool's occupancy map: one per user (GPUs on a GPU pool,

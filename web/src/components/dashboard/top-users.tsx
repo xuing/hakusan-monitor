@@ -5,8 +5,10 @@ import { useLive } from "@/hooks/live-context";
 import { useResourceFilter } from "@/hooks/resource-filter-context";
 import { coresText, poolTitle, useT, type TFn } from "@/i18n";
 import { fmtMB, nf } from "@/lib/format";
+import { occupancyMode } from "@/lib/occupancy-mode";
 import { groupUsage, poolUsage, type PoolUsage } from "@/lib/user-usage";
 import { cn } from "@/lib/utils";
+import type { Snapshot } from "@/types/snapshot";
 
 /** Who holds the cluster: on the overview one map for every GPU pool and one
  *  for every CPU pool, for the pool in focus that pool alone. Each user's
@@ -31,7 +33,7 @@ export function TopUsers() {
         <div className="@container">
           <div className={cn("grid gap-x-8 gap-y-5", panels.length > 1 && "@2xl:grid-cols-2")}>
             {panels.map((usage) => (
-              <PoolPanel key={usage.id} usage={usage} t={t} />
+              <PoolPanel key={usage.id} usage={usage} snap={snap} t={t} />
             ))}
           </div>
         </div>
@@ -60,7 +62,7 @@ function Legend({ t }: { t: TFn }) {
   );
 }
 
-function PoolPanel({ usage, t }: { usage: PoolUsage; t: TFn }) {
+function PoolPanel({ usage, snap, t }: { usage: PoolUsage; snap: Snapshot; t: TFn }) {
   const { pools, totals, unit, pendingJobs } = usage;
   const single = pools.length === 1 ? pools[0] : null;
   const title = single ? poolTitle(t, single) : t(usage.id === "gpu" ? "users.gpuGroup" : "users.cpuGroup");
@@ -82,9 +84,10 @@ function PoolPanel({ usage, t }: { usage: PoolUsage; t: TFn }) {
         tiles={usageTiles(usage, t)}
         ariaLabel={title}
         restLabel={(k, amount) => ({ label: t("users.others", { n: k }), amount: unitText(unit, amount, t) })}
-        // a pool in focus is one GPU model, few enough cells to read
-        grid={unit === "gpus" && pools.length === 1}
-        className="aspect-[4/3]"
+        nodeWord={t("spec.nodes")}
+        // a pool in focus is drawn the way its own card draws it, kept short
+        {...(single ? occupancyMode(single, snap) : {})}
+        className={single ? "max-h-72" : "aspect-[4/3]"}
       />
     </section>
   );
