@@ -320,6 +320,8 @@ def partition_defaults(partitions, lua, check=None):
             d["interactive_time_min"] = f["interactive_time_min"]
         if f.get("requires_license"):
             d["requires_license"] = True
+        if f.get("default_license"):
+            d["default_license"] = f["default_license"]
         if f.get("default_mem_per_node_mb"):
             d["lua_mem_per_node_mb"] = f["default_mem_per_node_mb"]
         for key in ("def_mem_per_cpu_mb", "max_mem_per_cpu_mb",
@@ -517,6 +519,22 @@ def parse_queue(text, extras=None, pending_reqtres=None):
     return {"jobs": jobs}
 
 
+def parse_licenses(text):
+    """`scontrol -o show lic` -> [{name, total, used, free}] (one row per
+    license; Reserved counts as not free)."""
+    out = []
+    for line in (text or "").splitlines():
+        name = _kv(line, "LicenseName")
+        if not name:
+            continue
+        total, used = _int(_kv(line, "Total")), _int(_kv(line, "Used"))
+        reserved = _int(_kv(line, "Reserved"))
+        free = _kv(line, "Free")
+        out.append({"name": name, "total": total, "used": used,
+                    "free": _int(free) if free else max(0, total - used - reserved)})
+    return out
+
+
 def parse_cpu_submit_probes(text):
     """`sbatch --test-only` rows for CPU partitions.
 
@@ -696,12 +714,15 @@ class Source:
                          f"(timeout 8s sacct -aX --state=PENDING -o JobID,ReqTRES -P -n 2>/dev/null || true); echo {MARK}; "
                          f"{singularity_cmd}; echo {MARK}; "
                          f"{cpu_probe_cmd}; echo {MARK}; "
+                         # licenses (Materials Studio): names the -L must
+                         # use, and how many are free right now
+                         f"(scontrol -o show lic 2>/dev/null || true); echo {MARK}; "
                          f"{qos_cmd}; echo {MARK}; "
                          f"{partition_cmd}; echo {MARK}; "
                          f"{lua_cmd}")
-        sections = (out.split(MARK) + [""] * 9)[:9]
+        sections = (out.split(MARK) + [""] * 10)[:10]
         (nodes_txt, queue_txt, containers_txt, reqtres_txt, sing_txt, cpu_probe_txt,
-         qos_txt, partition_txt, lua_section) = sections
+         license_txt, qos_txt, partition_txt, lua_section) = sections
         if self.singularity is None and "version" in sing_txt:
             self.singularity = sing_txt.split("version", 1)[-1].strip()
         if probe_due:
@@ -712,6 +733,7 @@ class Source:
             self._set_policy(qos_txt.strip("\n"), partition_txt.strip("\n"),
                              lua_txt.lstrip("\n"), stat_txt.strip(), now)
         queue = parse_queue(queue_txt, parse_containers(containers_txt), parse_pending_reqtres(reqtres_txt))
+        queue["licenses"] = parse_licenses(license_txt)
         queue["cpu_submit_probes"] = self.cpu_probes
         queue["cpu_submit_probes_generated_at"] = int(self.cpu_probe_at) if self.cpu_probe_at else 0
         nodes = parse_nodes(nodes_txt)

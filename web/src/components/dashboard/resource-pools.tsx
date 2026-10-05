@@ -49,6 +49,7 @@ import { cpuProbeRows, cpuStartLimits, cpuStartMemMb, liveCpuStart, type CpuProb
 import { buildRequestCommand, shouldShowGapShell } from "@/lib/request-command";
 import { gpuLayouts, type GpuLayout, type GpuNodeShape } from "@/lib/gpu-layout";
 import { requestLimits, type PoolShape } from "@/lib/request-limits";
+import { licenseBusy, licensePlan } from "@/lib/licenses";
 import { defaultRequestFit, singleNodeCoreFlag } from "@/lib/default-request";
 import { gpuPartitionAdvice, partitionRunningJobs } from "@/lib/gpu-advice";
 import type { Occupant, Partition, Pool, PoolGpu, RawJob, Snapshot } from "@/types/snapshot";
@@ -347,6 +348,8 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
   // multi-GPU layout (key from gpuLayouts); "1" = the partition's default
   const [gpuKey, setGpuKey] = useState("1");
   const [msOpen, setMsOpen] = useState(false);
+  // the -L picked for a partition that requires one (MatStudio)
+  const [license, setLicense] = useState("");
   if (!base) return null;
 
   const isGpu = pool.kind === "gpu";
@@ -361,6 +364,7 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
     setTimeText("");
     setGpuKey("1");
     setPtyOn(false);
+    setLicense("");
   };
   const cap = partitionCap(partition, snap?.policy);
   const policy = partitionPolicy(partition, snap?.policy);
@@ -505,9 +509,10 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
         userTimeSec: forcedSec ?? parseWalltimeSec(ptyActive ? ptyTime : timeSel),
         t,
       });
-  // CPU with fields set: the same live judgement as the default request, on
-  // the request the command actually carries.
-  const cpuOverrideState = !isGpu && snap && (hasAdvancedOverrides || overflowPinned)
+  // CPU: the live judgement of the request the command actually carries
+  // (fields, a pinned -n, an -L the command adds). The sbatch --test-only
+  // probe only speaks for the bare default command, below.
+  const cpuOverrideState = !isGpu && snap
     ? liveCpuStart(snap, partition, { cores: coreCount || defCores, nodes: nodeCount, memMb: memOverrideMb })
     : null;
   const queueHint = cpuOverrideState === "now"
@@ -526,12 +531,15 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
   // the placeholder queues — srun errors with "Job is pending execution" if
   // attached too early — and pasting the whole block makes scancel fire when
   // the shell exits, so the placeholder never idles to its limit.
+  const clusterLicenses = snap?.licenses ?? [];
+  const licPlan = licensePlan(partDefaults, clusterLicenses, license, t("pool.licensePlaceholder"));
+  const licFlag = licPlan.flag ? [licPlan.flag] : [];
   const cmd = buildRequestCommand({
     partition,
     // a GPU layout fixes nodes/cores/memory itself
     requiredFlags: multiGpu && layout
-      ? [...(base.requiredFlags ?? []), ...layout.flags]
-      : [...(base.requiredFlags ?? []), ...(singleNodeFlag ? [singleNodeFlag] : [])],
+      ? [...(base.requiredFlags ?? []), ...licFlag, ...layout.flags]
+      : [...(base.requiredFlags ?? []), ...licFlag, ...(singleNodeFlag ? [singleNodeFlag] : [])],
     nodeCount: multiGpu ? undefined : nodeCount,
     coreCount: multiGpu ? undefined : coreCount,
     multiNode: multiNodePolicy,
@@ -680,21 +688,38 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
         : null
     : null;
 
-  const verdict = shownHint
-    ? { tone: shownHint.tone, label: shownHint.label }
-    : selectedCpuRow
-      ? { tone: cpuProbeTone(selectedCpuRow.state), label: cpuProbeLabel(selectedCpuRow.state, t) }
+  // a probe rejection applies only while the command is the probed one
+  const probeRejected = Boolean(selectedCpuRow && !licPlan.flag && selectedCpuRow.state === "failed");
+  const baseVerdict = probeRejected
+    ? { tone: cpuProbeTone("failed"), label: cpuProbeLabel("failed", t) }
+    : shownHint
+      ? { tone: shownHint.tone, label: shownHint.label }
       : null;
+  // -L decides first: no license where one is required, or a default name
+  // the cluster lacks, is refused at submit; a used-up license queues
+  const licenseRejected = (licPlan.kind === "required" && !license) || licPlan.kind === "missing";
+  const licenseQueued = licenseBusy(licPlan);
+  const verdict = licenseRejected
+    ? { tone: "bad" as const, label: t("pool.verdictRejected") }
+    : licenseQueued && baseVerdict?.tone === "ok"
+      ? { tone: "warn" as const, label: t("pool.queueHintWillQueue") }
+      : baseVerdict;
   const sliderHintShown = Boolean(coreHint || memHint || timeHint || startingAlt || (showGpuSlider && gpuHint));
   // a reason no slider owns goes under the command
-  const commandReason = groupLimitReached && policy.grpJobs
+  const commandReason = licPlan.kind === "required" && !license
+    ? t("pool.licenseRequired", { p: partition })
+    : licPlan.kind === "missing"
+      ? t("pool.licenseMissing", { bad: licPlan.pluginDefault ?? "" })
+      : licenseQueued && licPlan.license
+        ? t("pool.licenseBusy", { name: licPlan.license.name, used: licPlan.license.used, total: licPlan.license.total })
+        : groupLimitReached && policy.grpJobs
     ? t("pool.groupFullReason", { p: partition, n: groupRunning, max: policy.grpJobs })
     : !sliderHintShown && isGpu && !showGpuSlider && gpuHint
       ? gpuHint
       : !sliderHintShown && verdict?.tone === "warn" && shownHint?.detail && !showGpuFitDetails
         ? shownHint.detail
         : null;
-  const probeFailed = selectedCpuRow?.state === "failed" ? cpuProbeDetail(selectedCpuRow, "failed", t) : "";
+  const probeFailed = probeRejected && selectedCpuRow ? cpuProbeDetail(selectedCpuRow, "failed", t) : "";
 
   // ---- the partition table -------------------------------------------------
   const mainParts = pool.partitions.filter((p) => !isMaterialsStudioPartition(p));
@@ -720,17 +745,41 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
     const lim = snap ? cpuStartLimits(snap, p) : null;
     const lo = capP.minCores ?? 1;
     const row = cpuRows.find((r) => r.partition === p);
-    const state = row?.state ?? (snap ? liveCpuStart(snap, p) ?? "unknown" : "unknown");
+    // what the panel's command for this row gets, -L included
+    const planP = licensePlan(partitionDefaults(p, snap?.policy), clusterLicenses, "", "");
+    const live = snap ? liveCpuStart(snap, p) ?? "unknown" : "unknown";
+    const state = planP.flag ? live : row?.state ?? live;
+    const rowVerdict = planP.kind === "required"
+      ? { tone: "bad" as const, label: t("pool.needsL") }
+      : planP.kind === "missing"
+        ? { tone: "bad" as const, label: t("pool.verdictRejected") }
+        : licenseBusy(planP) && state === "now"
+          ? { tone: "warn" as const, label: t("pool.queueHintWillQueue") }
+          : { tone: cpuProbeTone(state), label: cpuProbeLabel(state, t) };
     return {
       name: p, title: desc, lo, hi: Math.max(lo, capP.maxCores ?? poolCoresPerNode(pool)),
       now: lim && !lim.groupFull ? lim.maxCores : 0, wall, perUser: policyP.maxJobsPerUser,
-      verdict: { tone: cpuProbeTone(state), label: cpuProbeLabel(state, t) },
+      verdict: rowVerdict,
       selected: p === partition, marker: p === partition ? coresNow : undefined,
     };
   };
   // smallest first: the bars read as a staircase of job sizes, then by walltime
   const bySize = (a: PartitionTableRow, b: PartitionTableRow) =>
     a.lo - b.lo || a.hi - b.hi || wallLabelSec(partitionCap(a.name, snap?.policy).wall) - wallLabelSec(partitionCap(b.name, snap?.policy).wall);
+  // a click on a bar in the table: that partition, with the value clicked
+  const pickFromTable = (p: string, v: number) => {
+    selectPartition(p);
+    if (isGpu) {
+      const ls = layoutFor(p).layouts;
+      const counts = [...new Set(ls.map((l) => l.gpus))];
+      const target = counts.reduce((best, c) => (Math.abs(c - v) < Math.abs(best - v) ? c : best), counts[0] ?? 1);
+      const l = target > 1 ? ls.find((x) => x.gpus === target) : null;
+      if (l) setGpuKey(l.key);
+      return;
+    }
+    const d = partitionDefaults(p, snap?.policy).cores ?? 0;
+    setCores(v === d ? "" : String(v));
+  };
   const tableRows = showTable
     ? [...mainParts.map(rowFor).sort(bySize), ...(msOpen ? msParts.map(rowFor).sort(bySize) : [])]
     : [];
@@ -772,6 +821,8 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
               rows={tableRows}
               axis={axis}
               onSelect={selectPartition}
+              onPickValue={pickFromTable}
+              quantize={isGpu ? Math.round : niceCoreCount}
               headers={{ name: t("col.partition"), wall: t("pool.tableWall"), perUser: t("pool.tablePerUser"), verdict: t("pool.tableVerdict") }}
               legend={{ range: t("pool.legendRange"), now: t("pool.legendNow") }}
               rangeLabels={!isGpu}
@@ -991,6 +1042,24 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
               )}</div>}
             </div>
 
+            {licPlan.kind === "required" && clusterLicenses.length > 0 && (
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 px-3 pb-3 text-xs">
+                <span className="text-foreground/80">{t("pool.licenseField")}</span>
+                <div className="subtle-scroll min-w-0 max-w-full overflow-x-auto">
+                  <Segmented
+                    value={license}
+                    onChange={setLicense}
+                    ariaLabel={t("pool.licenseField")}
+                    itemClassName="whitespace-nowrap font-mono"
+                    options={clusterLicenses.map((l) => ({
+                      value: l.name,
+                      label: <>{l.name.split("@")[0]} <span className={l.free > 0 ? "text-ok-fg" : "text-warn-fg"}>{l.free}/{l.total}</span></>,
+                    }))}
+                  />
+                </div>
+              </div>
+            )}
+
             {!multiGpu && nodeOptions.length > 0 && (
               <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 px-3 pb-3 text-xs">
                 <span className="text-foreground/80">{t("pool.nodesField")}</span>
@@ -1117,7 +1186,12 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
                         : t("pool.defaultOverflowSplit", { n: defaultFit.maxCoresOnOneNode, nodes: defaultFit.nodesNeeded })}
                   </p>
                 )}
-                {partDefaults.requires_license && <p>{t("pool.msLicenseNote")}</p>}
+                {licPlan.kind === "default" && licPlan.license && (
+                  <p>{t("pool.licenseAuto", { name: licPlan.license.name, free: licPlan.license.free, total: licPlan.license.total })}</p>
+                )}
+                {licPlan.kind === "fixed" && licPlan.license && (
+                  <p className="text-warn-fg">{t("pool.licenseFixed", { bad: licPlan.pluginDefault ?? "", good: licPlan.license.name })}</p>
+                )}
                 {isGpu && mode === "script" && (
                   <p>
                     {t("pool.scriptPtyHint")}{" "}
@@ -1200,6 +1274,15 @@ function linearTicks(lo: number, hi: number): SliderTick[] {
   }
   out.push({ value: hi, label: String(hi) });
   return out;
+}
+
+/** A clicked point on the log core axis as a count a person would ask for:
+ *  a power of two when close to one, else a round step for its size. */
+function niceCoreCount(v: number) {
+  const p2 = 2 ** Math.round(Math.log2(v));
+  if (Math.abs(v - p2) / p2 < 0.12) return Math.max(1, p2);
+  const step = v <= 16 ? 1 : v <= 256 ? 8 : 64;
+  return Math.max(1, Math.round(v / step) * step);
 }
 
 const fmtCount = (v: number) => (v >= 1024 && v % 1024 === 0 ? `${v / 1024}K` : String(v));

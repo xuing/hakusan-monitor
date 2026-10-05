@@ -25,6 +25,10 @@ _GPU_CHECK = re.compile(r"job_desc\.(gres|gpus|gpus_per_node|tres_per_node|tres_
 _INTERACTIVE = re.compile(r"job_desc\.script\s*==\s*nil")
 _MAX_TIME = re.compile(r"\blocal\s+max_time\s*=\s*(\d+)")
 _LICENSE = re.compile(r"job_desc\.licenses\s*==\s*nil")
+# the `if (job_desc.licenses == nil ...) then ... end` block: it either
+# rejects the job (MatStudio) or fills a default (MS_Castep & co.)
+_LICENSE_BLOCK = re.compile(r"if\s*\(\s*job_desc\.licenses\s*==\s*nil[^\n]*?then(.*?)\n\s*end\b", re.S)
+_LICENSE_DEFAULT = re.compile(r'job_desc\.licenses\s*=\s*"([^"]+)"')
 _GPU_COUNT = re.compile(r"gpu(?::[^:,]+)?:(\d+)")
 
 
@@ -49,6 +53,8 @@ def parse_job_submit_lua(text: str) -> dict:
       gpu_request_respected — False when the default replaces --gres requests
       interactive_time_min — forced time limit for jobs without a batch script
       requires_license — the branch rejects jobs without -L
+      default_license — the -L the branch fills in when there is none
+          ("ms_castep@lmgr:1"); the name may not exist on the cluster
     """
     if not text:
         return {}
@@ -102,5 +108,12 @@ def _branch_facts(body: str, line: int) -> dict:
         elif tl:
             facts["interactive_time_min"] = int(tl.group(1))
     if _LICENSE.search(body):
-        facts["requires_license"] = True
+        block = _LICENSE_BLOCK.search(body)
+        default = _LICENSE_DEFAULT.search(block.group(1)) if block else None
+        if default:
+            facts["default_license"] = default.group(1)
+        # a default that is filled in is not a requirement; anything else
+        # (an explicit reject, or a block we cannot read) is
+        if not default or re.search(r"return\s+slurm\.ERROR", block.group(1)):
+            facts["requires_license"] = True
     return facts

@@ -196,6 +196,7 @@ class Engine:
                                 mask_users=self.cfg["mask_users"])
             snap.update(generated_at=int(now), age_s=0.0,
                         source=self.cfg["source"], stale=False)
+            snap["licenses"] = squeue.get("licenses", [])
             snap["cpu_submit_probes"] = squeue.get("cpu_submit_probes", [])
             snap["cpu_submit_probes_generated_at"] = squeue.get("cpu_submit_probes_generated_at", 0)
             snap["cpu_submit_probe_interval"] = self.cfg["cpu_probe_interval"]

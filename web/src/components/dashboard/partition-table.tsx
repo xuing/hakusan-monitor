@@ -42,6 +42,8 @@ export function PartitionTable({
   legend,
   footer,
   rangeLabels = true,
+  onPickValue,
+  quantize = Math.round,
 }: {
   rows: PartitionTableRow[];
   axis: PartitionAxis;
@@ -51,6 +53,9 @@ export function PartitionTable({
   footer?: ReactNode;
   /** "lo–hi" beside each bar; off where the axis already ticks every value */
   rangeLabels?: boolean;
+  /** a click on a bar: pick that row with the value under the pointer */
+  onPickValue?: (name: string, value: number) => void;
+  quantize?: (value: number) => number;
 }) {
   const logSpan = Math.log(axis.max / axis.min) || 1;
   // with range labels the axis uses 80% of the cell: a label after a bar that
@@ -60,6 +65,10 @@ export function PartitionTable({
   const pos = (v: number) => {
     const c = Math.min(axis.max, Math.max(axis.min, v));
     return reach * (axis.scale === "log" ? Math.log(c / axis.min) / logSpan : (c - axis.min) / Math.max(axis.max - axis.min, 1));
+  };
+  const inv = (p: number) => {
+    const q = Math.min(1, Math.max(0, p / reach));
+    return axis.scale === "log" ? axis.min * Math.exp(q * logSpan) : axis.min + q * (axis.max - axis.min);
   };
   return (
     <div className="@container overflow-hidden rounded-lg border border-border bg-card">
@@ -105,9 +114,18 @@ export function PartitionTable({
             <span className={cn("truncate font-mono text-xs font-semibold", r.selected ? "text-info-fg" : "text-foreground")}>
               {r.name}
             </span>
-            <span className="relative h-9">
+            <span
+              className={cn("relative h-9", onPickValue && "cursor-crosshair")}
+              onClick={onPickValue ? (e) => {
+                // the bar's own row, at the value under the pointer
+                e.stopPropagation();
+                const rect = e.currentTarget.getBoundingClientRect();
+                const v = quantize(inv((e.clientX - rect.left) / rect.width));
+                onPickValue(r.name, Math.min(r.hi, Math.max(r.lo, v)));
+              } : undefined}
+            >
               <span
-                className="absolute top-1/2 h-2 -translate-y-1/2 rounded-full bg-muted-foreground/20"
+                className="absolute top-1/2 h-2 -translate-y-1/2 rounded-full bg-warn/45"
                 style={{ left: `${a * 100}%`, width: `max(0.5rem, ${(b - a) * 100}%)` }}
               />
               {g > a && (
@@ -143,7 +161,7 @@ export function PartitionTable({
       <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 bg-muted/25 px-3 py-1.5 text-xs text-muted-foreground">
         <span className="min-w-0">{footer}</span>
         <span className="flex items-center gap-3">
-          <span className="inline-flex items-center gap-1.5"><span className="h-2 w-4 rounded-full bg-muted-foreground/20" />{legend.range}</span>
+          <span className="inline-flex items-center gap-1.5"><span className="h-2 w-4 rounded-full bg-warn/45" />{legend.range}</span>
           <span className="inline-flex items-center gap-1.5"><span className="h-2 w-4 rounded-full bg-ok/80" />{legend.now}</span>
         </span>
       </div>

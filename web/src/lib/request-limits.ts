@@ -101,7 +101,9 @@ export function boundaryCommands(snap: Snapshot): BoundaryCommand[] {
       const part = snap.partitions.find((x) => x.name === p);
       if (!part) continue;
       const defaults = partitionDefaults(p, snap.policy);
-      if (defaults.requires_license) continue; // sbatch refuses without -L
+      // license partitions: MatStudio refuses a job without -L, and a plugin
+      // default -L may not exist on the cluster (MS_Amorphous)
+      if (defaults.requires_license || defaults.default_license) continue;
       const shape: PoolShape = { nodes: part.nodes, coresPerNode, memPerNodeMb: pool.mem_per_node, gpusPerNode: part.spec.gpu_per_node };
       const lim = requestLimits(p, snap.policy, shape, isGpu);
       const expect = {

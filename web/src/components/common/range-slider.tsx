@@ -83,7 +83,7 @@ export function RangeSlider({
   const placed = ticks
     .filter((tk) => tk.value >= min && tk.value <= max)
     .map((tk) => ({ ...tk, p: pos(tk.value) }))
-    .filter((tk) => !(showGreenMark && greenLabel && Math.abs(tk.p - greenPos) < 0.09));
+    .filter((tk) => !(showGreenMark && greenLabel && Math.abs(tk.p - greenPos) < 0.15));
 
   const body = (
     <div className={cn("flex min-w-0 flex-col gap-1.5", locked && "cursor-not-allowed rounded-md outline-none focus-visible:ring-2 focus-visible:ring-primary/45")} tabIndex={locked ? 0 : undefined}>
@@ -96,6 +96,10 @@ export function RangeSlider({
       </div>
       <div className="relative h-5">
         <div className="absolute inset-x-0 top-1/2 h-1 -translate-y-1/2 rounded-full bg-muted-foreground/15" />
+        {/* past the green part, within bounds: allowed, but it queues */}
+        {hasZone && greenPos < 1 && (
+          <div className="absolute right-0 top-1/2 h-1 -translate-y-1/2 rounded-full bg-warn/45" style={{ width: `${(1 - greenPos) * 100}%` }} />
+        )}
         {hasZone && greenPos > 0 && (
           <div className="absolute left-0 top-1/2 h-1 -translate-y-1/2 rounded-full bg-ok/80" style={{ width: `${greenPos * 100}%` }} />
         )}

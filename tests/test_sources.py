@@ -3,6 +3,7 @@ import subprocess
 from unittest.mock import patch
 
 from backend.sources import (
+    parse_licenses,
     SEP,
     Source,
     _parse_tres,
@@ -151,6 +152,21 @@ class TresPolicyTests(unittest.TestCase):
 
         self.assertFalse(snap["check"]["ok"])
         self.assertEqual(snap["check"]["mismatches"], ["GPU-L:mem"])
+
+
+class LicenseParserTests(unittest.TestCase):
+    def test_reads_names_and_free_counts(self):
+        rows = parse_licenses(
+            "LicenseName=ms_castep@lmgr Total=32 Used=3 Free=29 Reserved=0 Remote=yes LastConsumed=3\n"
+            "LicenseName=ms_amorphouscell@lmgr Total=1 Used=1 Free=0 Reserved=0 Remote=yes\n"
+            "garbage line\n")
+        self.assertEqual(rows, [
+            {"name": "ms_castep@lmgr", "total": 32, "used": 3, "free": 29},
+            {"name": "ms_amorphouscell@lmgr", "total": 1, "used": 1, "free": 0},
+        ])
+
+    def test_empty_when_the_cluster_has_none(self):
+        self.assertEqual(parse_licenses(""), [])
 
 
 class QueueParserTests(unittest.TestCase):

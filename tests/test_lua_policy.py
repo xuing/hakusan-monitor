@@ -43,6 +43,9 @@ class LuaPolicyTests(unittest.TestCase):
         p = parse_job_submit_lua(sample())
 
         self.assertTrue(p["LIC"]["requires_license"])
+        # a branch that fills in a license does not require one
+        self.assertNotIn("requires_license", p["LICDEF"])
+        self.assertEqual(p["LICDEF"]["default_license"], "ms_castep@lmgr:1")
         self.assertNotIn("IGNORED", p)  # slurm_job_modify is not the submit path
 
     def test_empty_source_gives_nothing(self):

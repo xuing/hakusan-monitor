@@ -204,6 +204,8 @@ export interface PartitionDefaults {
   interactive_time_min?: number;
   /** the branch rejects jobs without -L */
   requires_license?: boolean;
+  /** the -L the plugin fills in when none is given ("ms_castep@lmgr:1") */
+  default_license?: string;
   /** true when the verification script confirmed cores/memory with a held job */
   measured?: boolean;
 }
@@ -221,6 +223,8 @@ export interface LuaPartitionFacts {
   gpu_request_respected?: boolean;
   interactive_time_min?: number;
   requires_license?: boolean;
+  /** the -L the plugin fills in when none is given ("ms_castep@lmgr:1") */
+  default_license?: string;
 }
 
 export interface LuaVersion {
@@ -323,6 +327,8 @@ export interface Snapshot {
   partitions: Partition[];
   gpus: GpuType[];
   queue: QueueData;
+  /** cluster licenses (`scontrol show lic`): the names -L must use */
+  licenses?: ClusterLicense[];
   cpu_submit_probes?: CpuSubmitProbe[];
   cpu_submit_probes_generated_at?: number;
   cpu_submit_probe_interval?: number;
@@ -611,4 +617,12 @@ export interface VisitStats {
   today: { visitors: number; hits: number };
   window: { visitors: number; hits: number };
   total: { visitors: number; hits: number; since: string | null };
+}
+
+export interface ClusterLicense {
+  /** "ms_castep@lmgr" */
+  name: string;
+  total: number;
+  used: number;
+  free: number;
 }

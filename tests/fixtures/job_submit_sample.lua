@@ -66,6 +66,12 @@ function slurm_job_submit(job_desc, part_list, submit_uid)
         if (job_desc.licenses == nil or job_desc.licenses == "") then
             return slurm.ERROR
         end
+
+    elseif (job_desc.partition == "LICDEF") then
+        -- fills the license instead of rejecting
+        if (job_desc.licenses == nil or job_desc.licenses == "") then
+	    job_desc.licenses = "ms_castep@lmgr:1"
+        end
     end
     return slurm.SUCCESS
 end
