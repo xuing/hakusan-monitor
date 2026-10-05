@@ -203,6 +203,9 @@ npm test         # Vitest domain/helper tests
 | `HM_RETAIN_DAYS` | `60` | cluster raw-sample retention in days (hourly rollup kept beyond) |
 | `HM_LOGIN_RETAIN_DAYS` | `HM_RETAIN_DAYS` | login-node sample retention in days |
 | `HM_VISIT_RETAIN_DAYS` | `365` | anonymous daily visit-counter retention in days |
+| `HM_JOBS_INTERVAL` | `600` | seconds between job-history reads (`sacct`) for the Analytics page |
+| `HM_JOBS_RETAIN_DAYS` | `400` | job-history retention in days (also how far back the first read goes) |
+| `HM_ANALYTICS_INTERVAL` | `1800` | seconds between Analytics recomputations |
 | `HM_MAX_SSE` | `64` | maximum concurrent SSE clients |
 | `HM_TRUST_PROXY` | `0` | trust `X-Forwarded-For` only when set to `1` behind a trusted proxy |
 | `HM_ACCESS_LOG` | `0` | enable HTTP access logging when set to `1` |
@@ -218,6 +221,7 @@ npm test         # Vitest domain/helper tests
 | `GET /api/login-nodes` | current Hakusan login-node health: load, CPU, memory, disk pressure, processes, users |
 | `GET /api/login-nodes/history?hours=24` | down-sampled login-node health history |
 | `GET /api/usage?days=30` | peak/trough by hour-of-day & weekday (local time) |
+| `GET /api/analytics` | job-history aggregates for the Analytics page (GPU and CPU views) |
 | `GET /api/meta` | cluster, slurm version, container info, partitions |
 | `GET /api/health` | liveness + source + data age |
 
@@ -225,6 +229,10 @@ npm test         # Vitest domain/helper tests
 
 - Usernames are already visible to any user via `squeue`; `HM_MASK_USERS=1`
   anonymizes them in this public view anyway.
+- Analytics reads job accounting with `sacct -a`, so it needs a cluster whose
+  `PrivateData` lets users see everyone's jobs. Login names are stored only as
+  installation-keyed hashes, and submit lines are cut to their first word
+  (`sbatch` / `salloc` / `srun`) on the cluster.
 - Usage-pattern times are **server local time** — set `TZ=Asia/Tokyo` for the
   process if the host clock isn't JST.
 - Read-only community tool; not an official JAIST service.

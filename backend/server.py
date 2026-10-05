@@ -6,7 +6,8 @@ Architecture:
                                               ├─ keeps latest snapshot (real-time)
                                               ├─ Store (SQLite TSDB: retention + rollup)
                                               └─ fan-out to SSE subscribers
-    HTTP: /api/snapshot /api/stream(SSE) /api/history /api/usage /api/visits /api/meta /api/health
+    HTTP: /api/snapshot /api/stream(SSE) /api/history /api/usage /api/analytics
+          /api/visits /api/meta /api/health
           + static SPA.
 
 A background Sampler thread polls on a fixed cadence, so data collection is
@@ -21,9 +22,11 @@ from types import MappingProxyType
 from urllib.parse import urlparse, parse_qs
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import analytics               # noqa: E402
 import normalize as nz          # noqa: E402
+from job_history import JobHistoryCollector  # noqa: E402
 from login_nodes import LoginNodeCollector, public_nodes, summarize_users  # noqa: E402
-from sources import Source      # noqa: E402
+from sources import CLUSTER_TZ, Source  # noqa: E402
 from store import Store         # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -103,6 +106,10 @@ CFG = {
     "retain_days": int(env("HM_RETAIN_DAYS", "60")),
     "login_retain_days": int(env("HM_LOGIN_RETAIN_DAYS", env("HM_RETAIN_DAYS", "60"))),
     "visit_retain_days": int(env("HM_VISIT_RETAIN_DAYS", "365")),
+    # job accounting history (sacct) behind /api/analytics
+    "jobs_interval": float(env("HM_JOBS_INTERVAL", "600")),
+    "jobs_retain_days": int(env("HM_JOBS_RETAIN_DAYS", "400")),
+    "analytics_interval": float(env("HM_ANALYTICS_INTERVAL", "1800")),
     "max_sse":    int(env("HM_MAX_SSE", "64")),   # cap concurrent SSE connections
     "trust_proxy": env("HM_TRUST_PROXY", "0") in ("1", "true", "yes"),
     # Page requests that reach the port directly (not via the proxy, not from
@@ -149,7 +156,14 @@ class Engine:
             cfg["db"], retain_days=cfg["retain_days"],
             login_retain_days=cfg["login_retain_days"],
             visit_retain_days=cfg["visit_retain_days"],
+            job_retain_days=cfg["jobs_retain_days"],
         )
+        self.jobs = JobHistoryCollector(
+            self.src, self.store, lambda: self.latest,
+            lambda store, snap, prio, now: analytics.compute_from_store(
+                store, snap, prio, now, CLUSTER_TZ, retain_days=cfg["jobs_retain_days"]),
+            interval=cfg["jobs_interval"], retain_days=cfg["jobs_retain_days"],
+            analytics_interval=cfg["analytics_interval"])
         self.max_sse = cfg["max_sse"]
         self.latest = None
         self.error = None
@@ -482,6 +496,8 @@ class Handler(BaseHTTPRequestHandler):
             mp = query_int(q, "points", 600, 10, 2000)
             return self._json(200, {"since": since, "until": until,
                                     "points": eng.store.login_history(since, until, mp)})
+        if path == "/api/analytics":
+            return self._json(200, eng.jobs.payload())
         if path == "/api/usage":
             days = query_int(q, "days", 30, 1, 365)
             return self._json(200, eng.store.usage_pattern(days))
@@ -603,6 +619,8 @@ def main():
     # Sample in the background so the port binds immediately; early requests get
     # an explicit warming-up response and never perform collection themselves.
     threading.Thread(target=eng.run, daemon=True).start()
+    if eng.jobs.enabled:
+        threading.Thread(target=eng.jobs.run, daemon=True).start()
     httpd = ThreadingHTTPServer(("0.0.0.0", CFG["port"]), Handler)
     print(f"Hakusan Monitor · source={CFG['source']} · "
           f"http://localhost:{CFG['port']} · sample={CFG['interval']}s · "

@@ -45,6 +45,10 @@ Backend serves the SPA (static) **and** JSON endpoints. All localizable values a
 - `GET /api/login-nodes` — current Hakusan 1 / Hakusan 2 login-node health.
 - `GET /api/login-nodes/history?hours=24` — down-sampled login-node history.
 - `GET /api/usage?days=30` — hour-of-day and weekday usage patterns.
+- `GET /api/analytics` — job-history aggregates (`backend/analytics.py`) for
+  the GPU and CPU views: submit rhythm, free hours, waits per partition,
+  requested vs. used time, job shapes, interactive sessions, weekly
+  allocation, concentration, outcomes. Shares weight every user equally.
 - `GET /api/health` — `{ok, source, stale, age_s}`.
 - `GET /api/meta` — cluster name, slurm version, partitions catalog, container
   info (static + detected).

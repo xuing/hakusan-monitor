@@ -115,7 +115,9 @@ service account.
   `HM_MASK_USERS=1` to anonymize them.
 - Cluster, login-node, and anonymous visit retention are independently
   configurable with `HM_RETAIN_DAYS`, `HM_LOGIN_RETAIN_DAYS`, and
-  `HM_VISIT_RETAIN_DAYS`.
+  `HM_VISIT_RETAIN_DAYS`; job history (Analytics) with `HM_JOBS_RETAIN_DAYS`.
+  The first start reads that window from `sacct` in 30-day chunks (a few
+  minutes on Hakusan), then every `HM_JOBS_INTERVAL` only the latest window.
 - Leave `HM_TRUST_PROXY=0` unless a trusted reverse proxy overwrites
   `X-Forwarded-For`; set `HM_ACCESS_LOG=1` only when request logging is useful.
 - For public or off-campus access, put it behind a reverse proxy with TLS and

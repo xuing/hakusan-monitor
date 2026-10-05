@@ -8,7 +8,7 @@ Two tables, the classic raw + rollup TSDB pattern:
 Thread-safe: one connection per thread (works under ThreadingHTTPServer).
 """
 from __future__ import annotations
-import hashlib, os, json, secrets, sqlite3, threading, time
+import hashlib, os, json, secrets, sqlite3, sys, threading, time
 
 SCHEMA_VERSION = 1
 
@@ -57,7 +57,56 @@ CREATE TABLE IF NOT EXISTS app_meta (
   key   TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS jobs (               -- one row per job allocation (sacct -X)
+  id         INTEGER PRIMARY KEY,               -- JobIDRaw
+  array_id   INTEGER,                           -- array master id (= id for plain jobs)
+  user       TEXT,                              -- keyed hash, never the login name
+  partition  TEXT,                              -- may list several while pending
+  submit     INTEGER, eligible INTEGER, start INTEGER, "end" INTEGER,
+  elapsed    INTEGER, timelimit INTEGER,        -- seconds / minutes
+  state      TEXT,
+  nodes      INTEGER, cpus INTEGER, gpus INTEGER, gpu_type TEXT, mem_mb INTEGER,
+  interactive INTEGER,                          -- 1 = salloc / srun allocation
+  job_key    TEXT                               -- sacct JobID ("123", "120_3", "120_[4-9]")
+);
+CREATE INDEX IF NOT EXISTS idx_jobs_submit ON jobs(submit);
+CREATE TABLE IF NOT EXISTS job_attempts (       -- earlier runs of requeued jobs
+  id         INTEGER,                           -- JobIDRaw of the job
+  start      INTEGER,
+  "end"      INTEGER,
+  user       TEXT, partition TEXT, submit INTEGER,
+  cpus       INTEGER, gpus INTEGER,
+  PRIMARY KEY (id, start)
+);
+CREATE TABLE IF NOT EXISTS pool_hourly (        -- per-pool "is anything free" rollup
+  hour    INTEGER,
+  pool    TEXT,
+  n       INTEGER,                              -- samples in the hour
+  free_n  INTEGER,                              -- samples with >=1 free GPU / idle node
+  free_sum REAL,                                -- sum of free GPUs / idle nodes
+  PRIMARY KEY (hour, pool)
+);
 """
+
+JOB_COLUMNS = ("id", "array_id", "user", "partition", "submit", "eligible", "start", "end",
+               "elapsed", "timelimit", "state", "nodes", "cpus", "gpus", "gpu_type", "mem_mb",
+               "interactive", "job_key")
+ACTIVE_STATES = ("PENDING", "RUNNING", "REQUEUED", "RESIZING", "SUSPENDED")
+
+
+def pool_free(pool):
+    """(free units, anything free?) of one snapshot pool for the hourly rollup.
+
+    GPU pools: GPUs that are idle, up and not held by the scheduler (gpu.free).
+    CPU pools: whole idle nodes — jobs that take full nodes need one, and a
+    pool-wide free-core total says nothing about whether a node is empty.
+    """
+    gpu = pool.get("gpu")
+    if pool.get("kind") == "gpu":
+        free = (gpu or {}).get("free") or 0
+        return free, int(free >= 1 and not (gpu or {}).get("maint"))
+    idle = pool.get("idle_nodes") or 0
+    return idle, int(idle >= 1)
 
 
 def _metrics(snap):
@@ -74,9 +123,11 @@ def _metrics(snap):
 
 
 class Store:
-    def __init__(self, path, retain_days=60, login_retain_days=None, visit_retain_days=365):
+    def __init__(self, path, retain_days=60, login_retain_days=None, visit_retain_days=365,
+                 job_retain_days=400):
         self.path = path
         self.retain_days = retain_days
+        self.job_retain_days = job_retain_days
         self.login_retain_days = retain_days if login_retain_days is None else login_retain_days
         self.visit_retain_days = visit_retain_days
         self._local = threading.local()
@@ -84,8 +135,13 @@ class Store:
         os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
         c = self._conn()
         c.executescript(SCHEMA)
+        cols = {r["name"] for r in c.execute("PRAGMA table_info(jobs)")}
+        if "job_key" not in cols:   # jobs tables created before the column existed
+            c.execute("ALTER TABLE jobs ADD COLUMN job_key TEXT")
         c.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
         self._visitor_salt = self._meta_secret("visitor_salt")
+        self._user_key = bytes.fromhex(self._meta_secret("job_user_salt"))
+        self._backfill_pool_hourly()
 
     def _conn(self):
         c = getattr(self._local, "conn", None)
@@ -136,6 +192,14 @@ class Store:
                     (hour, m["cpu_util"], m["cpu_util"], m["gpu_util"], m["gpu_util"],
                      m["pending"], m["pending"], m["running"]),
                 )
+                for pool in snap.get("pools") or []:
+                    free, any_free = pool_free(pool)
+                    c.execute(
+                        """INSERT INTO pool_hourly (hour,pool,n,free_n,free_sum) VALUES (?,?,1,?,?)
+                           ON CONFLICT(hour,pool) DO UPDATE SET
+                             n = n+1, free_n = free_n + excluded.free_n,
+                             free_sum = free_sum + excluded.free_sum""",
+                        (hour, pool.get("id", ""), any_free, free))
 
     def record_login(self, payload, ts):
         nodes = [n for n in (payload or {}).get("nodes", []) if n.get("ok")]
@@ -197,6 +261,175 @@ class Store:
             c.execute("INSERT OR IGNORE INTO app_meta (key,value) VALUES (?,?)", (key, value))
         return c.execute("SELECT value FROM app_meta WHERE key = ?", (key,)).fetchone()["value"]
 
+    def _backfill_pool_hourly(self):
+        """Seed pool_hourly from the raw samples once (it started empty on upgrade)."""
+        c = self._conn()
+        if c.execute("SELECT 1 FROM pool_hourly LIMIT 1").fetchone():
+            return
+        acc = {}
+        for ts, detail in c.execute("SELECT ts, detail FROM samples ORDER BY ts"):
+            try:
+                pools = (json.loads(detail or "{}") or {}).get("pools") or []
+            except ValueError:
+                continue
+            hour = ts - ts % 3600
+            for pool in pools:
+                free, any_free = pool_free(pool)
+                a = acc.setdefault((hour, pool.get("id", "")), [0, 0, 0.0])
+                a[0] += 1
+                a[1] += any_free
+                a[2] += free
+        if acc:
+            with c:
+                c.executemany(
+                    "INSERT OR IGNORE INTO pool_hourly (hour,pool,n,free_n,free_sum) VALUES (?,?,?,?,?)",
+                    [(h, p, *v) for (h, p), v in acc.items()])
+
+    def pool_hours(self, since):
+        """[(hour, pool, n, free_n)] from `since` on."""
+        c = self._conn()
+        return [tuple(r) for r in c.execute(
+            "SELECT hour,pool,n,free_n FROM pool_hourly WHERE hour >= ? ORDER BY hour", (since,))]
+
+    # ---- job accounting history (sacct) ----------------------------------------
+    def user_key(self, user):
+        """Installation-keyed pseudonym of a login name (stable, not reversible)."""
+        return hashlib.blake2b(str(user).encode(), key=self._user_key, digest_size=8).hexdigest()
+
+    def upsert_jobs(self, rows):
+        """Insert or refresh sacct rows (job_history.parse_sacct dicts, the latest
+        record of each job); returns the count stored as the job's row.
+
+        A requeued job has one record per run, and windows can deliver them in
+        any order, so the row always holds the newest run: a stored run that an
+        incoming newer one supersedes moves to job_attempts, and an incoming
+        older run goes there directly instead of overwriting the row."""
+        if not rows:
+            return 0
+        c = self._conn()
+        with c:
+            existing = {}
+            ids = [r["id"] for r in rows]
+            for i in range(0, len(ids), 500):
+                chunk = ids[i:i + 500]
+                for e in c.execute(
+                        f'SELECT id,start,"end",user,partition,submit,cpus,gpus FROM jobs '
+                        f'WHERE id IN ({",".join("?" * len(chunk))}) AND start IS NOT NULL', chunk):
+                    existing[e["id"]] = tuple(e)
+            keep, attempts = [], []
+            for r in rows:
+                e = existing.get(r["id"])
+                start = r.get("start")
+                if e is None or start == e[1]:
+                    keep.append(r)
+                elif start is not None and start < e[1]:
+                    # an older run arriving late: it ended by the time the stored one began
+                    ends = [t for t in (r.get("end"), e[1]) if t]
+                    attempts.append((r["id"], start, max(start, min(ends)), self.user_key(r["user"]),
+                                     r.get("partition"), r.get("submit"), r.get("cpus"), r.get("gpus")))
+                else:
+                    # newer run (or requeued and pending again): the stored run is history
+                    jid, old_start, old_end, user, part, submit, cpus, gpus = e
+                    ends = [t for t in (old_end, start) if t]
+                    attempts.append((jid, old_start, max(old_start, min(ends)) if ends else old_start,
+                                     user, part, submit, cpus, gpus))
+                    keep.append(r)
+            if attempts:
+                c.executemany('INSERT OR REPLACE INTO job_attempts VALUES (?,?,?,?,?,?,?,?)', attempts)
+            cols = ",".join(f'"{k}"' for k in JOB_COLUMNS)
+            updates = ",".join(f'"{k}"=excluded."{k}"' for k in JOB_COLUMNS if k != "id")
+            c.executemany(
+                f"INSERT INTO jobs ({cols}) VALUES ({','.join('?' * len(JOB_COLUMNS))}) "
+                f"ON CONFLICT(id) DO UPDATE SET {updates}",
+                [tuple(self.user_key(r["user"]) if k == "user" else r.get(k) for k in JOB_COLUMNS)
+                 for r in keep])
+        return len(keep)
+
+    def upsert_attempts(self, rows):
+        """Earlier runs of requeued jobs (job_history.split_attempts dicts)."""
+        values = [(r["id"], r["start"], r["end"], self.user_key(r["user"]), r.get("partition"),
+                   r.get("submit"), r.get("cpus"), r.get("gpus")) for r in rows if r.get("start")]
+        if values:
+            c = self._conn()
+            with c:
+                c.executemany('INSERT OR REPLACE INTO job_attempts VALUES (?,?,?,?,?,?,?,?)', values)
+        return len(values)
+
+    def stale_ids(self, ids):
+        """The subset of `ids` stored as STALE."""
+        out = set()
+        c = self._conn()
+        ids = list(ids)
+        for i in range(0, len(ids), 500):
+            chunk = ids[i:i + 500]
+            out.update(r["id"] for r in c.execute(
+                f"SELECT id FROM jobs WHERE state = 'STALE' AND id IN ({','.join('?' * len(chunk))})", chunk))
+        return out
+
+    def mark_stale(self, ids):
+        """Jobs sacct no longer returns although they were left pending/running."""
+        if not ids:
+            return
+        c = self._conn()
+        with c:
+            for i in range(0, len(ids), 500):
+                chunk = list(ids[i:i + 500])
+                c.execute(f'UPDATE jobs SET state = \'STALE\', "end" = start, elapsed = 0 '
+                          f'WHERE id IN ({",".join("?" * len(chunk))})', chunk)
+
+    def window_attempts(self, since):
+        """[(user, partition, start, end, cpus, gpus)] of earlier runs of jobs submitted since `since`."""
+        c = self._conn()
+        return [tuple(r) for r in c.execute(
+            'SELECT user,partition,start,"end",cpus,gpus FROM job_attempts WHERE submit >= ?', (since,))]
+
+    def jobs_window(self, since):
+        """Every job submitted at or after `since`, as tuples in JOB_COLUMNS order.
+
+        Repeated strings (user keys, partitions, states) are interned: a 90-day
+        window holds a few hundred thousand rows but only a few hundred distinct
+        values, and sqlite hands out a fresh copy of each one per row."""
+        cols = ",".join(f'"{k}"' for k in JOB_COLUMNS)
+        c = self._conn()
+        intern = sys.intern
+        return [tuple(intern(v) if isinstance(v, str) else v for v in r) for r in c.execute(
+            f"SELECT {cols} FROM jobs WHERE submit >= ? ORDER BY id", (since,))]
+
+    def iter_job_history(self):
+        """Stream (user, partition, submit, start, end, cpus, gpus) over every stored
+        job and every earlier run of a requeued job."""
+        c = self._conn()
+        for table in ("jobs", "job_attempts"):
+            cur = c.execute(f'SELECT user,partition,submit,start,"end",cpus,gpus FROM {table}')
+            while True:
+                chunk = cur.fetchmany(20000)
+                if not chunk:
+                    break
+                for r in chunk:
+                    yield tuple(r)
+
+    def active_jobs(self):
+        """[(id, job_key, submit)] of rows sacct last reported as pending or running."""
+        marks = ",".join("?" * len(ACTIVE_STATES))
+        c = self._conn()
+        return [tuple(r) for r in c.execute(
+            f"SELECT id, job_key, submit FROM jobs WHERE state IN ({marks})", ACTIVE_STATES)]
+
+    def job_stats(self):
+        c = self._conn()
+        r = c.execute("SELECT count(*) n, min(submit) a, max(submit) b FROM jobs").fetchone()
+        return {"jobs": r["n"], "first_submit": r["a"], "last_submit": r["b"]}
+
+    def meta_get(self, key, default=None):
+        row = self._conn().execute("SELECT value FROM app_meta WHERE key = ?", (key,)).fetchone()
+        return row["value"] if row else default
+
+    def meta_set(self, key, value):
+        c = self._conn()
+        with c:
+            c.execute("""INSERT INTO app_meta (key,value) VALUES (?,?)
+                         ON CONFLICT(key) DO UPDATE SET value = excluded.value""", (key, str(value)))
+
     def prune(self, now):
         cutoff = int(now) - self.retain_days * 86400
         login_cutoff = int(now) - self.login_retain_days * 86400
@@ -217,6 +450,9 @@ class Store:
                      value = CAST(CAST(value AS INTEGER) + CAST(excluded.value AS INTEGER) AS TEXT)""",
                 (visit_cutoff,))
             c.execute("DELETE FROM visits WHERE day < ?", (visit_cutoff,))
+            job_cutoff = int(now) - self.job_retain_days * 86400
+            c.execute('DELETE FROM jobs WHERE coalesce("end", start, submit) < ?', (job_cutoff,))
+            c.execute('DELETE FROM job_attempts WHERE coalesce("end", start) < ?', (job_cutoff,))
 
     # ---- read --------------------------------------------------------------
     def history(self, since, until, max_points=600):
@@ -370,6 +606,8 @@ class Store:
                 "retain_days": self.retain_days,
                 "login_retain_days": self.login_retain_days,
                 "visit_retain_days": self.visit_retain_days,
+                "job_retain_days": self.job_retain_days,
+                "jobs": c.execute("SELECT count(*) n FROM jobs").fetchone()["n"],
                 "schema_version": SCHEMA_VERSION}
 
     def close(self):
