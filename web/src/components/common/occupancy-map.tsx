@@ -19,9 +19,8 @@ export interface OccupancyTile {
   details: string[];
 }
 
-// users in three blues (neighbours stay apart); free green, offline gray —
-// the same meanings as every bar on the page
-const USER_SHADES = ["var(--blue-9)", "var(--blue-11)", "var(--blue-10)"];
+// one blue for every user (the gaps between tiles separate them), green
+// free, gray offline — the same meanings as every bar on the page
 
 /**
  * The pool as one box, each tile's area its share: who holds how much is the
@@ -39,7 +38,6 @@ export function OccupancyMap({ tiles, ariaLabel, className }: { tiles: Occupancy
     return () => ro.disconnect();
   }, []);
   const rects = squarify(tiles, (t) => t.value, size.w, size.h);
-  let shade = 0;
   return (
     <div
       ref={ref}
@@ -49,7 +47,6 @@ export function OccupancyMap({ tiles, ariaLabel, className }: { tiles: Occupancy
       onMouseLeave={() => setTip(null)}
     >
       {rects.map(({ item: t, x, y, w, h }) => {
-        const bg = t.kind === "user" ? USER_SHADES[shade++ % USER_SHADES.length] : undefined;
         const roomy = w > 84 && h > 54;
         const named = w > 40 && h > 22;
         const show = (e: { clientX: number; clientY: number }) => setTip({ tile: t, x: e.clientX, y: e.clientY });
@@ -68,11 +65,11 @@ export function OccupancyMap({ tiles, ariaLabel, className }: { tiles: Occupancy
             className={cn(
               "absolute overflow-hidden rounded-md border-2 border-card px-2 py-1.5 text-xs leading-snug outline-none transition-[filter]",
               "hover:brightness-110 focus-visible:brightness-110",
-              t.kind === "user" && "text-white",
+              t.kind === "user" && "bg-info text-white",
               t.kind === "free" && "bg-ok text-white",
               t.kind === "off" && "bg-muted-foreground/30 text-foreground",
             )}
-            style={{ left: x, top: y, width: w, height: h, background: bg }}
+            style={{ left: x, top: y, width: w, height: h }}
           >
             {t.kind === "user" ? (
               <>
