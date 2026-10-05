@@ -297,7 +297,7 @@ function PoolCard({ pool, snap, t }: { pool: Pool; snap: Snapshot; t: TFn }) {
         </div>
 
         {isGpu && pool.gpu ? (
-          <GpuBlocks gpu={pool.gpu} schedulableFree={readyGpu} className="mt-2" />
+          <GpuBlocks t={t} gpu={pool.gpu} schedulableFree={readyGpu} className="mt-2" />
         ) : (
           <UnitBlocks
             free={free}
@@ -1864,16 +1864,13 @@ function poolQueueFact(jobs: RawJob[], partPool: Record<string, string>, poolId:
   };
 }
 
+/** Why a request queues while something is free: the jobs the scheduler
+ *  places first take it. One fact, not the queue's whole census. */
 function queueFactText(fact: QueueFact, t: TFn) {
-  const free = fact.isGpu
-    ? t("pool.queueFactFreeGpu", { n: fact.free })
-    : t("pool.queueFactFreeCpu", { n: fact.free });
-  const largest = fact.maxGpus > 0
-    ? t("pool.queueFactMaxGpu", { n: fact.maxGpus })
-    : t("pool.queueFactMaxCpu", { n: fact.maxCpus });
-  const priority = fact.priority > 0 ? ` · ${t("pool.queueFactPriority", { n: fact.priority })}` : "";
-  const limited = fact.limited > 0 ? ` · ${t("pool.queueFactLimited", { n: fact.limited })}` : "";
-  return `${free} · ${t("pool.queueFactPool", { n: fact.pending })}${priority}${limited} · ${largest}`;
+  const ahead = Math.max(0, fact.pending - fact.limited);
+  if (fact.free <= 0 || ahead === 0) return t("pool.queueFactBusy");
+  const free = fact.isGpu ? `${nf(fact.free)} ${t("unit.gpu")}` : coresText(t, fact.free);
+  return t("pool.queueFactAhead", { free, n: ahead });
 }
 
 function GpuBackfillQuickTip({
@@ -2096,7 +2093,7 @@ function fmtMemRaw(mb: number) {
 /** One block per physical GPU — ready (green), unavailable idle capacity
  * (amber, whether constrained or scheduler-reserved), used (red), then
  * genuinely offline (grey with an inset border). */
-function GpuBlocks({ gpu, schedulableFree, className }: { gpu: PoolGpu; schedulableFree?: number; className?: string }) {
+function GpuBlocks({ gpu, schedulableFree, className, t }: { gpu: PoolGpu; schedulableFree?: number; className?: string; t: TFn }) {
   const ready = Math.max(0, Math.min(gpu.free, schedulableFree ?? gpu.free));
   const stranded = Math.max(0, gpu.free - ready);
   const reserved = Math.max(0, gpu.reserved ?? 0);
@@ -2105,7 +2102,13 @@ function GpuBlocks({ gpu, schedulableFree, className }: { gpu: PoolGpu; schedula
       <span key={key + i} className={cn("h-2.5 min-w-0 flex-1 rounded-sm", cls)} />
     ));
   return (
-    <div className={cn("flex gap-0.5", className)} title={`${ready} ready · ${stranded} constrained · ${reserved} reserved · ${gpu.used} used${gpu.down ? ` · ${gpu.down} down` : ""}`}>
+    <div className={cn("flex gap-0.5", className)} title={[
+      ready && t("blocks.ready", { n: ready }),
+      stranded && t("blocks.constrained", { n: stranded }),
+      reserved && t("blocks.reserved", { n: reserved }),
+      gpu.used && t("blocks.used", { n: gpu.used }),
+      gpu.down && t("blocks.down", { n: gpu.down }),
+    ].filter(Boolean).join(" · ")}>
       {seg(ready, "bg-ok", "f")}
       {seg(stranded, "bg-warn", "s")}
       {seg(reserved, "bg-warn", "r")}

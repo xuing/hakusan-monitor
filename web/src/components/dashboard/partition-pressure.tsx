@@ -417,7 +417,7 @@ function PoolHeader({
         <UnitBlocks
           {...blocks}
           schedulable={isGpu ? gpuReady : pc.idleNodes}
-          strandedLabel={isGpu ? undefined : "partly free"}
+          strandedLabel={isGpu ? undefined : t("blocks.partlyFree")}
         />
         {maint ? (
           <>

@@ -1,3 +1,4 @@
+import { useT } from "@/i18n";
 import { nf } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
@@ -9,7 +10,7 @@ export function UnitBlocks({
   total,
   unit,
   schedulable,
-  strandedLabel = "unused by any policy",
+  strandedLabel,
   className,
 }: {
   free: number;
@@ -27,6 +28,7 @@ export function UnitBlocks({
   strandedLabel?: string;
   className?: string;
 }) {
+  const t = useT();
   if (total <= 0) return null;
   const stranded = schedulable !== undefined ? Math.max(0, free - schedulable) : 0;
   const okFree = schedulable !== undefined ? Math.min(schedulable, free) : free;
@@ -41,7 +43,12 @@ export function UnitBlocks({
   return (
     <div
       className={cn("flex h-2.5 w-36 shrink-0 gap-px", className)}
-      title={`${nf(free)} ${unit} ${unit === "GPU" ? "free" : "available"}${stranded ? ` (${nf(stranded)} ${strandedLabel})` : ""} · ${nf(used)} used${reserved ? ` · ${nf(reserved)} reserved` : ""}${down ? ` · ${nf(down)} down` : ""}`}
+      title={[
+        `${t("blocks.free", { n: `${nf(free)} ${unit}` })}${stranded ? ` (${nf(stranded)} ${strandedLabel ?? t("blocks.unusable")})` : ""}`,
+        used && t("blocks.used", { n: nf(used) }),
+        reserved && t("blocks.reserved", { n: nf(reserved) }),
+        down && t("blocks.down", { n: nf(down) }),
+      ].filter(Boolean).join(" · ")}
     >
       {/* Reserved reads exactly like stranded — idle, reachable only via
           tweaks or the timed gap — so it sits solid amber with the free-ish
