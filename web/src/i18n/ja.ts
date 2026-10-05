@@ -13,6 +13,8 @@ export const ja: Record<TranslationKey, string> = {
   "nav.slurm": "Slurm ガイド",
   "nav.containers": "コンテナ",
   "nav.project": "このモニターについて",
+  "nav.collapse": "サイドバーを折りたたむ",
+  "nav.expand": "サイドバーを開く",
   "nav.section.monitor": "モニター",
   "nav.section.raw": "生データ",
   "nav.section.guide": "ガイド",

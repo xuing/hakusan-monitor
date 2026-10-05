@@ -13,6 +13,8 @@ export const zh: Record<TranslationKey, string> = {
   "nav.slurm": "Slurm 指南",
   "nav.containers": "容器",
   "nav.project": "项目说明",
+  "nav.collapse": "收起侧栏",
+  "nav.expand": "展开侧栏",
   "nav.section.monitor": "监控",
   "nav.section.raw": "原始数据",
   "nav.section.guide": "指南",

@@ -13,6 +13,8 @@ export const en = {
   "nav.slurm": "Slurm guide",
   "nav.containers": "Containers",
   "nav.project": "About this monitor",
+  "nav.collapse": "Collapse sidebar",
+  "nav.expand": "Expand sidebar",
   "nav.section.monitor": "Monitor",
   "nav.section.raw": "Raw data",
   "nav.section.guide": "Guide",
