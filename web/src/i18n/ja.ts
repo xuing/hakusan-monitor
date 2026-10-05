@@ -1,3 +1,4 @@
+import { analyticsJa } from "./analytics.ja";
 import type { TranslationKey } from "./en";
 
 export const ja: Record<TranslationKey, string> = {
@@ -23,7 +24,7 @@ export const ja: Record<TranslationKey, string> = {
   "page.nodes.desc": "全計算ノードとそのリアルタイム状態。",
   "page.jobs.desc": "キュー内の全ジョブ（実行中・実行待ち）。",
   "page.partitions.desc": "各パーティションで確保できる資源量と、ジョブがすぐに始まるか待ちになるか。",
-  "page.analytics.desc": "利用傾向と時系列トレンド。",
+  "page.analytics.desc": "ジョブ履歴：いつ投入されるか、どれだけ待つか、何を申請しているか。",
   "page.loginNodes.desc": "ログインノードの負荷、メモリ、ディスク、上位プロセス。",
   "page.slurm.desc": "ログインノードでジョブを投入すると、Slurm が計算ノードで実行します。",
   "page.containers.desc": "Hakusan でのコンテナ実行方法（Singularity）。",
@@ -68,8 +69,6 @@ export const ja: Record<TranslationKey, string> = {
   "section.releases": "まもなく終わるジョブ",
   "section.queue": "キューの状況",
   "section.containers": "コンテナ",
-  "section.usage": "混雑する時間帯",
-  "section.trend": "直近 24 時間",
   "section.nodesdown": "要対応ノード",
   "section.topusers": "使用量の多いユーザー",
 
@@ -86,6 +85,7 @@ export const ja: Record<TranslationKey, string> = {
   "login.historyLoad": "コアあたり負荷（直近 24 時間）",
   "login.historyMem": "メモリ使用率（直近 24 時間）",
   "login.historyIowait": "I/O 待ち（直近 24 時間）",
+  "trend.nodata": "履歴はまだありません。収集がしばらく動くと表示されます。",
   "login.topUsers": "負荷の大きいユーザー",
   "login.processes": "上位プロセス",
   "login.loadCore": "負荷 / コア",
@@ -581,35 +581,9 @@ export const ja: Record<TranslationKey, string> = {
   "guide.visits.since": "{date} から",
   "guide.visits.tip": "訪問者 {v} 人 · アクセス {h} 回",
 
-  "usage.lead": "JST・直近 {n} 日間。",
-  "usage.scope": "Slurm で割り当て済みの資源を示します。実際のハードウェア使用率ではありません。",
-  "usage.coverage": "直近 {n} 日 · {hours} 時間 · {samples} サンプル",
-  "usage.lowConfidence": "サンプルが少ないため参考値です。",
-  "usage.lowSample": "サンプル少",
-  "usage.samples": "{n} サンプル",
-  "usage.byhour": "時間帯別平均",
-  "usage.heatmap": "{metric} · 曜日 × 時間",
-  "usage.busiest": "最大の時間帯",
-  "usage.quietest": "最小の時間帯",
-  "usage.nodata": "データ収集中です。数時間すると傾向が表示されます。",
   "common.fetchError": "データの取得に失敗しました。自動的に再試行します。",
-  "usage.gpuAlloc": "GPU 割当率",
-  "usage.cpuAlloc": "CPU 割当率",
-  "usage.pending": "実行待ち",
 
-  "weekday.0": "日",
-  "weekday.1": "月",
-  "weekday.2": "火",
-  "weekday.3": "水",
-  "weekday.4": "木",
-  "weekday.5": "金",
-  "weekday.6": "土",
 
-  "trend.scope": "JST · Slurm 割当率",
-  "trend.cpuAlloc": "CPU 割当率",
-  "trend.gpuAlloc": "GPU 割当率",
-  "trend.pending": "待ちジョブ",
-  "trend.nodata": "履歴はまだありません。収集がしばらく動くと表示されます。",
 
   "nodesdown.none": "全ノード正常",
   "nodesdown.count": "{n} ノード",
@@ -734,4 +708,5 @@ export const ja: Record<TranslationKey, string> = {
   "users.queuedJobs": "実行待ち {n} 件",
   "users.held": "確保済み",
   "users.queued": "実行待ち",
+  ...analyticsJa,
 };

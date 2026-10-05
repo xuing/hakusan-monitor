@@ -10,6 +10,7 @@ import type {
   UsagePattern,
   VisitStats,
 } from "@/types/snapshot";
+import type { AnalyticsPayload } from "@/types/analytics";
 import { withBase } from "@/lib/base-path";
 
 async function get<T>(path: string, validate?: (value: unknown) => T): Promise<T> {
@@ -25,6 +26,7 @@ export const api = {
   history: (hours = 24) =>
     get<{ since: number; until: number; points: HistoryPoint[] }>(`/api/history?hours=${hours}`),
   usage: (days = 30) => get<UsagePattern>(`/api/usage?days=${days}`),
+  analytics: () => get<AnalyticsPayload>("/api/analytics"),
   visits: (days = 30) => get<VisitStats>(`/api/visits?days=${days}`),
   loginNodes: () => get<LoginNodesResponse>("/api/login-nodes"),
   /** raw job_submit.lua / sacctmgr / scontrol texts + verification report (large; on demand) */

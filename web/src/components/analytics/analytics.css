@@ -1,0 +1,123 @@
+/* Chart colours for the analytics page, validated with the dataviz palette
+   checks against the card surfaces (#ffffff light, #18191b dark).
+   - pool-*: categorical identity, fixed order per view (never by rank)
+   - blue-* / green-*: one-hue sequential ramps (submissions / free time)
+   - wait-*: queue wait — green = starts at once, then an amber ordinal ramp
+   - ok / bad / warn / serious / cancel: job end states (always with a legend)
+   Text never wears these colours; labels inside a fill use the *-ink pair. */
+.analytics-root {
+  --an-pool-1: #2a78d6;
+  --an-pool-2: #eb6834;
+  --an-pool-3: #1baf7a;
+  --an-pool-4: #eda100;
+  --an-blue-lo: #eef4fc;
+  --an-blue-mid: #6da7ec;
+  --an-blue-hi: #123f80;
+  --an-blue-bar: #6da7ec;
+  --an-blue-bar-on: #2a78d6;
+  --an-green-lo: #eff7f2;
+  --an-green-mid: #8eceaa;
+  --an-green-hi: #17603e;
+  --an-wait-0: #237f4f;
+  --an-wait-1: #d9a93a;
+  --an-wait-2: #c08419;
+  --an-wait-3: #9a5f0c;
+  --an-wait-4: #6b3d06;
+  --an-wait-ink-0: #ffffff;
+  --an-wait-ink-4: #ffffff;
+  --an-ok: #237f4f;
+  --an-bad: #ce2c31;
+  --an-warn: #e2a336;
+  --an-serious: #ec835a;
+  --an-cancel: #c2c8d0;
+  --an-ok-ink: #ffffff;
+  --an-bad-ink: #ffffff;
+  --an-warn-ink: #2a1c02;
+  --an-serious-ink: #2a1405;
+  --an-cancel-ink: #11192c;
+  --an-neutral: #7b8aa3;
+  --an-neutral-soft: #8a96a8;
+  /* ordinal: more GPUs / cores per job = darker */
+  --an-units-1: #cbd5e1;
+  --an-units-2: #a3b1c6;
+  --an-units-3: #7b8aa3;
+  --an-units-4: #56657f;
+  --an-units-5: #364259;
+  --an-units-ink-1: #11192c;
+  --an-units-ink-2: #11192c;
+  --an-units-ink-3: #11192c;
+  --an-units-ink-4: #ffffff;
+  --an-units-ink-5: #ffffff;
+  --an-violet: #4a3aa7;
+  --an-conc-0: #3f2f9b;
+  --an-conc-1: #5b4bc4;
+  --an-conc-2: #8273d9;
+  --an-conc-3: #ab9fe8;
+  --an-conc-4: #c9ced6;
+  --an-grid: hsl(214 24% 93%);
+  --an-axis: hsl(214 20% 82%);
+  --an-track: hsl(210 40% 95%);
+}
+
+.dark .analytics-root {
+  --an-pool-1: #3987e5;
+  --an-pool-2: #d95926;
+  --an-pool-3: #199e70;
+  --an-pool-4: #c98500;
+  --an-blue-lo: #1a2332;
+  --an-blue-mid: #2a5f9e;
+  --an-blue-hi: #9cc6f6;
+  --an-blue-bar: #2a5f9e;
+  --an-blue-bar-on: #3f86de;
+  --an-green-lo: #17201b;
+  --an-green-mid: #23704b;
+  --an-green-hi: #6ee5a5;
+  --an-wait-0: #2f9e64;
+  --an-wait-1: #866416;
+  --an-wait-2: #b0841a;
+  --an-wait-3: #dba424;
+  --an-wait-4: #ffc94d;
+  --an-wait-ink-0: #07140d;
+  --an-wait-ink-4: #1a1203;
+  --an-ok: #33b074;
+  --an-bad: #ec5d5e;
+  --an-warn: #e2a336;
+  --an-serious: #ec835a;
+  --an-cancel: #5b616c;
+  --an-ok-ink: #07140d;
+  --an-bad-ink: #1a0606;
+  --an-warn-ink: #1a1203;
+  --an-serious-ink: #1a0b04;
+  --an-cancel-ink: #ebecf0;
+  --an-neutral: #7f8ba0;
+  --an-neutral-soft: #6f7a8c;
+  /* ordinal: more GPUs / cores per job = brighter */
+  --an-units-1: #3a414c;
+  --an-units-2: #4f5867;
+  --an-units-3: #7a869a;
+  --an-units-4: #9aa6b8;
+  --an-units-5: #c3cad6;
+  --an-units-ink-1: #ebecf0;
+  --an-units-ink-2: #ebecf0;
+  --an-units-ink-3: #111113;
+  --an-units-ink-4: #111113;
+  --an-units-ink-5: #111113;
+  --an-violet: #9085e9;
+  --an-conc-0: #b3a9f2;
+  --an-conc-1: #9085e9;
+  --an-conc-2: #7062d6;
+  --an-conc-3: #5547b8;
+  --an-conc-4: #3e434c;
+  --an-grid: hsl(220 7% 15%);
+  --an-axis: hsl(220 7% 24%);
+  --an-track: hsl(222 7% 16%);
+}
+
+.analytics-root .an-cell {
+  transition: box-shadow 80ms;
+}
+
+.analytics-root .an-cell:hover,
+.analytics-root .an-cell[data-on="true"] {
+  box-shadow: 0 0 0 2px hsl(var(--foreground));
+}

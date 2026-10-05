@@ -1,5 +1,7 @@
 // English dictionary — the source of truth for translation keys.
 // `{n}` / `{t}` placeholders are filled by t(key, vars).
+import { analyticsEn } from "./analytics.en";
+
 export const en = {
   "app.title": "Hakusan Monitor",
   "app.subtitle": "JAIST HPC cluster",
@@ -23,7 +25,7 @@ export const en = {
   "page.nodes.desc": "Every compute node and its live state.",
   "page.jobs.desc": "Every job in the queue, running and pending.",
   "page.partitions.desc": "How much each partition can give you, and whether a job starts right away or queues.",
-  "page.analytics.desc": "Usage patterns and trends over time.",
+  "page.analytics.desc": "Job history: when people submit, how long jobs wait, what they request.",
   "page.loginNodes.desc": "Login-node load, memory, disk and top processes.",
   "page.slurm.desc": "You submit jobs on a login node; Slurm runs them on compute nodes.",
   "page.containers.desc": "Running containers on Hakusan with Singularity.",
@@ -68,8 +70,6 @@ export const en = {
   "section.releases": "Jobs ending soonest",
   "section.queue": "Queue",
   "section.containers": "Containers",
-  "section.usage": "Busy hours",
-  "section.trend": "Last 24 hours",
   "section.nodesdown": "Nodes needing attention",
   "section.topusers": "Top users by usage",
 
@@ -86,6 +86,7 @@ export const en = {
   "login.historyLoad": "Load per core, last 24 h",
   "login.historyMem": "Memory used, last 24 h",
   "login.historyIowait": "I/O wait, last 24 h",
+  "trend.nodata": "No history yet; it appears once the collector has run for a while.",
   "login.topUsers": "Users causing the most load",
   "login.processes": "Top processes",
   "login.loadCore": "Load / core",
@@ -581,35 +582,9 @@ export const en = {
   "guide.visits.since": "since {date}",
   "guide.visits.tip": "{v} visitors · {h} views",
 
-  "usage.lead": "JST, last {n} days.",
-  "usage.scope": "Shows Slurm-allocated resources, not actual hardware utilization.",
-  "usage.coverage": "Last {n} days · {hours} hours · {samples} samples",
-  "usage.lowConfidence": "Sparse data; use as a rough signal.",
-  "usage.lowSample": "few samples",
-  "usage.samples": "{n} samples",
-  "usage.byhour": "Average by hour",
-  "usage.heatmap": "{metric} · weekday × hour",
-  "usage.busiest": "Highest hour",
-  "usage.quietest": "Lowest hour",
-  "usage.nodata": "Collecting data; patterns show up after a few hours.",
   "common.fetchError": "Couldn't load this data — it will retry automatically.",
-  "usage.gpuAlloc": "GPU allocation",
-  "usage.cpuAlloc": "CPU allocation",
-  "usage.pending": "pending",
 
-  "weekday.0": "Sun",
-  "weekday.1": "Mon",
-  "weekday.2": "Tue",
-  "weekday.3": "Wed",
-  "weekday.4": "Thu",
-  "weekday.5": "Fri",
-  "weekday.6": "Sat",
 
-  "trend.scope": "JST · Slurm allocation",
-  "trend.cpuAlloc": "CPU allocation",
-  "trend.gpuAlloc": "GPU allocation",
-  "trend.pending": "Pending jobs",
-  "trend.nodata": "No history yet; it appears once the collector has run for a while.",
 
   "nodesdown.none": "All nodes healthy",
   "nodesdown.count": "{n} nodes",
@@ -735,6 +710,7 @@ export const en = {
   "users.queuedJobs": "{n} queued",
   "users.held": "held",
   "users.queued": "queued",
+  ...analyticsEn,
 } satisfies Record<string, string>;
 
 export type TranslationKey = keyof typeof en;

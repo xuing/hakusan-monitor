@@ -1,3 +1,4 @@
+import { analyticsZh } from "./analytics.zh";
 import type { TranslationKey } from "./en";
 
 export const zh: Record<TranslationKey, string> = {
@@ -23,7 +24,7 @@ export const zh: Record<TranslationKey, string> = {
   "page.nodes.desc": "每个计算节点及其实时状态。",
   "page.jobs.desc": "队列中的所有作业（运行中与排队中）。",
   "page.partitions.desc": "每个分区能给你多少资源，作业会直接运行还是排队。",
-  "page.analytics.desc": "使用规律与时间趋势。",
+  "page.analytics.desc": "作业历史：大家什么时候提交、要等多久、怎么申请资源。",
   "page.loginNodes.desc": "登录节点的负载、内存、磁盘和高占用进程。",
   "page.slurm.desc": "在登录节点上提交作业，Slurm 把它排到计算节点上运行。",
   "page.containers.desc": "在 Hakusan 上运行容器的方法（Singularity）。",
@@ -68,8 +69,6 @@ export const zh: Record<TranslationKey, string> = {
   "section.releases": "即将结束的作业",
   "section.queue": "排队情况",
   "section.containers": "容器",
-  "section.usage": "繁忙时段",
-  "section.trend": "最近 24 小时",
   "section.nodesdown": "需关注的节点",
   "section.topusers": "占用资源最多的用户",
 
@@ -86,6 +85,7 @@ export const zh: Record<TranslationKey, string> = {
   "login.historyLoad": "每核负载（最近 24 小时）",
   "login.historyMem": "内存使用（最近 24 小时）",
   "login.historyIowait": "I/O 等待（最近 24 小时）",
+  "trend.nodata": "还没有历史数据，采集器跑一段时间后会显示。",
   "login.topUsers": "造成负载最多的用户",
   "login.processes": "占用最多的进程",
   "login.loadCore": "负载 / 核",
@@ -581,35 +581,9 @@ export const zh: Record<TranslationKey, string> = {
   "guide.visits.since": "自 {date} 起",
   "guide.visits.tip": "{v} 位访客 · {h} 次访问",
 
-  "usage.lead": "JST，最近 {n} 天。",
-  "usage.scope": "统计 Slurm 已分配资源，不代表硬件实际利用率。",
-  "usage.coverage": "最近 {n} 天 · {hours} 小时 · {samples} 次采样",
-  "usage.lowConfidence": "样本较少，仅供参考。",
-  "usage.lowSample": "样本少",
-  "usage.samples": "{n} 次采样",
-  "usage.byhour": "按小时平均",
-  "usage.heatmap": "{metric} · 星期 × 小时",
-  "usage.busiest": "最高时段",
-  "usage.quietest": "最低时段",
-  "usage.nodata": "正在采集数据，几小时后就能看到规律。",
   "common.fetchError": "数据加载失败，将自动重试。",
-  "usage.gpuAlloc": "GPU 分配率",
-  "usage.cpuAlloc": "CPU 分配率",
-  "usage.pending": "排队",
 
-  "weekday.0": "日",
-  "weekday.1": "一",
-  "weekday.2": "二",
-  "weekday.3": "三",
-  "weekday.4": "四",
-  "weekday.5": "五",
-  "weekday.6": "六",
 
-  "trend.scope": "JST · Slurm 分配率",
-  "trend.cpuAlloc": "CPU 分配率",
-  "trend.gpuAlloc": "GPU 分配率",
-  "trend.pending": "排队作业",
-  "trend.nodata": "还没有历史数据，采集器跑一段时间后会显示。",
 
   "nodesdown.none": "所有节点正常",
   "nodesdown.count": "{n} 个节点",
@@ -734,4 +708,5 @@ export const zh: Record<TranslationKey, string> = {
   "users.queuedJobs": "排队 {n} 个作业",
   "users.held": "已占用",
   "users.queued": "排队中",
+  ...analyticsZh,
 };
