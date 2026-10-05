@@ -2184,6 +2184,8 @@ function Occupants({ pool, t }: { pool: Pool; t: TFn }) {
           tiles={poolOccupancyTiles(pool, snap, userGroups, t)}
           ariaLabel={t("pool.sortUsage")}
           restLabel={(k, amount) => ({ label: t("users.others", { n: k }), amount: isGpu ? `${nf(amount)} ${t("unit.gpu")}` : coresText(t, amount) })}
+          perRow={wholeNodePool(pool, snap) || undefined}
+          nodeWord={t("spec.nodes")}
         />
       ) : (
       <div className="max-h-72 space-y-1 overflow-y-auto pr-1">
@@ -2210,6 +2212,18 @@ function Occupants({ pool, t }: { pool: Pool; t: TFn }) {
   );
 }
 
+/** Cores per node where no job here can outgrow one node (VM-CPU: 32-core
+ *  VMs, QoS max 32 cores): the map then draws one row per node. 0 otherwise. */
+function wholeNodePool(pool: Pool, snap: Snapshot): number {
+  if (pool.kind === "gpu" || pool.partitions.length === 0) return 0;
+  const perNode = poolCoresPerNode(pool);
+  const fits = pool.partitions.every((p) => {
+    const max = partitionCap(p, snap.policy).maxCores;
+    return max !== undefined && max <= perNode;
+  });
+  return fits ? perNode : 0;
+}
+
 /** Tiles for a pool's occupancy map: one per user (GPUs on a GPU pool,
  *  cores otherwise), then what is free and what is offline. */
 function poolOccupancyTiles(pool: Pool, snap: Snapshot, groups: OccupantUserGroup[], t: TFn): OccupancyTile[] {
@@ -2232,6 +2246,7 @@ function poolOccupancyTiles(pool: Pool, snap: Snapshot, groups: OccupantUserGrou
         label: g.user,
         amount: unit(value),
         sub: `${g.nodes} ${t("spec.nodes")}`,
+        // the row layout prints one line: who, how much, how many nodes
         queued: queued > 0,
         details: [
           `${g.nodes} ${t("spec.nodes")} · ${t(g.jobs === 1 ? "users.job1" : "users.jobs", { n: g.jobs })}`,

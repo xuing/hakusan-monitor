@@ -62,13 +62,52 @@ function layoutTiles(tiles: OccupancyTile[], w: number, h: number,
   return [...top, ...strip];
 }
 
+const ROW_MIN_H = 30;
+
+/** One row per node, top to bottom: users first, then free and offline. A
+ *  user's rows keep at least ROW_MIN_H so a one-node job still reads; the
+ *  rest share what is left in proportion to their nodes. */
+function layoutRows(tiles: OccupancyTile[], w: number, h: number, perRow: number) {
+  const live = tiles.filter((t) => t.value > 0);
+  const nodesOf = (t: OccupancyTile) => Math.max(1, Math.round(t.value / perRow));
+  const total = live.reduce((a, t) => a + nodesOf(t), 0);
+  if (!total || w <= 0 || h <= 0) return [];
+  const unit = h / total;
+  const users = live.filter((t) => t.kind === "user");
+  const rest = live.filter((t) => t.kind !== "user");
+  const userH = users.map((t) => Math.max(ROW_MIN_H, nodesOf(t) * unit));
+  let left = h - userH.reduce((a, b) => a + b, 0);
+  const restNodes = rest.reduce((a, t) => a + nodesOf(t), 0);
+  // too many users for their minimum: fall back to plain proportions
+  const scale = left < 0 || (!rest.length && left !== 0) ? h / userH.reduce((a, b) => a + b, 0) : 1;
+  if (scale !== 1) left = 0;
+  let y = 0;
+  const out: { item: OccupancyTile; x: number; y: number; w: number; h: number }[] = [];
+  users.forEach((t, i) => {
+    const th = userH[i] * scale;
+    out.push({ item: t, x: 0, y, w, h: th });
+    y += th;
+  });
+  for (const t of rest) {
+    const th = restNodes ? (left * nodesOf(t)) / restNodes : 0;
+    out.push({ item: t, x: 0, y, w, h: th });
+    y += th;
+  }
+  return out;
+}
+
 /**
  * The pool as one box, each tile's area its share: who holds how much is the
  * first thing seen; cores, memory and jobs come up on hover (or a tap).
  */
-export function OccupancyMap({ tiles, ariaLabel, restLabel, className }: {
+export function OccupancyMap({ tiles, ariaLabel, restLabel, perRow, nodeWord = "", className }: {
   tiles: OccupancyTile[];
   ariaLabel: string;
+  /** cores of one node, where every job holds whole nodes: then one row per
+   *  node, stacked, instead of a treemap */
+  perRow?: number;
+  /** "节点", after the node count each row block prints */
+  nodeWord?: string;
   /** "其余 {n} 位" for strip tiles merged when they do not fit across */
   restLabel: (n: number, amount: number) => { label: string; amount: string };
   className?: string;
@@ -83,7 +122,7 @@ export function OccupancyMap({ tiles, ariaLabel, restLabel, className }: {
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
-  const rects = layoutTiles(tiles, size.w, size.h, restLabel);
+  const rects = perRow ? layoutRows(tiles, size.w, size.h, perRow) : layoutTiles(tiles, size.w, size.h, restLabel);
   return (
     <div
       ref={ref}
@@ -93,7 +132,12 @@ export function OccupancyMap({ tiles, ariaLabel, restLabel, className }: {
       onMouseLeave={() => setTip(null)}
     >
       {rects.map(({ item: t, x, y, w, h }) => {
-        const strip = h <= STRIP_H + 0.5 && y >= size.h - STRIP_H - 0.5;
+        const strip = perRow ? true : h <= STRIP_H + 0.5 && y >= size.h - STRIP_H - 0.5;
+        // one faint line per node inside a block of several
+        const nodes = perRow ? Math.max(1, Math.round(t.value / perRow)) : 1;
+        const lines = nodes > 1
+          ? { backgroundImage: `repeating-linear-gradient(to bottom, transparent 0, transparent ${h / nodes - 1}px, rgb(255 255 255 / 0.22) ${h / nodes - 1}px, rgb(255 255 255 / 0.22) ${h / nodes}px)` }
+          : undefined;
         const roomy = !strip && w > 84 && h > 62;
         const named = w > 40 && h > 22;
         // room for the whole hover card inside the tile
@@ -118,7 +162,7 @@ export function OccupancyMap({ tiles, ariaLabel, restLabel, className }: {
               t.kind === "free" && "bg-ok text-white",
               t.kind === "off" && "bg-muted-foreground/30 text-foreground",
             )}
-            style={{ left: x, top: y, width: w, height: h }}
+            style={{ left: x, top: y, width: w, height: h, ...lines }}
           >
             {strip ? (
               // one line: who and how much
@@ -126,6 +170,7 @@ export function OccupancyMap({ tiles, ariaLabel, restLabel, className }: {
                 {t.label && <span className="font-mono font-semibold">{t.label} </span>}
                 <span className={t.label ? "opacity-85" : "font-semibold"}>{t.amount}</span>
                 {!t.label && t.sub && <span className="opacity-85"> {t.sub}</span>}
+                {perRow && nodeWord && <span className="opacity-85"> · {nodes} {nodeWord}</span>}
               </div>
             ) : (
               <>
