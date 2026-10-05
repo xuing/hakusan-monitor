@@ -723,14 +723,14 @@ export const zh: Record<TranslationKey, string> = {
 
   // 占用资源最多的用户 (components/dashboard/top-users.tsx)
   "users.none": "没有运行中的作业",
+  "users.share": "占 {p}",
+  "users.free": "空闲",
+  "users.offline": "下线",
   "users.gpuGroup": "GPU 节点",
   "users.cpuGroup": "CPU 节点",
   "users.jobs": "{n} 个作业",
   "users.job1": "1 个作业",
-  "users.queuedUnits": "排队 {n} 个作业（{units}）",
   "users.queuedJobs": "排队 {n} 个作业",
-  "users.others": "其余 {n} 位用户",
-  "users.other1": "其余 1 位用户",
   "users.held": "已占用",
   "users.queued": "排队中",
 };

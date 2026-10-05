@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { Link } from "react-router";
 import { ChevronRight, Link2, Link2Off } from "lucide-react";
 import { CopyButton } from "@/components/common/copy-button";
+import { OccupancyMap, type OccupancyTile } from "@/components/common/occupancy-map";
 import { dayClockLabel, GpuReleaseHint } from "@/components/common/gpu-release-hint";
 import { FieldLabel, FieldNote, RangeSlider, SliderValueFixed, SliderValueInput, type SliderTick } from "@/components/common/range-slider";
 import { Segmented } from "@/components/common/segmented";
@@ -2176,6 +2177,11 @@ function Occupants({ pool, t }: { pool: Pool; t: TFn }) {
           {shown}/{total}
         </span>
       </div>
+      {/* by usage: the pool as one map, each user's tile its share; a search
+          narrows it to a list of the matching users */}
+      {groupByUser && !needle ? (
+        <OccupancyMap tiles={poolOccupancyTiles(pool, snap, userGroups, t)} ariaLabel={t("pool.sortUsage")} />
+      ) : (
       <div className="max-h-72 space-y-1 overflow-y-auto pr-1">
         {groupByUser ? (
           userGroups.map((group) => (
@@ -2190,6 +2196,7 @@ function Occupants({ pool, t }: { pool: Pool; t: TFn }) {
           <div className="py-3 text-center text-xs text-muted-foreground">{t("table.noresults")}</div>
         )}
       </div>
+      )}
       {pool.partitions.length > 0 && (
         <div className="pt-2 text-xs text-muted-foreground">
           {t("pool.submit")}: <span className="font-mono">{pool.partitions.join(", ")}</span>
@@ -2197,6 +2204,47 @@ function Occupants({ pool, t }: { pool: Pool; t: TFn }) {
       )}
     </div>
   );
+}
+
+/** Tiles for a pool's occupancy map: one per user (GPUs on a GPU pool,
+ *  cores otherwise), then what is free and what is offline. */
+function poolOccupancyTiles(pool: Pool, snap: Snapshot, groups: OccupantUserGroup[], t: TFn): OccupancyTile[] {
+  const isGpu = pool.kind === "gpu" && !!pool.gpu;
+  const total = isGpu ? pool.gpu!.total : pool.cores.total;
+  const unit = (n: number) => (isGpu ? `${nf(n)} ${t("unit.gpu")}` : coresText(t, n));
+  const waiting = new Map<string, number>();
+  for (const j of snap.jobs) {
+    if (String(j.job_state).toUpperCase() !== "PENDING") continue;
+    if (!String(j.partition || "").split(",").some((p) => snap.part_pool[p] === pool.id)) continue;
+    waiting.set(j.user_name, (waiting.get(j.user_name) ?? 0) + 1);
+  }
+  const users: OccupancyTile[] = groups
+    .map((g) => {
+      const value = isGpu ? g.gpus : g.cpus;
+      const queued = waiting.get(g.user) ?? 0;
+      return {
+        key: g.user,
+        value,
+        kind: "user" as const,
+        label: g.user,
+        amount: unit(value),
+        sub: `${g.nodes} ${t("spec.nodes")}`,
+        queued: queued > 0,
+        details: [
+          `${t("users.share", { p: total ? `${((value / total) * 100).toFixed(1)}%` : "—" })} · ${g.nodes} ${t("spec.nodes")} · ${t(g.jobs === 1 ? "users.job1" : "users.jobs", { n: g.jobs })}`,
+          [isGpu ? coresText(t, g.cpus) : "", `${t("kpi.memory")} ${fmtMB(g.mem_mb)}`].filter(Boolean).join(" · "),
+          ...(queued ? [t("users.queuedJobs", { n: queued })] : []),
+        ],
+      };
+    })
+    .sort((a, b) => b.value - a.value);
+  const free = isGpu ? pool.gpu!.free : pool.cores.free;
+  const off = isGpu ? pool.gpu!.down + (pool.gpu!.reserved ?? 0) : pool.cores.unavailable ?? 0;
+  return [
+    ...users,
+    { key: "~free", value: free, kind: "free", amount: unit(free), sub: t("users.free"), details: [t("users.free")] },
+    { key: "~off", value: off, kind: "off", amount: unit(off), sub: t("users.offline"), details: [t("users.offline")] },
+  ];
 }
 
 interface OccupantUserGroup {
