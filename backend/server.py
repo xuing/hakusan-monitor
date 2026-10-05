@@ -172,6 +172,7 @@ class Engine:
         now = time.time()
         try:
             nodes, squeue = self.src.fetch()
+            outside = nz.outside_nodes(nodes)
             nodes = nz.cluster_nodes(nodes)
             self.sing_version = self.src.singularity   # captured in the same round trip
             raw_nodes = nodes.get("nodes", [])
@@ -197,6 +198,7 @@ class Engine:
                                 mask_users=self.cfg["mask_users"])
             snap.update(generated_at=int(now), age_s=0.0,
                         source=self.cfg["source"], stale=False)
+            snap["outside_nodes"] = outside
             snap["licenses"] = squeue.get("licenses", [])
             snap["cpu_submit_probes"] = squeue.get("cpu_submit_probes", [])
             snap["cpu_submit_probes_generated_at"] = squeue.get("cpu_submit_probes_generated_at", 0)

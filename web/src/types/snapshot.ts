@@ -322,6 +322,8 @@ export interface Snapshot {
   queue: QueueData;
   /** cluster licenses (`scontrol show lic`): the names -L must use */
   licenses?: ClusterLicense[];
+  /** hardware scontrol lists but no partition schedules, per pool */
+  outside_nodes?: { pool: string; label: string; nodes: number; gpus: number }[];
   cpu_submit_probes?: CpuSubmitProbe[];
   cpu_submit_probes_generated_at?: number;
   cpu_submit_probe_interval?: number;

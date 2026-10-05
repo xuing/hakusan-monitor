@@ -226,6 +226,22 @@ def cluster_nodes(nodes_json):
     return {**(nodes_json or {}), "nodes": [nd for nd in nodes if nd.get("partitions")]}
 
 
+def outside_nodes(nodes_json):
+    """What cluster_nodes() leaves out, per hardware pool: {pool, label,
+    nodes, gpus}. The page names it so the hardware is not simply missing."""
+    groups = {}
+    for nd in (nodes_json or {}).get("nodes", []) or []:
+        if nd.get("partitions"):
+            continue
+        pool = node_pool(nd.get("name", ""))
+        g = groups.setdefault(pool, {"pool": pool, "label": "", "nodes": 0, "gpus": 0})
+        g["nodes"] += 1
+        for gtype, n in parse_gres(nd.get("gres")).items():
+            g["gpus"] += n
+            g["label"] = GPU_CATALOG.get(gtype, {}).get("label", gtype)
+    return sorted(groups.values(), key=lambda g: g["pool"])
+
+
 def normalize(nodes_json, squeue_json, *, cluster="hakusan", slurm_version="",
               mask_users=False):
     nodes = (nodes_json or {}).get("nodes", []) or []

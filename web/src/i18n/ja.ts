@@ -208,6 +208,8 @@ export const ja: Record<TranslationKey, string> = {
   "pool.timeInvalid": "3d・12h・30m のように入力",
   "pool.perGpuShare": "1 枚あたり {cores} コア · メモリ {mem}",
   "pool.headMem": "メモリ {mem}/台",
+  "pool.outside": "{label} · {nodes} ノード（{gpus} GPU）はどの Slurm パーティションにも属さず、hakusan からジョブを投入できません。",
+  "pool.outsideLink": "JAIST クラウド VM サービス",
   "pool.layoutOneNode": "1 台に {n} 枚",
   "pool.layoutPackedN": "{nodes} 台 × {per} 枚",
   "pool.layoutSpreadN": "{nodes} 台に 1 枚ずつ",

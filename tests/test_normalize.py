@@ -279,3 +279,14 @@ class ClusterNodesTests(unittest.TestCase):
         out = cluster_nodes(raw)
         self.assertEqual([n["name"] for n in out["nodes"]], ["spcc-cld-gl01"])
         self.assertEqual(out["meta"], 1)
+
+    def test_names_what_it_leaves_out(self):
+        from backend.normalize import outside_nodes
+        raw = {"nodes": [{"name": "spcc-cld-g01", "partitions": [], "gres": "gpu:h100-20c:1"},
+                         {"name": "spcc-cld-g02", "partitions": [], "gres": "gpu:h100-20c:1"},
+                         {"name": "spcc-cld-gl01", "partitions": ["VM-GPU-L"], "gres": "gpu:h100-80c:1"}]}
+        out = outside_nodes(raw)
+        self.assertEqual(len(out), 1)
+        self.assertEqual(out[0]["nodes"], 2)
+        self.assertEqual(out[0]["gpus"], 2)
+        self.assertEqual(out[0]["label"], "H100 MIG 20GB")

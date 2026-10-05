@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { Link } from "react-router";
-import { ChevronRight, Link2, Link2Off } from "lucide-react";
+import { ChevronRight, ExternalLink, Link2, Link2Off } from "lucide-react";
 import { CopyButton } from "@/components/common/copy-button";
 import { OccupancyMap, type OccupancyTile } from "@/components/common/occupancy-map";
 import { dayClockLabel, GpuReleaseHint } from "@/components/common/gpu-release-hint";
@@ -95,6 +95,23 @@ export function ResourcePools() {
           <PoolGroup key={g.key} label={g.label} pools={g.pools} snap={snap} t={t} />
         ))}
       </div>
+      {/* hardware the cluster lists but no partition reaches: named, not counted */}
+      {filter === "all" && (snap.outside_nodes ?? []).map((o) => (
+        <p key={o.pool} className="mt-3 flex flex-wrap items-center gap-x-1.5 text-xs text-muted-foreground">
+          <span>
+            {t("pool.outside", { label: o.label || o.pool, nodes: o.nodes, gpus: o.gpus })}
+          </span>
+          <a
+            href="https://www.jaist.ac.jp/iscenter/jaist-cloud/vm/"
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex items-center gap-1 whitespace-nowrap text-info-fg hover:underline"
+          >
+            {t("pool.outsideLink")}
+            <ExternalLink aria-hidden className="h-3 w-3" />
+          </a>
+        </p>
+      ))}
     </div>
   );
 }
