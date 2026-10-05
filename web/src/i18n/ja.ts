@@ -60,8 +60,10 @@ export const ja: Record<TranslationKey, string> = {
   "kpi.schedulable": "投入可",
   "kpi.down": "要対応",
   "kpi.total": "合計",
-  "kpi.gpuNodes": "空きGPUのあるノード",
-  "kpi.cpuNodes": "空きコアのあるノード",
+  "kpi.gpuNodes": "GPU ノード",
+  "kpi.gpuNodesFree": "空き GPU あり",
+  "kpi.cpuNodes": "CPU ノード",
+  "kpi.cpuNodesFree": "空きコアあり",
 
   "section.releases": "まもなく終わるジョブ",
   "section.queue": "キューの状況",

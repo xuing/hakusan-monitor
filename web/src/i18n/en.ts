@@ -60,8 +60,10 @@ export const en = {
   "kpi.schedulable": "schedulable",
   "kpi.down": "need attention",
   "kpi.total": "total",
-  "kpi.gpuNodes": "nodes with a free GPU",
-  "kpi.cpuNodes": "nodes with free cores",
+  "kpi.gpuNodes": "GPU nodes",
+  "kpi.gpuNodesFree": "with a free GPU",
+  "kpi.cpuNodes": "CPU nodes",
+  "kpi.cpuNodesFree": "with free cores",
 
   "section.releases": "Jobs ending soonest",
   "section.queue": "Queue",

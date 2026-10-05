@@ -32,8 +32,8 @@ function ClusterKpis({ snap, t }: { snap: Snapshot; t: TFn }) {
         [nodes.down, t("kpi.down"), "text-muted-foreground"],
         [nodes.total, t("kpi.total"), "text-muted-foreground"],
       ]} />
-      <BarKpi label={t("kpi.gpuNodes")} free={nodes.gpu_free} total={nodes.gpu_total} />
-      <BarKpi label={t("kpi.cpuNodes")} free={nodes.cpu_free} total={nodes.cpu_total} />
+      <BarKpi label={t("kpi.gpuNodes")} note={t("kpi.gpuNodesFree")} free={nodes.gpu_free} total={nodes.gpu_total} />
+      <BarKpi label={t("kpi.cpuNodes")} note={t("kpi.cpuNodesFree")} free={nodes.cpu_free} total={nodes.cpu_total} />
       <SplitCard label={t("kpi.queue")} stats={[
         [q.running, t("kpi.running"), "text-ok-fg"],
         [q.pending, t("kpi.pending"), "text-warn-fg"],
@@ -42,7 +42,7 @@ function ClusterKpis({ snap, t }: { snap: Snapshot; t: TFn }) {
   );
 }
 
-function BarKpi({ label, free, total }: { label: string; free: number; total: number }) {
+function BarKpi({ label, note, free, total }: { label: string; note: string; free: number; total: number }) {
   const ratio = total ? free / total : 0;
   return (
     <Card>
@@ -51,6 +51,7 @@ function BarKpi({ label, free, total }: { label: string; free: number; total: nu
         <div className="tnum mt-1 text-2xl font-semibold leading-tight">
           <span className={free > 0 ? "text-ok-fg" : "text-muted-foreground"}>{nf(free)}</span>
           <span className="text-sm font-normal text-muted-foreground"> / {nf(total)}</span>
+          <span className="ml-1.5 text-xs font-normal text-muted-foreground">{note}</span>
         </div>
         <div className="mt-2.5 h-2 overflow-hidden rounded-full bg-muted">
           <div className="h-full rounded-full bg-ok transition-all duration-500" style={{ width: `${ratio * 100}%` }} />
@@ -80,7 +81,7 @@ function PoolKpis({ pool, snap, t }: { pool: Pool; snap: Snapshot; t: TFn }) {
         [free, unit, "text-ok-fg"],
         [
           isGpu ? pool.available_nodes : pool.idle_nodes,
-          isGpu ? t("kpi.gpuNodes") : t("kpi.nodes"),
+          t("kpi.nodes"),
           "text-muted-foreground",
         ],
       ]} />
