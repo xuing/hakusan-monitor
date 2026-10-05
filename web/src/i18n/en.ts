@@ -170,6 +170,8 @@ export const en = {
   "pool.time": "Time",
   "pool.timeDefault": "Default time",
   "pool.nodeRequestHint": "-N is a node count and does not mean exclusive whole nodes.",
+  "pool.memLinkedTip": "Memory follows the cores: cores × {per} each. Click to pin the current value.",
+  "pool.memUnlinkedTip": "Memory is pinned; changing cores leaves it. Click to follow the cores again.",
   "pool.timeSwitchTip": "Interactive jobs (salloc) get {t}, fixed by the submit plugin. Dragging or typing a time switches to batch (sbatch).",
   "pool.licenseField": "License -L",
   "pool.licensePlaceholder": "<license>",

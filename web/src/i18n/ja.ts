@@ -170,6 +170,8 @@ export const ja: Record<TranslationKey, string> = {
   "pool.time": "時間",
   "pool.timeDefault": "既定時間",
   "pool.nodeRequestHint": "-N はノード数で、ノード専有を意味しません。",
+  "pool.memLinkedTip": "メモリはコア数に連動：コア数 × {per}。クリックで今の値に固定。",
+  "pool.memUnlinkedTip": "メモリは固定中で、コア数を変えても変わりません。クリックで再び連動。",
   "pool.timeSwitchTip": "対話ジョブ（salloc）の時間は投入プラグインで {t} に固定されています。時間をドラッグ・入力するとバッチ（sbatch）に切り替わります。",
   "pool.licenseField": "ライセンス -L",
   "pool.licensePlaceholder": "<ライセンス>",

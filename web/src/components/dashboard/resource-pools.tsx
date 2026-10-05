@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { Link } from "react-router";
-import { ChevronRight } from "lucide-react";
+import { ChevronRight, Link2, Link2Off } from "lucide-react";
 import { CopyButton } from "@/components/common/copy-button";
 import { dayClockLabel, GpuReleaseHint } from "@/components/common/gpu-release-hint";
 import { RangeSlider, SliderValueFixed, SliderValueInput, type SliderTick } from "@/components/common/range-slider";
@@ -8,6 +8,7 @@ import { Segmented } from "@/components/common/segmented";
 import { Tag } from "@/components/common/tag";
 import { UnitBlocks } from "@/components/common/unit-blocks";
 import { Card, CardContent } from "@/components/ui/card";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { PartitionTable, type PartitionAxis, type PartitionTableRow } from "@/components/dashboard/partition-table";
 import { useLive } from "@/hooks/live-context";
 import { useResourceFilter } from "@/hooks/resource-filter-context";
@@ -960,7 +961,19 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
                 />
               ) : effMemGb ? (
                 <RangeSlider
-                  label={<>{t("kpi.memory")} <span className="text-muted-foreground">{t("pool.memPerNode")}</span></>}
+                  label={(
+                    <>
+                      {t("kpi.memory")} <span className="text-muted-foreground">{t("pool.memPerNode")}</span>
+                      {!isGpu && memPerCore > 0 && (
+                        <MemLinkToggle
+                          linked={!memValue}
+                          per={fmtMemRaw(memPerCore)}
+                          onToggle={() => setMem(memValue ? "" : fmtGbNear(defMemMb))}
+                          t={t}
+                        />
+                      )}
+                    </>
+                  )}
                   ariaLabel={t("kpi.memory")}
                   min={1}
                   max={effMemGb}
@@ -1234,6 +1247,34 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
         </div>
       )}
     </>
+  );
+}
+
+/** 🔗 between cores and --mem: linked, the memory is cores x the default
+ *  per core and follows the core slider; a hand-set --mem unlinks it, and a
+ *  click links it again (or pins the current value). */
+function MemLinkToggle({ linked, per, onToggle, t }: { linked: boolean; per: string; onToggle: () => void; t: TFn }) {
+  const Icon = linked ? Link2 : Link2Off;
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button
+          type="button"
+          onClick={onToggle}
+          aria-pressed={linked}
+          aria-label={linked ? t("pool.memLinkedTip", { per }) : t("pool.memUnlinkedTip")}
+          className={cn(
+            "ml-1 inline-flex h-5 w-5 items-center justify-center rounded transition-colors hover:bg-muted",
+            linked ? "text-info-fg" : "text-muted-foreground",
+          )}
+        >
+          <Icon className="h-3.5 w-3.5" />
+        </button>
+      </TooltipTrigger>
+      <TooltipContent className="max-w-xs leading-relaxed">
+        {linked ? t("pool.memLinkedTip", { per }) : t("pool.memUnlinkedTip")}
+      </TooltipContent>
+    </Tooltip>
   );
 }
 

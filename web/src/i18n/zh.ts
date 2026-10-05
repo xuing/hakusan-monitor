@@ -170,6 +170,8 @@ export const zh: Record<TranslationKey, string> = {
   "pool.time": "时间",
   "pool.timeDefault": "默认时间",
   "pool.nodeRequestHint": "-N 是节点数，不代表独占整台节点。",
+  "pool.memLinkedTip": "内存随核数变化：核数 × 每核 {per}。点一下固定当前值。",
+  "pool.memUnlinkedTip": "内存已固定，改核数不会带动它。点一下重新随核数变化。",
   "pool.timeSwitchTip": "交互作业（salloc）的时长由提交插件固定为 {t}。拖动或输入时长会切换到脚本模式（sbatch）。",
   "pool.licenseField": "许可证 -L",
   "pool.licensePlaceholder": "<许可证>",
