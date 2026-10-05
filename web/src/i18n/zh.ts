@@ -212,7 +212,7 @@ export const zh: Record<TranslationKey, string> = {
   "pool.layoutPackedN": "{nodes} 台 × {per} 张",
   "pool.layoutSpreadN": "{nodes} 台各 1 张",
   "pool.tableWall": "时长",
-  "pool.tablePerUser": "每人同时跑",
+  "pool.tablePerUser": "每人最多运行",
   "pool.tableVerdict": "默认申请",
   "pool.legendRange": "会排队",
   "pool.legendNow": "不用排队",

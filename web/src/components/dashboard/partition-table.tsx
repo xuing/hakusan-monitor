@@ -16,7 +16,8 @@ export interface PartitionTableRow {
    *  starts-now / queues split */
   judged?: boolean;
   wall: string;
-  perUser?: number;
+  /** the most jobs one user may run at once, as the cell shows it ("4 个作业") */
+  perUser?: string;
   verdict: { tone: Tone; label: string } | null;
   selected: boolean;
   /** the selected row's current request, drawn on its bar */
@@ -33,7 +34,7 @@ export interface PartitionAxis {
 
 // columns follow the table's own width (it sits in half-width cards too):
 // the time column from @md, the per-user column from @2xl
-const GRID = "grid grid-cols-[5.25rem_minmax(0,1fr)_5.5rem] items-center gap-x-3 px-3 @md:grid-cols-[5.5rem_minmax(0,1fr)_6.5rem_5.5rem] @2xl:grid-cols-[5.75rem_minmax(0,1fr)_6.5rem_5.5rem_5.5rem]";
+const GRID = "grid grid-cols-[5.25rem_minmax(0,1fr)_5.5rem] items-center gap-x-3 px-3 @md:grid-cols-[5.5rem_minmax(0,1fr)_6.5rem_5.5rem] @2xl:grid-cols-[5.75rem_minmax(0,1fr)_6.5rem_6.5rem_5.5rem]";
 
 /** Partitions side by side on one axis: each row's bar is what a job there
  *  may ask for, its green part what starts now. Clicking a row picks it. */
@@ -157,7 +158,7 @@ export function PartitionTable({
               )}
             </span>
             <span className="hidden truncate font-mono text-xs text-foreground/80 @md:block">{r.wall}</span>
-            <span className="hidden text-right font-mono text-xs text-foreground/80 @2xl:block">{r.perUser ?? "—"}</span>
+            <span className="hidden whitespace-nowrap text-right text-xs text-foreground/80 @2xl:block">{r.perUser ?? "—"}</span>
             <span className="flex justify-end">{r.verdict && <Tag tone={r.verdict.tone}>{r.verdict.label}</Tag>}</span>
           </button>
         );

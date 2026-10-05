@@ -212,7 +212,7 @@ export const ja: Record<TranslationKey, string> = {
   "pool.layoutPackedN": "{nodes} 台 × {per} 枚",
   "pool.layoutSpreadN": "{nodes} 台に 1 枚ずつ",
   "pool.tableWall": "時間制限",
-  "pool.tablePerUser": "同時実行/人",
+  "pool.tablePerUser": "1 人の実行上限",
   "pool.tableVerdict": "既定リクエスト",
   "pool.legendRange": "待ちになる",
   "pool.legendNow": "待ちなし",

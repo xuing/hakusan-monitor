@@ -807,7 +807,7 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
         ? gpuStartCount(pLayouts, snap, pool, gpuShape, partitionDefaults(p, snap.policy).def_mem_per_cpu_mb ?? 0, summary?.hint?.tone === "ok", t)
         : 0;
       return {
-        name: p, title: desc, lo: 1, hi, now, wall, perUser: policyP.maxJobsPerUser,
+        name: p, title: desc, lo: 1, hi, now, wall, perUser: perUserText(policyP.maxJobsPerUser),
         verdict: partitionOptionVerdict(summary, t), judged: Boolean(snap),
         selected: p === partition, marker: p === partition ? gpuCount : undefined,
       };
@@ -831,11 +831,12 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
     const refused = planP.kind === "required" || planP.kind === "missing" || state === "failed";
     return {
       name: p, title: desc, lo, hi: Math.max(lo, capP.maxCores ?? poolCoresPerNode(pool)),
-      now: lim && !lim.groupFull && !licenseBusy(planP) ? lim.maxCores : 0, wall, perUser: policyP.maxJobsPerUser,
+      now: lim && !lim.groupFull && !licenseBusy(planP) ? lim.maxCores : 0, wall, perUser: perUserText(policyP.maxJobsPerUser),
       verdict: rowVerdict, judged: Boolean(lim) && !refused,
       selected: p === partition, marker: p === partition ? coresNow : undefined,
     };
   };
+  const perUserText = (n?: number) => (n ? t(n === 1 ? "users.job1" : "users.jobs", { n }) : undefined);
   // smallest first: the bars read as a staircase of job sizes, then by walltime
   const bySize = (a: PartitionTableRow, b: PartitionTableRow) =>
     a.lo - b.lo || a.hi - b.hi || wallLabelSec(partitionCap(a.name, snap?.policy).wall) - wallLabelSec(partitionCap(b.name, snap?.policy).wall);

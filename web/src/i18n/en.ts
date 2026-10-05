@@ -212,7 +212,7 @@ export const en = {
   "pool.layoutPackedN": "{nodes} nodes × {per}",
   "pool.layoutSpreadN": "1 each on {nodes} nodes",
   "pool.tableWall": "Time limit",
-  "pool.tablePerUser": "Running/user",
+  "pool.tablePerUser": "Max running",
   "pool.tableVerdict": "Default",
   "pool.legendRange": "Will queue",
   "pool.legendNow": "Starts now",
