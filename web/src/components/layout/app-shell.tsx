@@ -46,12 +46,11 @@ export function AppShell() {
           aria-label={t(folded ? "nav.expand" : "nav.collapse")}
           title={t(folded ? "nav.expand" : "nav.collapse")}
           className={cn(
-            "mt-2 flex items-center gap-3 rounded-lg px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground",
-            folded && "justify-center px-0",
+            "mt-2 flex h-9 items-center rounded-lg text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground",
+            folded ? "justify-center" : "w-9 justify-center self-start",
           )}
         >
           <ToggleIcon className="h-4 w-4 shrink-0" />
-          {!folded && <span className="whitespace-nowrap">{t("nav.collapse")}</span>}
         </button>
       </aside>
 
