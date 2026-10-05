@@ -1,4 +1,5 @@
 // Live snapshot stream: Server-Sent Events with a polling fallback.
+import { withBase } from "@/lib/base-path";
 import type { Snapshot } from "@/types/snapshot";
 import { api, validateSnapshot } from "./api";
 
@@ -58,7 +59,7 @@ export function connectLive({ onSnapshot, onStatus, onError }: LiveHandlers): ()
     if (closed) return;
     es?.close();
     lastBeat = Date.now();
-    es = new EventSource("/api/stream");
+    es = new EventSource(withBase("/api/stream"));
     es.onmessage = (e) => {
       if (closed) return;
       lastBeat = Date.now();

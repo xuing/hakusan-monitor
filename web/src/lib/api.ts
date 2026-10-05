@@ -10,9 +10,10 @@ import type {
   UsagePattern,
   VisitStats,
 } from "@/types/snapshot";
+import { withBase } from "@/lib/base-path";
 
 async function get<T>(path: string, validate?: (value: unknown) => T): Promise<T> {
-  const res = await fetch(path, { headers: { Accept: "application/json" } });
+  const res = await fetch(withBase(path), { headers: { Accept: "application/json" } });
   if (!res.ok) throw new Error(`${path} → ${res.status}`);
   const value: unknown = await res.json();
   return validate ? validate(value) : value as T;

@@ -1,5 +1,6 @@
 import { lazy, Suspense } from "react";
 import { BrowserRouter, Route, Routes } from "react-router";
+import { BASE_PATH } from "@/lib/base-path";
 import { AppShell } from "@/components/layout/app-shell";
 import { AppErrorBoundary } from "@/components/common/app-error-boundary";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -29,7 +30,7 @@ export default function App() {
       <LiveProvider>
         <ResourceFilterProvider>
         <TooltipProvider delayDuration={0}>
-          <BrowserRouter>
+          <BrowserRouter basename={BASE_PATH || undefined}>
             <AppErrorBoundary>
             <Routes>
               <Route element={<AppShell />}>

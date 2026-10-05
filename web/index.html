@@ -2,6 +2,21 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <script>
+      // Mount prefix ("/hakusan" behind the proxy, "" at the root): everything
+      // before the first app route segment. <base> makes the relative asset
+      // URLs below resolve under it from any page; src/lib/base-path.ts reads
+      // it back. Keep the route list in sync with src/lib/nav.ts (tested).
+      (function () {
+        var routes = ["partitions", "analytics", "login-nodes", "nodes", "jobs", "slurm", "containers", "project"];
+        var segs = location.pathname.split("/").filter(Boolean);
+        var i = segs.findIndex(function (s) { return routes.indexOf(s) >= 0; });
+        var base = (i >= 0 ? segs.slice(0, i) : segs).join("/");
+        var el = document.createElement("base");
+        el.href = "/" + (base ? base + "/" : "");
+        document.head.appendChild(el);
+      })();
+    </script>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="description" content="Live load & queue dashboard for the JAIST Hakusan HPC cluster." />
