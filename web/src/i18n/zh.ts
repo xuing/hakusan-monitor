@@ -751,7 +751,7 @@ export const zh: Record<TranslationKey, string> = {
   "users.none": "没有运行中的作业",
   "users.jobs": "{n} 个作业",
   "users.job1": "1 个作业",
-  "users.queuedUnits": "排队 {n} 个作业 ({units})",
+  "users.queuedUnits": "排队 {n} 个作业（{units}）",
   "users.queuedJobs": "排队 {n} 个作业",
   "users.others": "其余 {n} 位用户",
   "users.other1": "其余 1 位用户",

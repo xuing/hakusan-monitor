@@ -2,7 +2,7 @@ import { Empty } from "@/components/common/empty";
 import { SectionCard } from "@/components/common/section-card";
 import { useLive } from "@/hooks/live-context";
 import { useResourceFilter } from "@/hooks/resource-filter-context";
-import { poolLabel, useT, type TFn } from "@/i18n";
+import { coresText, poolLabel, useT, type TFn } from "@/i18n";
 import { fmtMB, nf } from "@/lib/format";
 import {
   amountOf,
@@ -112,7 +112,7 @@ function UserRow({ u, usage, t }: { u: UserUsage; usage: PoolUsage; t: TFn }) {
   const held = u.shares[u.dominant];
   const queued = shareOf(usage.totals, u.dominant, amountOf(u.queued, u.dominant));
   return (
-    <div title={sharesTitle(u, usage, t)}>
+    <div>
       <div className="flex items-baseline justify-between gap-3">
         <span className="min-w-0 truncate font-mono text-xs font-medium text-info-fg">{u.user}</span>
         <span className="tnum shrink-0 whitespace-nowrap font-mono text-xs text-muted-foreground">
@@ -141,7 +141,8 @@ function Details({ parts }: { parts: string[] }) {
 }
 
 /** Everyone past the shown rows, as one line: how much of the pool the
- *  long tail holds together. Gray — it is not a user. */
+ *  long tail holds together — held capacity like the rows above, in a
+ *  lighter blue since it is not one user. */
 function TailRow({ rest, usage, t }: { rest: UsageTail; usage: PoolUsage; t: TFn }) {
   return (
     <div>
@@ -153,7 +154,7 @@ function TailRow({ rest, usage, t }: { rest: UsageTail; usage: PoolUsage; t: TFn
           {amountLabel(usage.unit, rest.units, t)} {fmtShare(rest.share)}
         </span>
       </div>
-      <ShareBar held={rest.share} queued={0} tone="neutral" />
+      <ShareBar held={rest.share} queued={0} tone="tail" />
       <Details parts={[jobsLabel(rest.running, t)]} />
     </div>
   );
@@ -162,13 +163,13 @@ function TailRow({ rest, usage, t }: { rest: UsageTail; usage: PoolUsage; t: TFn
 /** Held share in blue, queued demand in the amber every "will queue" zone
  *  on this page uses; both clamp to the track so a user asking for more than
  *  the pool has still ends at 100%. */
-function ShareBar({ held, queued, tone = "info" }: { held: number; queued: number; tone?: "info" | "neutral" }) {
+function ShareBar({ held, queued, tone = "info" }: { held: number; queued: number; tone?: "info" | "tail" }) {
   const h = Math.min(1, Math.max(0, held));
   const q = Math.min(1 - h, Math.max(0, queued));
   return (
     <div className="mt-1 flex h-1 gap-0.5 overflow-hidden rounded-full bg-muted">
       <span
-        className={cn("h-full rounded-full transition-all duration-500", tone === "info" ? "bg-info" : "bg-muted-foreground")}
+        className={cn("h-full rounded-full transition-all duration-500", tone === "info" ? "bg-info" : "bg-info/40")}
         style={{ width: `${h * 100}%`, minWidth: h > 0 ? 2 : 0 }}
       />
       {q > 0 && (
@@ -182,7 +183,7 @@ const RESOURCES: Resource[] = ["gpus", "cores", "mem"];
 
 function amountLabel(r: Resource, n: number, t: TFn): string {
   if (r === "mem") return fmtMB(n);
-  return `${nf(n)} ${t(r === "gpus" ? "unit.gpu" : "unit.cores")}`;
+  return r === "gpus" ? `${nf(n)} ${t("unit.gpu")}` : coresText(t, n);
 }
 
 const jobsLabel = (n: number, t: TFn) => (n === 1 ? t("users.job1") : t("users.jobs", { n: nf(n) }));
@@ -203,10 +204,3 @@ function details(u: UserUsage, usage: PoolUsage, t: TFn): string[] {
   return parts;
 }
 
-/** Hover: the user's share in every resource, which is how the headline one was picked. */
-function sharesTitle(u: UserUsage, usage: PoolUsage, t: TFn): string {
-  const parts: string[] = [];
-  if (usage.totals.gpus > 0) parts.push(`${t("unit.gpu")} ${fmtShare(u.shares.gpus)}`);
-  parts.push(`${t("unit.cores")} ${fmtShare(u.shares.cores)}`, `${t("kpi.memory")} ${fmtShare(u.shares.mem)}`);
-  return parts.join(" · ");
-}

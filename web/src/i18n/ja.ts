@@ -751,7 +751,7 @@ export const ja: Record<TranslationKey, string> = {
   "users.none": "実行中のジョブはありません",
   "users.jobs": "ジョブ {n} 件",
   "users.job1": "ジョブ 1 件",
-  "users.queuedUnits": "実行待ち {n} 件 ({units})",
+  "users.queuedUnits": "実行待ち {n} 件（{units}）",
   "users.queuedJobs": "実行待ち {n} 件",
   "users.others": "他 {n} ユーザー",
   "users.other1": "他 1 ユーザー",
