@@ -30,7 +30,7 @@
         const lang = langs.includes(savedLang)
           ? savedLang
           : (browserLangs.map((l) => String(l).slice(0, 2)).find((l) => langs.includes(l)) || "en");
-        document.documentElement.lang = lang;
+        document.documentElement.lang = lang === "zh" ? "zh-CN" : lang;
 
         const saved = localStorage.getItem("hm_theme");
         const dark = saved === "dark" || (!saved && window.matchMedia("(prefers-color-scheme: dark)").matches);

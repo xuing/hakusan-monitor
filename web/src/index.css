@@ -58,14 +58,18 @@
     --status-info-fg: #0c72ca;
   }
 
+  /* CJK: Latin from the system UI face, Han/kana from each OS's UI font for
+     that language — macOS, Windows ("… UI" cuts are hinted for small sizes;
+     plain Yu Gothic renders thin and blurry there), then Linux/Noto. html lang
+     is zh-CN / ja so the browser also picks the right Han glyph forms. */
   html:lang(zh) {
-    --font-sans: Inter, system-ui, "PingFang SC", "Microsoft YaHei UI", "Microsoft YaHei",
-      "Noto Sans CJK SC", "Source Han Sans SC", sans-serif;
+    --font-sans: Inter, system-ui, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei UI", "Microsoft YaHei",
+      "Noto Sans CJK SC", "Source Han Sans SC", "Noto Sans SC", sans-serif;
   }
 
   html:lang(ja) {
-    --font-sans: Inter, system-ui, "Hiragino Sans", "Hiragino Kaku Gothic ProN",
-      "Yu Gothic", "Meiryo", "Noto Sans CJK JP", "Source Han Sans JP", sans-serif;
+    --font-sans: Inter, system-ui, "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Yu Gothic UI",
+      "Meiryo UI", "Meiryo", "Noto Sans CJK JP", "Source Han Sans JP", "Noto Sans JP", sans-serif;
   }
 
   /* dark theme */
@@ -135,6 +139,25 @@
   }
   .tnum {
     font-variant-numeric: tabular-nums;
+  }
+
+  /* Japanese: break between phrases, not inside a word ("スクリ|プト"), with
+     strict kinsoku; an over-long phrase may still break so nothing overflows.
+     Chinese wraps per character as usual. */
+  html:lang(ja) body {
+    line-break: strict;
+    word-break: auto-phrase;
+    overflow-wrap: break-word;
+  }
+  html:lang(zh) body {
+    line-break: strict;
+  }
+  /* letter-spacing is for Latin caps; it only pries Han characters apart */
+  html:lang(zh) .tracking-wide,
+  html:lang(ja) .tracking-wide,
+  html:lang(zh) .tracking-wider,
+  html:lang(ja) .tracking-wider {
+    letter-spacing: normal;
   }
   ::-webkit-scrollbar {
     width: 10px;

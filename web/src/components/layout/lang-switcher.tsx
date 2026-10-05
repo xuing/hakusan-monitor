@@ -22,7 +22,7 @@ export function LangSwitcher() {
         <button
           type="button"
           aria-label={`Change language · ${LABELS[lang]}`}
-          className="flex h-8 items-center gap-1.5 rounded-full border border-border px-2.5 text-xs text-muted-foreground transition-colors hover:text-foreground"
+          className="flex h-8 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-border px-2.5 text-xs text-muted-foreground transition-colors hover:text-foreground"
         >
           <Languages className="h-3.5 w-3.5" />
           <span>{LABELS[lang]}</span>

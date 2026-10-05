@@ -69,7 +69,7 @@ export default function ProjectGuidePage() {
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="border-b border-border text-left text-xs uppercase tracking-wide text-muted-foreground">
+                <tr className="whitespace-nowrap border-b border-border text-left text-xs uppercase tracking-wide text-muted-foreground">
                   <th className="py-1.5 pr-3 font-medium">{t("guide.project.cad.what")}</th>
                   <th className="py-1.5 pr-3 font-medium">{t("guide.project.cad.every")}</th>
                   <th className="py-1.5 font-medium">{t("guide.project.cad.cost")}</th>

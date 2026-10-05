@@ -18,7 +18,8 @@ export function I18nProvider({ children }: { children: ReactNode }) {
   const [lang, setLangState] = useState<Lang>(detectLang);
 
   useEffect(() => {
-    document.documentElement.lang = lang;
+    // BCP 47 tag: zh-CN so the browser picks Simplified Han glyph forms
+    document.documentElement.lang = lang === "zh" ? "zh-CN" : lang;
   }, [lang]);
 
   const setLang = useCallback((next: Lang) => {

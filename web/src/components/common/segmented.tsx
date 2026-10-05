@@ -40,7 +40,8 @@ export function Segmented<T extends string>({
             onClick={() => onChange(opt.value)}
             aria-pressed={selected}
             className={cn(
-              "flex-1 rounded-[4px] px-2.5 text-xs outline-none transition-colors",
+              // labels never wrap: "スクリプト" in a two-option toggle must stay one line
+              "flex-1 whitespace-nowrap rounded-[4px] px-2.5 text-xs outline-none transition-colors",
               "focus-visible:ring-2 focus-visible:ring-primary/45",
               selected
                 ? "bg-background font-medium text-foreground shadow-sm"
