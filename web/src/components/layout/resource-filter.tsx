@@ -8,8 +8,10 @@ import type { GpuAvailability } from "@/lib/gpu-availability";
 import { cn } from "@/lib/utils";
 import type { Pool } from "@/types/snapshot";
 
-/** "All / GPU group / CPU group" — one chip per hardware pool. */
-export function ResourceFilterChips() {
+/** "All / GPU group / CPU group" — one chip per hardware pool. The caption
+ *  rides inside the same wrapping row so it stays level with the first line
+ *  of chips when the groups wrap. */
+export function ResourceFilterChips({ label }: { label?: string }) {
   const { snap } = useLive();
   const { filter, setFilter } = useResourceFilter();
   const t = useT();
@@ -23,13 +25,16 @@ export function ResourceFilterChips() {
   const cpu = options.filter(({ pool }) => pool.kind === "cpu");
 
   return (
-    <div className="flex flex-wrap items-center gap-2">
+    // phones: one scrollable line, so the sticky bar stays ~40px instead of
+    // stacking three rows of chips over the content it filters
+    <div className="subtle-scroll -mx-4 flex items-center gap-2 overflow-x-auto px-4 sm:mx-0 sm:flex-wrap sm:overflow-visible sm:px-0">
+      {label && <span className="hidden text-xs text-muted-foreground sm:inline">{label}</span>}
       <button
         type="button"
         onClick={() => setFilter("all")}
         aria-pressed={filter === "all"}
         className={cn(
-          "inline-flex h-8 items-center rounded-md border px-3 text-xs shadow-sm transition-colors",
+          "inline-flex shrink-0 items-center self-stretch rounded-md border px-3 text-xs shadow-sm transition-colors",
           filter === "all"
             ? "border-primary bg-primary/15 font-medium text-foreground"
             : "border-border bg-background text-muted-foreground hover:border-primary/60 hover:bg-accent hover:text-foreground",
@@ -67,9 +72,9 @@ export function ResourceFilterChips() {
 
 function FilterGroup({ label, children }: { label: string; children: ReactNode }) {
   return (
-    <div className="flex items-center gap-1.5 rounded-lg border border-border bg-muted/20 px-2 py-1 shadow-sm">
-      <span className="px-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">{label}</span>
-      <div className="flex flex-wrap items-center gap-1">{children}</div>
+    <div className="flex shrink-0 items-center gap-1.5 rounded-lg border border-border bg-muted/20 px-2 py-1 shadow-sm">
+      <span className="whitespace-nowrap px-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">{label}</span>
+      <div className="flex items-center gap-1 sm:flex-wrap">{children}</div>
     </div>
   );
 }
@@ -120,7 +125,7 @@ function FilterButton({
       aria-pressed={active}
       title={label}
       className={cn(
-        "inline-flex h-7 items-center gap-1.5 rounded-md border px-2.5 text-xs shadow-sm transition-colors",
+        "inline-flex h-7 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md border px-2.5 text-xs shadow-sm transition-colors",
         active
           ? "border-primary bg-primary/15 font-medium text-foreground"
           : maint

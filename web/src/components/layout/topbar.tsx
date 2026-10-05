@@ -26,7 +26,7 @@ export function Topbar() {
   }, [pageTitle, t]);
 
   return (
-    <header className="sticky top-0 z-20 border-b border-border bg-background/80 backdrop-blur">
+    <header className="sticky top-0 z-20 border-b border-border bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/85">
       <div className="flex items-center gap-3 px-4 py-3">
         <Sheet open={menuOpen} onOpenChange={setMenuOpen}>
           <SheetTrigger
@@ -64,9 +64,8 @@ export function Topbar() {
       </div>
 
       {showFilter && (
-        <div className="flex items-center gap-2 px-4 pb-3">
-          <span className="hidden text-xs text-muted-foreground sm:inline">{t("filter.label")}:</span>
-          <ResourceFilterChips />
+        <div className="px-4 pb-3">
+          <ResourceFilterChips label={`${t("filter.label")}:`} />
         </div>
       )}
     </header>
