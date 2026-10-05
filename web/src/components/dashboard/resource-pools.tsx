@@ -2103,11 +2103,11 @@ function GpuBlocks({ gpu, schedulableFree, className, t }: { gpu: PoolGpu; sched
     ));
   return (
     <div className={cn("flex gap-0.5", className)} title={[
-      ready && t("blocks.ready", { n: ready }),
-      stranded && t("blocks.constrained", { n: stranded }),
-      reserved && t("blocks.reserved", { n: reserved }),
-      gpu.used && t("blocks.used", { n: gpu.used }),
-      gpu.down && t("blocks.down", { n: gpu.down }),
+      ready && t("blocks.ready", { n: `${ready} ${t("unit.gpu")}` }),
+      stranded && t("blocks.constrained", { n: `${stranded} ${t("unit.gpu")}` }),
+      reserved && t("blocks.reserved", { n: `${reserved} ${t("unit.gpu")}` }),
+      gpu.used && t("blocks.used", { n: `${gpu.used} ${t("unit.gpu")}` }),
+      gpu.down && t("blocks.down", { n: `${gpu.down} ${t("unit.gpu")}` }),
     ].filter(Boolean).join(" · ")}>
       {seg(ready, "bg-ok", "f")}
       {seg(stranded, "bg-warn", "s")}

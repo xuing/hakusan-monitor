@@ -236,7 +236,7 @@ export const ja: Record<TranslationKey, string> = {
   "pool.queueFactBusy": "空いているリソースがありません",
   "blocks.free": "{n} 空き",
   "blocks.ready": "{n} 利用可",
-  "blocks.constrained": "{n} 空きだがノードのコアかメモリが不足",
+  "blocks.constrained": "{n} 空きだが、ノードのコアかメモリが不足",
   "blocks.reserved": "{n} 予約済み",
   "blocks.used": "{n} 使用中",
   "blocks.down": "{n} オフライン",

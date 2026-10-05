@@ -44,10 +44,10 @@ export function UnitBlocks({
     <div
       className={cn("flex h-2.5 w-36 shrink-0 gap-px", className)}
       title={[
-        `${t("blocks.free", { n: `${nf(free)} ${unit}` })}${stranded ? ` (${nf(stranded)} ${strandedLabel ?? t("blocks.unusable")})` : ""}`,
-        used && t("blocks.used", { n: nf(used) }),
-        reserved && t("blocks.reserved", { n: nf(reserved) }),
-        down && t("blocks.down", { n: nf(down) }),
+        `${t("blocks.free", { n: `${nf(free)} ${unit}` })}${stranded ? ` (${nf(stranded)} ${unit} ${strandedLabel ?? t("blocks.unusable")})` : ""}`,
+        used && t("blocks.used", { n: `${nf(used)} ${unit}` }),
+        reserved && t("blocks.reserved", { n: `${nf(reserved)} ${unit}` }),
+        down && t("blocks.down", { n: `${nf(down)} ${unit}` }),
       ].filter(Boolean).join(" · ")}
     >
       {/* Reserved reads exactly like stranded — idle, reachable only via

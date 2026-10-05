@@ -238,7 +238,7 @@ export const en = {
   "blocks.ready": "{n} ready",
   "blocks.constrained": "{n} idle, node short of cores or memory",
   "blocks.reserved": "{n} reserved",
-  "blocks.used": "{n} used",
+  "blocks.used": "{n} in use",
   "blocks.down": "{n} offline",
   "blocks.partlyFree": "partly free",
   "blocks.unusable": "no partition can use them",
