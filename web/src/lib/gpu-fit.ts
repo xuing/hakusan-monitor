@@ -2,7 +2,7 @@
 // start right now, or are the free GPUs stranded on nodes whose leftover
 // CPU/memory can't host it? Pure computation — no React, no i18n — so both the
 // Overview pool cards and the Partitions page share one verdict.
-import { expandHostlist, nodeIsSchedulerHeld, nodeNeedsAttention, parseGpuCount } from "@/lib/derive";
+import { expandHostlist, nodeIsBackfillCandidate, nodeIsSchedulerHeld, nodeNeedsAttention, parseGpuCount } from "@/lib/derive";
 import {
   gpuAvailability,
   gpuPerGpuNeed,
@@ -10,7 +10,7 @@ import {
   type GpuDefaultRequest,
   type GpuNodeFacts,
 } from "@/lib/gpu-availability";
-import { mayUseNode, queueModel, shareOf, type Claim, type QueueModel, type Waiter } from "@/lib/queue";
+import { BACKFILL_MARGIN_MS, mayUseNode, queueModel, shareOf, type Claim, type QueueModel, type Waiter } from "@/lib/queue";
 import { capPerGpu, minutesToSlurmTime, partitionCap, partitionDefaultRequest, type PartitionCap } from "@/lib/slurm";
 import type { Pool, RawJob, RawNode, Snapshot } from "@/types/snapshot";
 
@@ -197,16 +197,6 @@ function partitionVerdict(facts: GpuNodeFacts[], snap: Snapshot, partition: stri
   );
 }
 
-/** PLANNED is a future scheduler reservation, not an outage. Such a node must
- * stay out of ordinary free totals, but Slurm may backfill its idle resources
- * when the request is guaranteed to finish before the reservation starts. */
-function nodeIsBackfillCandidate(node: RawNode) {
-  const states = new Set(node.state.map((state) => String(state).toUpperCase()));
-  if (!states.has("PLANNED")) return false;
-  return !["DOWN", "NOT_RESPONDING", "DRAIN", "DRAINING", "FAIL", "FAILING", "MAINT",
-    "POWER_DOWN", "POWERING_DOWN", "POWERED_DOWN", "REBOOT_ISSUED", "REBOOT_REQUESTED"]
-    .some((state) => states.has(state));
-}
 
 /**
  * One GPU's share of the partition's DEFAULT request.
@@ -294,7 +284,6 @@ export function fitHasClearSlot(fit: GpuFitInfo, claims: Map<string, Claim>): bo
 // the booking. The margin absorbs bookings drifting earlier when running jobs
 // finish ahead of their limits.
 
-const BF_MARGIN_MS = 10 * 60 * 1000;
 const BF_STEP_SEC = 15 * 60;
 const BF_MIN_SEC = 30 * 60;
 
@@ -306,7 +295,7 @@ interface BackfillWindowInfo {
 function backfillWindow(row: GpuFitNode, bookings: Map<string, number[]>, nowMs: number): BackfillWindowInfo | null {
   const untilMs = (bookings.get(row.node.name) ?? []).find((at) => at > nowMs);
   if (untilMs === undefined) return null;
-  const suggestSec = Math.floor((untilMs - nowMs - BF_MARGIN_MS) / 1000 / BF_STEP_SEC) * BF_STEP_SEC;
+  const suggestSec = Math.floor((untilMs - nowMs - BACKFILL_MARGIN_MS) / 1000 / BF_STEP_SEC) * BF_STEP_SEC;
   if (suggestSec < BF_MIN_SEC) return null;
   return { untilMs, suggestSec };
 }
@@ -355,22 +344,6 @@ export function withinBackfillWindow(fit: GpuFitInfo, q: Pick<QueueModel, "claim
     const win = backfillWindow(row, q.bookings, nowMs);
     return win !== null && userTimeSec <= win.suggestSec;
   });
-}
-
-/** Slurm -t forms: MM, MM:SS, HH:MM:SS, D-HH, D-HH:MM, D-HH:MM:SS. */
-export function parseWalltimeSec(text: string): number {
-  const s = String(text || "").trim();
-  if (!s) return 0;
-  const dash = s.match(/^(\d+)-(\d+)(?::(\d{1,2}))?(?::(\d{1,2}))?$/);
-  if (dash) {
-    return (Number(dash[1]) * 24 + Number(dash[2])) * 3600 + Number(dash[3] || 0) * 60 + Number(dash[4] || 0);
-  }
-  const parts = s.split(":");
-  if (parts.some((p) => !/^\d+$/.test(p))) return 0;
-  if (parts.length === 1) return Number(parts[0]) * 60;
-  if (parts.length === 2) return Number(parts[0]) * 60 + Number(parts[1]);
-  if (parts.length === 3) return Number(parts[0]) * 3600 + Number(parts[1]) * 60 + Number(parts[2]);
-  return 0;
 }
 
 function strandedCandidates(fit: GpuFitInfo): GpuFitNode[] {

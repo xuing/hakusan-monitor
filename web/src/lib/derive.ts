@@ -201,3 +201,16 @@ export function parseGpuCount(text: string, type: string) {
   if (!m) return 0;
   return Number(m[1] ?? m[2] ?? m[3] ?? 0);
 }
+
+/** PLANNED is a future scheduler reservation, not an outage. Such a node must
+ * stay out of ordinary free totals, but Slurm may backfill its idle resources
+ * when the request is guaranteed to finish before the reservation starts:
+ * backfill reserves whole nodes for a planned job (node_space avail_bitmap,
+ * backfill.c:168) and marks them PLANNED (backfill.c:3905). */
+export function nodeIsBackfillCandidate(node: RawNode) {
+  const states = new Set(node.state.map((state) => String(state).toUpperCase()));
+  if (!states.has("PLANNED")) return false;
+  return !["DOWN", "NOT_RESPONDING", "DRAIN", "DRAINING", "FAIL", "FAILING", "MAINT",
+    "POWER_DOWN", "POWERING_DOWN", "POWERED_DOWN", "REBOOT_ISSUED", "REBOOT_REQUESTED"]
+    .some((state) => states.has(state));
+}

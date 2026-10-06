@@ -48,6 +48,19 @@ describe("liveCpuStart (measured 2026-10-05)", () => {
     expect(liveCpuStart(s, "DEF")).toBe("now");
   });
 
+  it("starts on a PLANNED node only when it ends before the node's booked start", () => {
+    // backfill reserves whole nodes for a planned job (backfill.c:168); a
+    // 16-core TINY job started in 19 s on PLANNED lcpcc-003 (2026-10-06)
+    const planned = { ...node("lcpcc-003", 200), state: ["MIXED", "PLANNED"], schedulable: false };
+    const booked = { ...job("Resources"), job_id: 9, cpus: 256, node_count: 1, sched_nodes: "lcpcc-003",
+                     start_est: new Date((1000 + 20 * 3600) * 1000).toISOString(), time_limit: "1-00:00:00" };
+    const s = snapOf([planned], [booked]);
+    expect(liveCpuStart(s, "DEF", { timeSec: 12 * 3600 })).toBe("now");
+    expect(liveCpuStart(s, "DEF", { timeSec: 30 * 3600 })).toBe("queued");
+    // a PLANNED node whose booking the snapshot does not show stays out
+    expect(liveCpuStart(snapOf([planned], []), "DEF", { timeSec: 600 })).toBe("queued");
+  });
+
   it("VM-CPU starts now behind a Dependency job", () => {
     const vm = { name: "spcc-cld-07", partitions: ["VM-CPU"], state: ["IDLE"], cpus: 32, alloc_cpus: 0,
                  real_memory: 469070, alloc_memory: 0, gres: "" };
@@ -174,11 +187,13 @@ describe("cpuStartState", () => {
   }) as unknown as Parameters<typeof cpuStartState>[1];
   const row = { partition: "TINY", probe: { ...probe(1_001), partition: "TINY", processors: 16 } };
 
-  it("takes a fresh probe's 'starts now' over the live view (backfill into held nodes)", () => {
-    expect(cpuStartState(row, snapAt(1_100))).toBe("now");
+  it("ignores a probe's 'starts now': it does not see backfill bookings", () => {
+    // sbatch --test-only said "now" for LONG-L's 2-day default while a real
+    // 2-day LONG-L job stayed pending on the booked nodes (2026-10-07)
+    expect(cpuStartState(row, snapAt(1_100))).toBe("queued");
   });
 
-  it("falls back to the live view once that probe is older than 5 minutes", () => {
-    expect(cpuStartState(row, snapAt(1_400))).toBe("queued");
+  it("keeps a probe's outright rejection", () => {
+    expect(cpuStartState({ ...row, probe: { ...row.probe, ok: false } }, snapAt(1_100))).toBe("failed");
   });
 });

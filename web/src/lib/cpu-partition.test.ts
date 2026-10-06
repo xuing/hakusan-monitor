@@ -17,13 +17,11 @@ const snapOf = (alloc: number, probeAt: number, now: number) => ({
 }) as unknown as Snapshot;
 
 describe("cpuPartitionStatus", () => {
-  it("counts the default request as startable when a fresh probe starts it", () => {
-    // 13 free cores: the live slots can't hold 16, Slurm placed it anyway
+  it("judges the default request live, whatever a fresh probe said", () => {
+    // 13 free cores cannot hold 16; the probe's "now" ignores bookings
     const s = cpuPartitionStatus(snapOf(243, 1_000, 1_100), "TINY");
-    expect(s.state).toBe("now");
-    expect(s.maxCores).toBe(16);
-    expect(s.fromProbe).toBe(true);    // no "emptiest node" hint on this count
-    expect(cpuPartitionVerdict(s, t).tone).toBe("ok");
+    expect(s.state).toBe("queued");
+    expect(s.maxCores).toBe(13);
   });
 
   it("names no start time once Slurm's estimate is past", () => {
@@ -42,6 +40,5 @@ describe("cpuPartitionStatus", () => {
     (snap.policy!.partition_caps as Record<string, object>).TINY = { maxNodes: 1, maxCores: 64 };
     const s = cpuPartitionStatus(snap, "TINY");
     expect(s.maxCores).toBe(27);
-    expect(s.fromProbe).toBe(false);
   });
 });

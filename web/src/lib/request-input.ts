@@ -1,6 +1,6 @@
 // The quick request's input parsing and slider axes: pure, no React, no i18n.
 import { fmtDur } from "@/lib/format";
-import { parseWalltimeSec } from "@/lib/gpu-fit";
+import { parseWalltimeSec } from "@/lib/slurm";
 
 export interface SliderTick {
   value: number;

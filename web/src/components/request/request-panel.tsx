@@ -33,7 +33,7 @@ import {
 import { defaultRequestFit, singleNodeCoreFlag } from "@/lib/default-request";
 import { coresPerNode, poolCapacity } from "@/lib/derive";
 import { fmtDur } from "@/lib/format";
-import { gpuFitSnapshot, parseWalltimeSec } from "@/lib/gpu-fit";
+import { gpuFitSnapshot } from "@/lib/gpu-fit";
 import { gpuLayouts, type GpuLayout, type GpuNodeShape } from "@/lib/gpu-layout";
 import { gpuStartCount, gpuStatus, layoutFit } from "@/lib/gpu-partition";
 import { licenseBusy, licensePlan } from "@/lib/licenses";
@@ -43,20 +43,7 @@ import { poolContenders, poolWaiters, queueModel } from "@/lib/queue";
 import { buildRequestCommand, shouldShowGapShell } from "@/lib/request-command";
 import { requestLimits, type PoolShape } from "@/lib/request-limits";
 import { getSite } from "@/lib/site";
-import {
-  allowsMultiNode,
-  interactiveForcedLabel,
-  interactiveForcedSec,
-  isLicensePartition,
-  minutesToSlurmTime,
-  partitionCap,
-  partitionDefaultRequest,
-  partitionDefaults,
-  partitionDown,
-  partitionPolicy,
-  wallLabelSec,
-  type Tone,
-} from "@/lib/slurm";
+import { allowsMultiNode, interactiveForcedLabel, interactiveForcedSec, isLicensePartition, minutesToSlurmTime, parseWalltimeSec, partitionCap, partitionDefaultRequest, partitionDefaults, partitionDown, partitionPolicy, type Tone, wallLabelSec } from "@/lib/slurm";
 import { cn } from "@/lib/utils";
 import type { Partition, Pool, Snapshot } from "@/types/snapshot";
 import { DisclosureRow } from "@/components/pools/pool-card";
@@ -235,7 +222,7 @@ export function RequestPanel({ pool, t }: { pool: Pool; t: TFn }) {
   // does; set fields or a pinned -n are judged live as the command carries them
   const cpuState: CpuProbeState | null = !isGpu && snap
     ? hasAdvancedOverrides || overflowPinned
-      ? liveCpuStart(snap, partition, { cores: coreCount || defCores, nodes: nodeCount, memMb: memOverrideMb })
+      ? liveCpuStart(snap, partition, { cores: coreCount || defCores, nodes: nodeCount, memMb: memOverrideMb, timeSec: verdictSec || undefined })
       : cpuPartitionStatus(snap, partition).state
     : null;
   // A multi-GPU layout needs whole idle nodes (packed) or nodes with a free
@@ -330,7 +317,7 @@ export function RequestPanel({ pool, t }: { pool: Pool; t: TFn }) {
     Boolean(snap) && gpuStatus(snap!, pool, partition, { memMb, timeSec }, nowMs).now !== null;
 
   // cores: the most that start now for the -N and --mem as set
-  const cpuLimits = judged && !isGpu ? cpuStartLimits(snap!, partition, { nodes: nodeCount, memMb: memOverrideMb }) : null;
+  const cpuLimits = judged && !isGpu ? cpuStartLimits(snap!, partition, { nodes: nodeCount, memMb: memOverrideMb, timeSec: verdictSec || undefined }) : null;
   const coreGreen = !cpuLimits ? undefined : blockedAll ? 0 : cpuLimits.maxCores;
   const coreHint = coreGreen !== undefined && coreGreen >= coreMin && coresNow > coreGreen
     ? (
@@ -397,7 +384,7 @@ export function RequestPanel({ pool, t }: { pool: Pool; t: TFn }) {
   const layoutMemMb = multiGpu && layout ? layout.coresPerGpu * layout.gpusPerNode * memPerCore : 0;
   // CPU, no -N and no --mem on a multi-node partition, and no node holds
   // all the cores: each node gets DefMemPerCPU x its share — no one value
-  const memSpreadLinked = Boolean(judged && !isGpu && !memValue && !nodeCount && cpuDefaultSpreads(snap!, partition, coresNow));
+  const memSpreadLinked = Boolean(judged && !isGpu && !memValue && !nodeCount && cpuDefaultSpreads(snap!, partition, coresNow, verdictSec || undefined));
   // CPU: the exact --mem where liveCpuStart flips for the cores and -N as
   // set; GPU: the request's own verdict searched over whole GiB
   const memSearchMb = !judged || layoutMemMb > 0 || !effMemGb
@@ -406,7 +393,7 @@ export function RequestPanel({ pool, t }: { pool: Pool; t: TFn }) {
       ? 0
       : isGpu
         ? largestPassing(1, effMemGb, (gb) => gpuStartsAt(gb * 1024, verdictSec)) * 1024
-        : cpuStartMemMb(snap!, partition, coresNow, nodeCount);
+        : cpuStartMemMb(snap!, partition, coresNow, nodeCount, verdictSec || undefined);
   // the default point agrees with the verdict pill (GPU's own default
   // memory can sit between two whole GiB)
   const memGreenMb = isGpu && memSearchMb !== undefined && !blockedAll && !memValue
@@ -419,7 +406,7 @@ export function RequestPanel({ pool, t }: { pool: Pool; t: TFn }) {
     : "";
   // without -N the cores may land on several nodes, each needing the --mem
   const memSpreads = !isGpu && judged && !nodeCount && memGreenMb !== undefined
-    && memGreenMb > cpuStartMemMb(snap!, partition, coresNow, 1);
+    && memGreenMb > cpuStartMemMb(snap!, partition, coresNow, 1, verdictSec || undefined);
   const memFix = memGreenMb !== undefined && memGreenMb >= 1024 ? fmtGb(memGreenMb) : "";
   const memHint = memFix && !memSpreadLinked && memShownMb > memGreenMb!
     ? (

@@ -100,12 +100,15 @@ describe("gpuStatus: one precedence for every page", () => {
   });
 
   it("starts inside a PLANNED node's gap when the request ends before the booking", () => {
-    // Slurm holds idle g1 (IDLE+PLANNED) for a two-GPU job it booked 20 h out:
-    // no in-service node is free, yet a job that ends in time backfills
+    // Slurm holds idle g1 (IDLE+PLANNED) for a two-node job it booked 20 h
+    // out, when busy g2 frees up: no in-service node is free, yet a job that
+    // ends in time backfills on g1
     const planned = node("g1", { state: ["IDLE", "PLANNED"], state_bucket: "idle", schedulable: false });
-    const booked = waiter(1, { sched_nodes: "g1", start_est: new Date(AT + 20 * 3600_000).toISOString(), gpus: 2, cpus: 52, min_memory_mb: 511_940 });
-    const held = { available_nodes: 0, gpu: { total: 2, used: 0, free: 0, down: 0, reserved: 2 } } as never;
-    const s = (timeSec?: number) => gpuStatus(snapOf([planned], [booked], held), pool, "GPU-1", { timeSec }, AT);
+    const busy = node("g2", { state: ["ALLOCATED"], state_bucket: "allocated", alloc_cpus: 52, alloc_memory: 515_306, gres_used: "gpu:nvidia_a40:2" });
+    const booked = waiter(1, { sched_nodes: "g[1-2]", start_est: new Date(AT + 20 * 3600_000).toISOString(),
+      node_count: 2, gpus: 4, cpus: 104, min_memory_mb: 1_023_880 });
+    const held = { available_nodes: 0, gpu: { total: 4, used: 2, free: 0, down: 0, reserved: 2 } } as never;
+    const s = (timeSec?: number) => gpuStatus(snapOf([planned, busy], [booked], held), pool, "GPU-1", { timeSec }, AT);
     expect(s().now).toBe("backfill");       // the 12 h interactive default fits
     expect(gpuVerdict(s())).toBe("now");
     expect(s(30 * 3600).now).toBeNull();    // a 30 h job does not

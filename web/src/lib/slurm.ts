@@ -217,3 +217,19 @@ export function defaultRequestSec(partition: string, policy?: PolicySnapshot): n
   return interactiveForcedSec(partition, policy)
     ?? (wallLabelSec(policy?.partition_caps?.[partition]?.wall) || Number.POSITIVE_INFINITY);
 }
+
+/** Slurm -t forms: MM, MM:SS, HH:MM:SS, D-HH, D-HH:MM, D-HH:MM:SS. */
+export function parseWalltimeSec(text: string): number {
+  const s = String(text || "").trim();
+  if (!s) return 0;
+  const dash = s.match(/^(\d+)-(\d+)(?::(\d{1,2}))?(?::(\d{1,2}))?$/);
+  if (dash) {
+    return (Number(dash[1]) * 24 + Number(dash[2])) * 3600 + Number(dash[3] || 0) * 60 + Number(dash[4] || 0);
+  }
+  const parts = s.split(":");
+  if (parts.some((p) => !/^\d+$/.test(p))) return 0;
+  if (parts.length === 1) return Number(parts[0]) * 60;
+  if (parts.length === 2) return Number(parts[0]) * 60 + Number(parts[1]);
+  if (parts.length === 3) return Number(parts[0]) * 3600 + Number(parts[1]) * 60 + Number(parts[2]);
+  return 0;
+}

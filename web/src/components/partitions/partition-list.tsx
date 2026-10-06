@@ -382,7 +382,7 @@ function PartitionRow({ row, pool, snap, pendShared, t }: {
       : "text-muted-foreground";
   // one node's free cores under the policy cap: the hint says so with the
   // numbers (not when the count is the probe's default request)
-  const capped = Boolean(cpu && !maint && !cpuOverride && !cpu.spread && !cpu.fromProbe && cap.maxCores !== undefined
+  const capped = Boolean(cpu && !maint && !cpuOverride && !cpu.spread && cap.maxCores !== undefined
     && cpu.maxCores > 0 && cpu.maxCores < cap.maxCores);
   // the command the verdict is about (with the corrected -L where the plugin's
   // license name doesn't exist); none for a row that needs a -L of your own

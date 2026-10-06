@@ -28,9 +28,9 @@
  * "starts now" verdict subtracts.
  */
 import { clusterMs, clusterTimeZone } from "@/lib/cluster-time";
-import { expandHostlist, nodeIsSchedulable, parseGpuCount } from "@/lib/derive";
+import { expandHostlist, nodeIsBackfillCandidate, nodeIsSchedulable, parseGpuCount } from "@/lib/derive";
 import { selectNodes, switchTable, type FreeNode, type NodeRequest } from "@/lib/node-select";
-import { partitionCap, partitionPolicy, wallLabelSec } from "@/lib/slurm";
+import { parseWalltimeSec, partitionCap, partitionPolicy, wallLabelSec } from "@/lib/slurm";
 import type { RawJob, RawNode, Snapshot } from "@/types/snapshot";
 
 export type WaitKind =
@@ -82,6 +82,12 @@ export interface QueueModel {
 
 /** The parts of a snapshot the model reads (tests pass just these). */
 export type QueueInput = Pick<Snapshot, "jobs" | "nodes" | "pools" | "policy" | "part_pool" | "generated_at">;
+
+/** How long before a booked start a backfilled job must end. Ours, not
+ *  Slurm's: Slurm compares against its current plan, while the snapshot can
+ *  be a sample interval old and a booking moves earlier whenever a running
+ *  job ends before its limit. */
+export const BACKFILL_MARGIN_MS = 10 * 60 * 1000;
 
 const cache = new WeakMap<QueueInput, { zone: string | undefined; model: QueueModel }>();
 
@@ -215,17 +221,33 @@ function buildModel(snap: QueueInput): QueueModel {
     .sort((a, b) =>
       (b.job.priority ?? 0) - (a.job.priority ?? 0)
       || (a.job.submit_time ?? 0) - (b.job.submit_time ?? 0)
-      || String(a.job.job_id).localeCompare(String(b.job.job_id)));
+      // Slurm's sort_job_queue2(): priority, then submit time, then job id as a number
+      || String(a.job.job_id).localeCompare(String(b.job.job_id), undefined, { numeric: true }));
 
   // ---- play the scheduler once: who starts now, and on what ----
   const pools = snap.pools ?? [];
   const gpuType = new Map(pools.map((p) => [p.id, p.gpu?.type ?? ""]));
   const gpuPool = new Set(pools.filter((p) => p.kind === "gpu").map((p) => p.id));
-  // in snapshot order, which is scontrol's — Slurm's node order
+  // in snapshot order, which is scontrol's — Slurm's node order; PLANNED
+  // nodes too: a job that ends before their booked start may use them
   const rooms: Room[] = snap.nodes
-    .filter((node) => nodeIsSchedulable(node))
+    .filter((node) => nodeIsSchedulable(node) || nodeIsBackfillCandidate(node))
     .map((node) => freeRoom(node, gpuType.get(node.pool) ?? ""))
     .filter((room) => room.cores > 0);
+  // Slurm's backfill plan: which queued job is booked where, and from when
+  const plan = new Map<string, { at: number; job: RawJob }[]>();
+  for (const w of waiters) {
+    const at = bookedAt(w.job);
+    if (at === null) continue;
+    for (const node of expandHostlist(w.job.sched_nodes || "")) plan.set(node, [...(plan.get(node) ?? []), { at, job: w.job }]);
+  }
+  const nowMs = snap.generated_at * 1000;
+  /** The node's free room as `job` sees it: booked from the first start of
+   *  another queued job on it (backfill reserves whole nodes, backfill.c:168). */
+  const forJob = (room: Room, job: RawJob): Room => {
+    const others = (plan.get(room.name) ?? []).filter((b) => b.job !== job).map((b) => b.at);
+    return others.length ? { ...room, until: Math.min(...others) - BACKFILL_MARGIN_MS } : room;
+  };
   const switches = switchTable(policy?.topology ?? [], expandHostlist);
   const groupLeft = new Map<string, number>();
   const userLeft = new Map<string, number>();
@@ -241,7 +263,10 @@ function buildModel(snap: QueueInput): QueueModel {
       const u = left(userLeft, userKey, userCap(p), userRunning.get(userKey) ?? 0);
       if (g <= 0 || u <= 0) continue;
       const here = rooms.filter((r) => r.partitions.has(p));
-      const placed = selectNodes(here, requestOf(w.job, gpuPool.has(partPool[p]), partitionCap(p, policy).maxNodes), switches);
+      const limitSec = parseWalltimeSec(w.job.time_limit || "");
+      const request = { ...requestOf(w.job, gpuPool.has(partPool[p]), partitionCap(p, policy).maxNodes),
+        endsAt: limitSec > 0 ? nowMs + limitSec * 1000 : undefined };
+      const placed = selectNodes(here.map((r) => forJob(r, w.job)), request, switches);
       if (!placed) continue;
       for (const take of placed) {
         const room = here.find((r) => r.name === take.name)!;

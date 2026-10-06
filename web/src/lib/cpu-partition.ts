@@ -18,9 +18,6 @@ export interface CpuPartitionStatus {
   maxCores: number;
   /** maxCores needs several nodes */
   spread: boolean;
-  /** maxCores is the default request Slurm's fresh probe starts, not what
-   *  the live free slots hold */
-  fromProbe: boolean;
   groupFull: boolean;
   license: LicensePlan;
   /** the flagless command this verdict is about; carries -L when the
@@ -41,9 +38,6 @@ export function cpuPartitionStatus(snap: Snapshot, partition: string): CpuPartit
   const lim = cpuStartLimits(snap, partition);
   const groupFull = lim?.groupFull ?? false;
   const blocked = !lim || groupFull || licenseBusy(license);
-  // Slurm's fresh "now" can place the default request where the live slots
-  // can't (backfill into held nodes): the default then starts all the same
-  const startable = state === "now" ? defaults.cores ?? probe?.cores ?? 0 : 0;
   const probedAt = snap.cpu_submit_probes_generated_at || snap.generated_at;
   const start = probe?.probe?.start_epoch ?? 0;
   const estimate = state === "queued" && probe?.probe?.start_time && start > probedAt + 120 && start > snap.generated_at
@@ -52,9 +46,8 @@ export function cpuPartitionStatus(snap: Snapshot, partition: string): CpuPartit
   return {
     probe,
     state,
-    maxCores: blocked ? 0 : Math.max(lim!.maxCores, startable),
-    spread: Boolean(lim?.spread) && (lim?.maxCores ?? 0) >= startable,
-    fromProbe: !blocked && startable > (lim?.maxCores ?? 0),
+    maxCores: blocked ? 0 : lim!.maxCores,
+    spread: Boolean(lim?.spread),
     groupFull,
     license,
     command: `salloc -p ${partition}${license.kind === "fixed" ? ` ${license.flag}` : ""}`,

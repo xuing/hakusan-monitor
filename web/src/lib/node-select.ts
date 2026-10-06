@@ -38,6 +38,9 @@ export interface FreeNode {
   memMb: number;
   gpus: number;
   gpuType: string;
+  /** booked for a queued job from this time on (ms): backfill reserves the
+   *  whole node then, so only a job that ends by this time may use it */
+  until?: number;
 }
 
 export interface NodeRequest {
@@ -63,6 +66,8 @@ export interface NodeRequest {
   /** --nodelist hosts (all used) and --exclude hosts */
   required: string[];
   excluded: string[];
+  /** when the job ends at the latest if it starts now (ms); absent = no limit */
+  endsAt?: number;
 }
 
 export interface Switch {
@@ -84,6 +89,7 @@ export interface Take {
 /** Step 1 (_can_job_run_on_node): the CPUs this job can use on a node, 0 = none. */
 export function usableCpus(node: FreeNode, req: NodeRequest): number {
   if (req.excluded.includes(node.name)) return 0;
+  if (node.until !== undefined && !(req.endsAt !== undefined && req.endsAt <= node.until)) return 0;
   if (req.gpusPerNode > 0 && (node.gpus < req.gpusPerNode || (req.gpuType && req.gpuType !== node.gpuType))) return 0;
   const cpt = Math.max(1, req.cpusPerTask);
   let cpus = node.cores;

@@ -40,10 +40,12 @@ const reservation = {
   partition: "GPU-1",
   job_state: "PENDING",
   state_reason: "Priority",
+  // both of the node's GPUs: one is busy until 14:00, so Slurm holds the
+  // node (PLANNED) for this job instead of starting it now
   node_count: 1,
-  cpus: 26,
-  gpus: 1,
-  tres_req_str: "gres/gpu:nvidia_a40=1",
+  cpus: 52,
+  gpus: 2,
+  tres_req_str: "gres/gpu:nvidia_a40=2",
   container: "",
   submit_time: 0,
   end_time: "",
@@ -96,6 +98,9 @@ function waiter(overrides: Partial<RawJob> = {}): RawJob {
     state_reason: "Resources",
     start_est: "",
     sched_nodes: "",
+    cpus: 26,
+    gpus: 1,
+    tres_req_str: "gres/gpu:nvidia_a40=1",
     min_memory_mb: 256_000,
     ...overrides,
   };

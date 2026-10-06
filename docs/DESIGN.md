@@ -133,8 +133,13 @@ slots as it goes. A new job gets what is left:
   job, captured by `scripts/capture_placement_fixture.py`.
 - `groupFull(partition)`: no group slot left once those waiters started.
 - `bookings` per node: Slurm's future starts for the waiters that do not
-  start now. A new job starts on a booked node only if it ends before the
-  first booking (backfill; PLANNED nodes are booked nodes Slurm holds idle).
+  start now. Backfill reserves the booked nodes whole (backfill.c:168) and
+  marks them PLANNED: a job may use a booked node only if it ends before the
+  booking or outranks the booked job. Waiters are checked against the other
+  waiters' bookings; a new request is taken to rank behind all of them,
+  because its priority depends on the submitter's fair-share. Real jobs
+  (2026-10-07): a 3-day SMALL job at priority 20675 started on nodes booked
+  for a 20010 job; 1- and 2-day DEF and LONG-L jobs at ~15700 stayed pending.
 - `poolContenders(pool)`: the waiters ahead of a new job in a pool; one that
   starts in another pool is not among them.
 
@@ -148,7 +153,7 @@ Each question has one module, and every page reads it:
 |---|---|---|
 | what is each GPU on a node (ready, contested, short of CPU/memory, reserved, down, full) | `lib/gpu-availability.ts` (pure), adapted by `gpuNodeFacts` in `lib/gpu-fit.ts` | pool cards, GPU status bars |
 | does a GPU partition's request start now | `lib/gpu-partition.ts` (`gpuStatus`, `gpuVerdict`) | request panel, partition table, Partitions page |
-| does a CPU partition's flagless request start now | `lib/cpu-partition.ts`, with `sbatch --test-only` rows from `lib/cpu-probes.ts` | the same three |
+| does a CPU partition's flagless request start now | `lib/cpu-partition.ts` over `lib/cpu-probes.ts` (the same node selection and bookings); `sbatch --test-only` contributes only outright rejections | the same three |
 | what tone a pool shows | `lib/pool-status.ts` (`poolPick`, `poolTone`) | filter chip, group header, pool card, collapsed request row |
 
 GPU precedence: maintenance > group cap full > starts now (a slot the queue
@@ -195,6 +200,13 @@ Rules learned from shipped bugs, each pinned by a test:
 
 ## 8. Known gaps
 
+- **The visitor's priority is unknown.** A new request is judged as ranking
+  behind every queued job. A user with a high fair-share factor can start
+  on nodes booked for lower-priority jobs earlier than the page says.
+- **`sbatch --test-only` start times decide nothing.** Its "later" plans
+  behind QoS-capped waiters the scheduler skips, its "now" ignores backfill
+  bookings (it said "now" for LONG-L's 2-day default; a real 2-day job
+  stayed pending). Its node list does match Slurm's selection.
 - **GPU blocks do not show a full group cap.** Pool cards draw the hardware
   after the queue's claims; a full GrpJobs cap reaches only the verdict. A
   block could read ready beside "Will queue" only when every partition of
