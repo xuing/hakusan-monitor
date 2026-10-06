@@ -1,6 +1,5 @@
 import { nodeIsSchedulable } from "@/lib/derive";
-import { partitionRunningJobs } from "@/lib/gpu-advice";
-import { isLimitBlocked, isStaleWaiter } from "@/lib/gpu-fit";
+import { queueModel } from "@/lib/queue";
 import type { CpuSubmitProbe, Pool, Snapshot } from "@/types/snapshot";
 
 export type CpuProbeState = "now" | "queued" | "failed" | "unknown";
@@ -54,8 +53,8 @@ export function cpuProbeState(
  *  scheduler skips — DEF was predicted to start in 2 days behind 62
  *  QOSMaxJobsPerUserLimit jobs while a real salloc started in 13 s
  *  (2026-10-05). The request is the plugin's default cores with
- *  DefMemPerCPU each; it competes only with pending jobs the scheduler would
- *  actually place (Priority / Resources). null = not enough data. */
+ *  DefMemPerCPU each; it gets what the queue leaves (queue.ts claims).
+ *  null = not enough data. */
 export interface CpuRequest {
   /** total CPUs (the -n / -c the quick request emits); 0 = plugin default */
   cores?: number;
@@ -67,41 +66,27 @@ export interface CpuRequest {
 
 interface CpuSlot { cores: number; memMb: number }
 
-/** The free (cores, memory) slots of a partition's schedulable nodes left
- *  after the waiters the scheduler would actually place claim theirs: each
- *  Priority/Resources waiter takes the smallest node its per-node share fits.
- *  SINGLE's 51 Priority jobs all want a whole 256-core node and never touched
- *  a 16-core request on a part-used node (measured 2026-10-05, also with the
- *  2-day walltime). Limit-capped, dependency-held and stale (isStaleWaiter)
- *  jobs take nothing. */
+/** The free (cores, memory) of a partition's schedulable nodes once the
+ *  queue has taken what it starts first (queue.ts claims). SINGLE's 51
+ *  Priority jobs all want a whole 256-core node and never touched a 16-core
+ *  request on a part-used node (measured 2026-10-05). */
 function cpuOpenSlots(snap: Snapshot, partition: string): CpuSlot[] {
-  const free = snap.nodes
+  const claims = queueModel(snap).claims;
+  return snap.nodes
     .filter((n) => n.partitions.includes(partition) && nodeIsSchedulable(n))
-    .map((n) => ({ cores: Math.max(0, n.cpus - n.alloc_cpus), memMb: Math.max(0, n.real_memory - n.alloc_memory) }));
-  const contenders = snap.jobs
-    .filter((j) =>
-      String(j.job_state).toUpperCase() === "PENDING"
-      && String(j.partition || "").split(",").includes(partition)
-      && !isLimitBlocked(j)
-      && !isStaleWaiter(j, snap)
-      && (j.state_reason === "Priority" || j.state_reason === "Resources"))
-    .map((j) => Math.ceil((j.cpus || 1) / Math.max(1, j.node_count || 1)))
-    .sort((a, b) => b - a);
-  const open = [...free].sort((a, b) => a.cores - b.cores);
-  for (const need of contenders) {
-    const i = open.findIndex((f) => f.cores >= need);
-    if (i >= 0) open.splice(i, 1);
-  }
-  return open;
+    .map((n) => {
+      const claim = claims.get(n.name);
+      return {
+        cores: Math.max(0, n.cpus - n.alloc_cpus - (claim?.cores ?? 0)),
+        memMb: Math.max(0, n.real_memory - n.alloc_memory - (claim?.memMb ?? 0)),
+      };
+    });
 }
 
 const isMultiNode = (snap: Snapshot, partition: string) =>
   (snap.policy?.partition_caps?.[partition]?.maxNodes ?? 2) > 1;
 
-const groupFull = (snap: Snapshot, partition: string) => {
-  const policy = snap.policy?.partition_policies?.[partition];
-  return Boolean(policy?.grpJobs && partitionRunningJobs(snap.jobs, partition) >= policy.grpJobs);
-};
+const groupFull = (snap: Snapshot, partition: string) => queueModel(snap).groupFull(partition);
 
 /** Cores one slot can give a request that takes DefMemPerCPU per core. */
 const slotCores = (f: CpuSlot, memPerCore: number) =>

@@ -15,7 +15,8 @@ import { coresText, poolTitle, useT, type TFn } from "@/i18n";
 import type { TranslationKey } from "@/i18n/en";
 import { poolCapacity, poolNodeStates, type PoolCapacity, type PoolNodeStates } from "@/lib/derive";
 import { fmtMB, nf } from "@/lib/format";
-import { contendersForPool, fitHasClearSlot, partitionGpuAvailability, poolGpuAvailability } from "@/lib/gpu-fit";
+import { fitHasClearSlot, partitionGpuAvailability, poolGpuAvailability } from "@/lib/gpu-fit";
+import { queueModel } from "@/lib/queue";
 import { maxJobGpus } from "@/lib/gpu-layout";
 import type { GpuAvailability } from "@/lib/gpu-availability";
 import { gpuPartitionAdvice, type GpuPartitionAdvice } from "@/lib/gpu-advice";
@@ -27,7 +28,6 @@ import {
 } from "@/lib/policy-hints";
 import {
   allowsMultiNode,
-  defaultRequestSec,
   effectiveGpuLimit,
   isLicensePartition,
   matchPartition,
@@ -119,8 +119,7 @@ export function PartitionPressure() {
           {partitionGroups.map((group) => {
             const cpuRank = (p: Partition) => {
               if (p.kind === "gpu") return 0;
-              const runtimePolicy = slurmPartitionPolicy(p.name, snap.policy);
-              if (runtimePolicy.grpJobs && p.jobs.running >= runtimePolicy.grpJobs) return 1;
+              if (queueModel(snap).groupFull(p.name)) return 1;
               const state = cpuPartitionStatus(snap, p.name).state;
               if (state === "now") return 0;
               if (state === "queued") return 2;
@@ -139,32 +138,24 @@ export function PartitionPressure() {
             const isGpu = parts[0].kind === "gpu";
             const pool = poolById.get(group.poolKey);
             const pc = poolCapacity(snap, group.poolKey);
-            const pendingActive = isGpu ? contendersForPool(snap, group.poolKey) : [];
             const nowMs = Date.now();
             const gpuAdviceByPartition = new Map(
               isGpu && pool
                 ? parts.map((p) => [
                     p.name,
-                    gpuPartitionAdvice(
-                      snap,
-                      pool,
-                      p.name,
-                      pendingActive,
-                      nowMs,
-                      defaultRequestSec(p.name, snap.policy),
-                    ),
+                    gpuPartitionAdvice(snap, pool, p.name, nowMs),
                   ] as const)
                 : [],
             );
             // Same verdict as the Overview pool cards, filter chips and KPIs
             // (most permissive sibling policy wins), so a GPU cannot be
             // "available" on one page and reserved/short/queued on another.
-            const gpuAvail = isGpu && pool ? poolGpuAvailability(snap, pool, nowMs, pendingActive) : null;
+            const gpuAvail = isGpu && pool ? poolGpuAvailability(snap, pool) : null;
             // Each row reads its own partition's view of the same verdict
             // (queue claims included), never the contention-blind fit count.
             const gpuAvailByPartition = new Map(
               isGpu && pool
-                ? parts.map((p) => [p.name, partitionGpuAvailability(snap, pool, p.name, nowMs, pendingActive)] as const)
+                ? parts.map((p) => [p.name, partitionGpuAvailability(snap, pool, p.name)] as const)
                 : [],
             );
             const idleNotReady = (a: GpuAvailability) =>
@@ -194,7 +185,7 @@ export function PartitionPressure() {
                       gpuSlotsFor={(p) => gpuAvailByPartition.get(p.name)?.ready ?? null}
                       gpuClearFor={(p) =>
                         gpuAdviceByPartition.has(p.name)
-                          ? fitHasClearSlot(gpuAdviceByPartition.get(p.name)!.fit, pendingActive, nowMs, defaultRequestSec(p.name, snap.policy))
+                          ? fitHasClearSlot(gpuAdviceByPartition.get(p.name)!.fit, queueModel(snap).claims)
                           : null
                       }
                       gpuStrandedFor={(p) => {
@@ -466,9 +457,9 @@ function PartitionRow({
   }).length;
   const labelPolicy = partitionLabelPolicy(p.name, t);
   const runtimePolicy = slurmPartitionPolicy(p.name, policy);
-  const groupRunning = p.jobs.running;
-  const limitRows = policyLimitRows(runtimePolicy, groupRunning, t);
-  const groupLimitReached = Boolean(runtimePolicy.grpJobs && groupRunning >= runtimePolicy.grpJobs);
+  const q = snap ? queueModel(snap) : null;
+  const limitRows = policyLimitRows(runtimePolicy, q?.running(p.name) ?? 0, t);
+  const groupLimitReached = Boolean(q?.groupFull(p.name));
   const gpuTip = gpuAdvice?.gpuTip ?? null;
   const backfillTip = gpuAdvice?.backfillTip ?? null;
   const cap = partitionCap(p.name, policy);

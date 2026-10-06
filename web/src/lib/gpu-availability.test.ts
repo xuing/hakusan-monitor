@@ -8,7 +8,8 @@
  */
 import { describe, expect, it } from "vitest";
 import { gpuAvailability, gpuPerGpuNeed, type GpuAvailabilitySegment } from "./gpu-availability";
-import { activePendingForPool, gpuFitFromNodes, gpuNodeFacts } from "./gpu-fit";
+import { gpuFitFromNodes, gpuNodeFacts } from "./gpu-fit";
+import { queueModel } from "./queue";
 import { capPerGpu } from "./slurm";
 import {
   A100_DRAIN,
@@ -40,8 +41,14 @@ import type { PartitionCap } from "./slurm";
 
 const NOW = Date.parse("2026-07-29T06:34:00+09:00");
 
+/** The real pipeline: the queue model places the pending jobs, the
+ *  classifier judges what they leave. */
 function display(nodes: RawNode[], pool: Pool, request = REQUEST_GPU_1, cap: PartitionCap = CAP_GPU_1, pending: RawJob[] = []) {
-  return gpuAvailability(gpuNodeFacts(nodes, pool, pending, NOW), request, capPerGpu(cap));
+  const { claims } = queueModel({
+    nodes, jobs: pending, pools: [pool], policy: undefined, generated_at: Math.floor(NOW / 1000),
+    part_pool: Object.fromEntries(pending.map((j) => [j.partition, pool.id])),
+  });
+  return gpuAvailability(gpuNodeFacts(nodes, pool, claims), request, capPerGpu(cap));
 }
 
 const segments = (result: { segments: GpuAvailabilitySegment[] }) => result.segments;
@@ -217,12 +224,9 @@ describe("2026-10-01 audit: headline counts match what they say", () => {
     expect(result.physicalIdle).toBe(2);
   });
 
-  it("a40: DependencyNeverSatisfied waiters are limit-blocked, so all 15 GPUs are ready", () => {
-    const partPool = { "GPU-1": "a40" };
-    const active = activePendingForPool(PENDING_A40_NEVER, partPool, "a40");
-    const result = display(NODES_A40_OCT, POOL_A40, REQUEST_GPU_1, CAP_GPU_1, active);
+  it("a40: DependencyNeverSatisfied waiters never start, so all 15 GPUs are ready", () => {
+    const result = display(NODES_A40_OCT, POOL_A40, REQUEST_GPU_1, CAP_GPU_1, PENDING_A40_NEVER);
 
-    expect(active).toEqual([]);
     expect(segments(result)).toEqual([{ kind: "ready", count: 15 }]);
     expect(result.free).toBe(15);
   });

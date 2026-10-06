@@ -17,9 +17,8 @@ export function ResourceFilterChips({ label }: { label?: string }) {
   const t = useT();
   if (!snap) return null;
 
-  const now = Date.now();
   const options = snap.pools
-    .map((p, i) => ({ pool: p, i, gpuAvail: p.kind === "gpu" ? poolGpuAvailability(snap, p, now) : undefined }))
+    .map((p, i) => ({ pool: p, i, gpuAvail: p.kind === "gpu" ? poolGpuAvailability(snap, p) : undefined }))
     .sort((a, b) => Number(!hasAvailable(a)) - Number(!hasAvailable(b)) || a.i - b.i);
   const gpu = options.filter(({ pool }) => pool.kind === "gpu");
   const cpu = options.filter(({ pool }) => pool.kind === "cpu");

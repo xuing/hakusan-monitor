@@ -41,8 +41,11 @@ describe("liveCpuStart (measured 2026-10-05)", () => {
   }) as unknown as Parameters<typeof liveCpuStart>[0];
 
   it("DEF starts now behind 62 QOSMaxJobsPerUserLimit jobs (test-only said 2 days)", () => {
-    const jobs = Array.from({ length: 62 }, () => job("QOSMaxJobsPerUserLimit"));
-    expect(liveCpuStart(snapOf([node("lcpcc-074", 200)], jobs), "DEF")).toBe("now");
+    // one user already running DEF's MaxJobsPerUser (20): none of the 62 can start
+    const running = Array.from({ length: 20 }, () => ({ job_state: "RUNNING", partition: "DEF", user_name: "u1" }));
+    const jobs = Array.from({ length: 62 }, () => ({ ...job("QOSMaxJobsPerUserLimit"), user_name: "u1" }));
+    const s = snapOf([node("lcpcc-074", 200)], [...running, ...jobs], { partition_policies: { DEF: { maxJobsPerUser: 20 } } });
+    expect(liveCpuStart(s, "DEF")).toBe("now");
   });
 
   it("VM-CPU starts now behind a Dependency job", () => {
@@ -66,8 +69,11 @@ describe("liveCpuStart (measured 2026-10-05)", () => {
     expect(liveCpuStart(s, "DEF", { cores: 16, memMb: 400_000 })).toBe("queued");
   });
 
-  it("queues when Priority/Resources waiters outnumber the free slots", () => {
-    expect(liveCpuStart(snapOf([node("a", 200)], [job("Priority")]), "DEF")).toBe("queued");
+  it("queues once Priority/Resources waiters take the free cores", () => {
+    // 56 free: two 16-core waiters leave 24 (a 16-core request fits), three leave 8
+    const waiting = (n: number) => Array.from({ length: n }, () => job("Priority"));
+    expect(liveCpuStart(snapOf([node("a", 200)], waiting(2)), "DEF")).toBe("now");
+    expect(liveCpuStart(snapOf([node("a", 200)], waiting(3)), "DEF")).toBe("queued");
     expect(liveCpuStart(snapOf([node("a", 250)], []), "DEF")).toBe("queued");
   });
 

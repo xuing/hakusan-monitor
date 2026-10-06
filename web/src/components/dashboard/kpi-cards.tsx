@@ -3,9 +3,9 @@ import { Card, CardContent } from "@/components/ui/card";
 import { useLive } from "@/hooks/live-context";
 import { useResourceFilter } from "@/hooks/resource-filter-context";
 import { poolTitle, useT, type TFn } from "@/i18n";
-import { nodeIsSchedulable } from "@/lib/derive";
+import { nodeIsSchedulable, parseGpuCount } from "@/lib/derive";
 import { nf, pct } from "@/lib/format";
-import { parseGpuCount, poolGpuAvailability } from "@/lib/gpu-fit";
+import { poolGpuAvailability } from "@/lib/gpu-fit";
 import { utilTone } from "@/lib/slurm";
 import type { Pool, Snapshot } from "@/types/snapshot";
 
@@ -37,7 +37,7 @@ function PoolKpis({ pool, snap, t }: { pool: Pool; snap: Snapshot; t: TFn }) {
   const util = total > 0 ? used / total : pool.util;
   // "可用" GPUs = what the pool card calls ready (shared verdict), not every
   // idle card — queue-claimed or resource-short ones are not available.
-  const free = isGpu && g ? poolGpuAvailability(snap, pool, Date.now()).ready : pool.cores.free;
+  const free = isGpu && g ? poolGpuAvailability(snap, pool).ready : pool.cores.free;
   // nodes a new job can actually land on: in service, not held by the
   // scheduler, and with a free GPU (GPU pools) or a free core — a GPU node
   // with spare cores but every card taken does not count

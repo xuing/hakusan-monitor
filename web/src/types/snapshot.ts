@@ -262,7 +262,9 @@ export interface PolicySnapshot {
   /** per-partition provenance; every cap now comes from the live sacctmgr QoS */
   cap_origin?: Record<string, "live">;
   qos?: Record<string, unknown>;
-  partitions?: Record<string, unknown>;
+  /** `scontrol show partition` facts per partition; `qos` is the partition
+   *  QoS whose GrpJobs / MaxJobsPerUser the queue model counts */
+  partitions?: Record<string, { qos?: string }>;
   lua?: PolicyLua;
   check?: PolicyCheckSummary | null;
 }

@@ -68,10 +68,17 @@ export const POOL_A100 = { id: "a100", kind: "gpu", gpu: { type: "nvidia_a100" }
 // Nodes, verbatim from the snapshot
 // ---------------------------------------------------------------------------
 
+/** The partitions scontrol lists on each pool's nodes. */
+const POOL_PARTITIONS: Record<string, string[]> = {
+  a40: ["GPU-1", "GPU-S", "GPU-L"],
+  a100: ["GPU-1A", "GPU-LA"],
+  "h100-80": ["VM-GPU-L"],
+};
+
 function node(fields: Partial<RawNode> & Pick<RawNode, "name" | "pool" | "cpus" | "real_memory" | "gres">): RawNode {
   return {
     state: ["IDLE"],
-    partitions: [],
+    partitions: POOL_PARTITIONS[fields.pool] ?? [],
     alloc_cpus: 0,
     cpu_load: "0.00",
     alloc_memory: 0,
