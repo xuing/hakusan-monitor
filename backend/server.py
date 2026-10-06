@@ -176,6 +176,7 @@ class Engine:
         self.max_sse = cfg["max_sse"]
         self.latest = None
         self.error = None
+        self.store_error = None  # the last database write failed (collection may be fine)
         self.fail_count = 0     # consecutive failed sample cycles
         self.last_fail_at = 0
         self.login_nodes = None
@@ -249,13 +250,10 @@ class Engine:
             self.error = None
             self.fail_count = 0
             self._ready.set()
-            self.store.record(snap, int(now))
-            self._n += 1
-            if self._n % 120 == 1:
-                self.store.prune(now)
-            # Push the cluster snapshot before login-node collection: a login
-            # node timing out must not delay fresh cluster data by its timeout.
+            # Push the cluster snapshot before anything slower: a login node
+            # timing out must not delay fresh cluster data by its timeout.
             self._broadcast(snap)
+            self._persist(snap, now)
             return snap
         except Exception as e:
             self.error = str(e)
@@ -275,6 +273,20 @@ class Engine:
             # Login nodes are separate machines: a Slurm controller outage
             # must not freeze their data (it used to skip this entirely).
             self._sample_login(now)
+
+    def _persist(self, snap, now):
+        """Save the sample's history. A database error costs that history,
+        not the snapshot: it is already served and stays fresh, and
+        /api/health reports the error apart from collection."""
+        try:
+            self.store.record(snap, int(now))
+            self._n += 1
+            if self._n % 120 == 1:
+                self.store.prune(now)
+            self.store_error = None
+        except Exception as e:
+            self.store_error = str(e)
+            print(f"store failed: {e}", flush=True)
 
     def _sample_login(self, now):
         try:
@@ -385,6 +397,7 @@ class Engine:
         ok = self.latest is not None and not self.error
         age = round(time.time() - self.latest["generated_at"], 1) if self.latest else None
         return {"ok": ok, "source": self.cfg["source"], "error": self.error,
+                "store_error": self.store_error,
                 "stale": bool(self.latest and self.latest.get("stale")), "age_s": age}
 
     def policy_source(self):

@@ -1,5 +1,6 @@
 import http.client
 import os
+import sqlite3
 import tempfile
 import threading
 import unittest
@@ -193,6 +194,47 @@ class _ExplodingLogin:
     def fetch(self, _now):
         self.calls += 1
         raise AssertionError("request thread must not collect")
+
+
+class _OneNodeSource:
+    policy_snapshot = None
+
+    def fetch(self):
+        node = {"name": "n1", "state": ["IDLE"], "partitions": ["P"], "cpus": 4, "alloc_cpus": 0,
+                "real_memory": 4096, "alloc_memory": 0, "gres": "", "gres_used": ""}
+        return {"nodes": [node]}, {"jobs": []}
+
+    def slurm_version(self, _nodes):
+        return "25.05"
+
+
+class _LockedStore:
+    def record(self, _snap, _ts):
+        raise sqlite3.OperationalError("database is locked")
+
+
+class PersistTests(unittest.TestCase):
+    def test_database_error_keeps_the_sample_fresh_and_reports_it_apart(self):
+        engine = object.__new__(Engine)
+        engine.cfg = {"mask_users": False, "refresh_min_interval": 15, "source": "mock",
+                      "cpu_probe_interval": 900}
+        engine.src, engine.store = _OneNodeSource(), _LockedStore()
+        engine.latest = engine.error = engine.store_error = None
+        engine.fail_count = engine._n = 0
+        engine._ready = threading.Event()
+        sent = []
+        engine._broadcast = sent.append
+        engine._sample_login = lambda _now: None
+
+        snap = engine._collect()
+
+        self.assertIs(engine.latest, snap)
+        self.assertFalse(snap["stale"])
+        self.assertEqual(sent, [snap])
+        health = engine.health()
+        self.assertTrue(health["ok"])
+        self.assertIsNone(health["error"])
+        self.assertIn("database is locked", health["store_error"])
 
 
 if __name__ == "__main__":
