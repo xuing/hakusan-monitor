@@ -332,8 +332,10 @@ export const zh: Record<TranslationKey, string> = {
   "state.drain": "停止调度",
   "state.reserved": "已预留",
 
-  "queue.running": "运行中",
-  "queue.pending": "排队中",
+  "queue.running": "个作业运行中",
+  "queue.running1": "个作业运行中",
+  "queue.pending": "个作业排队中",
+  "queue.pending1": "个作业排队中",
   "queue.reasons": "排队原因",
   "queue.reasonsDoc": "Slurm 官方说明",
   "queue.longest": "每个分区等待最久的作业",

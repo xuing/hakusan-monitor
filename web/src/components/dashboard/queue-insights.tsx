@@ -32,8 +32,8 @@ export function QueueInsights() {
       extra={(
         // the totals sit on the title row, in the dot colours the pool cards use
         <span className="flex flex-wrap items-center justify-end gap-x-3 gap-y-1">
-          <Count dot="bg-ok/80" n={q.running} label={t("queue.running")} />
-          <Count dot="bg-warn/45" n={q.pending} label={t("queue.pending")} />
+          <Count dot="bg-ok/80" n={q.running} label={t(q.running === 1 ? "queue.running1" : "queue.running")} />
+          <Count dot="bg-warn/45" n={q.pending} label={t(q.pending === 1 ? "queue.pending1" : "queue.pending")} />
           {q.container_jobs > 0 && <Count dot="bg-info/60" n={q.container_jobs} label={t("queue.containers")} />}
         </span>
       )}

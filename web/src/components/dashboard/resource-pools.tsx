@@ -319,12 +319,12 @@ function PoolCard({ pool, snap, t }: { pool: Pool; snap: Snapshot; t: TFn }) {
         <div className="mt-2.5 flex flex-wrap items-center gap-x-4 text-xs text-muted-foreground">
           <span className="inline-flex items-center gap-1.5">
             <span aria-hidden className="h-2 w-2 rounded-full bg-ok/80" />
-            <b className="tnum text-foreground">{pool.queue.running}</b> {t("queue.running")}
+            <b className="tnum text-foreground">{pool.queue.running}</b> {t(pool.queue.running === 1 ? "queue.running1" : "queue.running")}
           </span>
           <span className="inline-flex items-center gap-1.5">
             {/* the same yellow as every "queues" bar and zone */}
             <span aria-hidden className={cn("h-2 w-2 rounded-full", pool.queue.pending ? "bg-warn/45" : "bg-muted")} />
-            <b className="tnum text-foreground">{pool.queue.pending}</b> {t("queue.pending")}
+            <b className="tnum text-foreground">{pool.queue.pending}</b> {t(pool.queue.pending === 1 ? "queue.pending1" : "queue.pending")}
           </span>
         </div>
 

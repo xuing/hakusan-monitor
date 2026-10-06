@@ -332,8 +332,10 @@ export const ja: Record<TranslationKey, string> = {
   "state.drain": "ドレイン",
   "state.reserved": "予約",
 
-  "queue.running": "実行中",
-  "queue.pending": "実行待ち",
+  "queue.running": "件実行中",
+  "queue.running1": "件実行中",
+  "queue.pending": "件実行待ち",
+  "queue.pending1": "件実行待ち",
   "queue.reasons": "待ちの理由",
   "queue.reasonsDoc": "Slurm 公式の説明",
   "queue.longest": "パーティションごとの最長待ちジョブ",

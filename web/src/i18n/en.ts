@@ -333,8 +333,10 @@ export const en = {
   "state.drain": "drained",
   "state.reserved": "reserved",
 
-  "queue.running": "Running",
-  "queue.pending": "Pending",
+  "queue.running": "jobs running",
+  "queue.running1": "job running",
+  "queue.pending": "jobs pending",
+  "queue.pending1": "job pending",
   "queue.reasons": "Why jobs wait",
   "queue.reasonsDoc": "Slurm reference",
   "queue.longest": "Longest-waiting job per partition",

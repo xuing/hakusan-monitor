@@ -78,7 +78,7 @@ function PoolPanel({ usage, snap, t }: { usage: PoolUsage; snap: Snapshot; t: TF
         {pendingJobs > 0 && (
           <span className="whitespace-nowrap text-muted-foreground">
             <span aria-hidden className="mr-1.5 inline-block h-2 w-2 rounded-full bg-warn/45" />
-            <b className="tnum text-foreground">{nf(pendingJobs)}</b> {t("queue.pending")}
+            <b className="tnum text-foreground">{nf(pendingJobs)}</b> {t(pendingJobs === 1 ? "queue.pending1" : "queue.pending")}
           </span>
         )}
       </header>
