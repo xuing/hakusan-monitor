@@ -20,7 +20,21 @@ async function get<T>(path: string, validate?: (value: unknown) => T): Promise<T
   return validate ? validate(value) : value as T;
 }
 
+export interface RefreshResult {
+  accepted: boolean;
+  /** seconds until the next refresh is allowed (when not accepted) */
+  retry_after: number;
+  /** someone already asked; that sample arrives over the stream */
+  queued?: boolean;
+}
+
 export const api = {
+  /** Ask for a sample now; the server allows one per refresh_min_interval. */
+  refresh: async (): Promise<RefreshResult> => {
+    const res = await fetch(withBase("/api/refresh"), { method: "POST", headers: { Accept: "application/json" } });
+    if (res.status !== 202 && res.status !== 429) throw new Error(`/api/refresh → ${res.status}`);
+    return await res.json() as RefreshResult;
+  },
   snapshot: () => get<Snapshot>("/api/snapshot", validateSnapshot),
   meta: () => get<Meta>("/api/meta"),
   history: (hours = 24) =>

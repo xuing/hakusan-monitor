@@ -7,7 +7,7 @@ Architecture:
                                               ├─ Store (SQLite TSDB: retention + rollup)
                                               └─ fan-out to SSE subscribers
     HTTP: /api/snapshot /api/stream(SSE) /api/history /api/usage /api/analytics
-          /api/visits /api/meta /api/site /api/health
+          /api/visits /api/meta /api/site /api/health · POST /api/refresh
           + static SPA.
 
 A background Sampler thread polls on a fixed cadence, so data collection is
@@ -103,6 +103,9 @@ CFG = {
     "port":       int(env("HM_PORT", "8787")),
     "source_timeout": float(env("HM_SOURCE_TIMEOUT", "75")),
     "interval":   float(env("HM_SAMPLE_INTERVAL", "300")),   # 5 min — gentle on the login node
+    # "refresh now" (POST /api/refresh): at most one extra sample per this many
+    # seconds for everyone together; never below 15 s
+    "refresh_min_interval": max(15.0, float(env("HM_REFRESH_MIN_INTERVAL", "15"))),
     "cpu_probe_interval": float(env("HM_CPU_PROBE_INTERVAL", "900")),
     "policy_interval": float(env("HM_POLICY_INTERVAL", "86400")),
     # last good policy reading (survives restarts) and the verification report
@@ -180,6 +183,8 @@ class Engine:
         self._lock = threading.Lock()
         self._fetch_lock = threading.Lock()   # only one collection at a time
         self._ready = threading.Event()       # set once the first sample lands
+        self._wake = threading.Event()        # "refresh now": cut the sampler's wait short
+        self._last_attempt = 0.0              # when the latest collection started
         self._n = 0
 
     # ---- one sample cycle ----
@@ -189,6 +194,7 @@ class Engine:
 
     def _collect(self):
         now = time.time()
+        self._last_attempt = now
         try:
             nodes, squeue = self.src.fetch()
             pool_of = SITE.assign_pools(nodes.get("nodes", []))
@@ -218,6 +224,7 @@ class Engine:
                                 slurm_version=self.src.slurm_version(nodes),
                                 mask_users=self.cfg["mask_users"])
             snap.update(generated_at=int(now), age_s=0.0,
+                        refresh_min_interval=self.cfg["refresh_min_interval"],
                         source=self.cfg["source"], stale=False)
             snap["outside_nodes"] = outside
             snap["partition_order"] = SITE.display_order(policy)
@@ -292,7 +299,25 @@ class Engine:
             # Fixed cadence: subtract the collection time so a slow round (login
             # node timing out, probe cycle) doesn't push every later sample back —
             # that drift is how data age crept to 6-8 min under failures.
-            time.sleep(max(5.0, self.cfg["interval"] - (time.time() - t0)))
+            self._wake.wait(max(5.0, self.cfg["interval"] - (time.time() - t0)))
+            self._wake.clear()
+
+    def request_refresh(self, now=None):
+        """Wake the sampler for an extra sample, at most once per
+        refresh_min_interval across all viewers (one sample serves everyone,
+        so the cluster sees the same load however many people click).
+        A click while a collection runs queues the next one (the running
+        one started before the click), so a new sample always follows.
+        -> {"accepted": bool, "retry_after": seconds, "queued": bool}."""
+        now = time.time() if now is None else now
+        with self._lock:
+            if self._wake.is_set():
+                return {"accepted": False, "retry_after": 0, "queued": True}
+            wait = self.cfg["refresh_min_interval"] - (now - self._last_attempt)
+            if wait > 0:
+                return {"accepted": False, "retry_after": math.ceil(wait)}
+            self._wake.set()
+            return {"accepted": True, "retry_after": 0}
 
     def snapshot(self):
         # Wait briefly for the background sampler's first result, then give up
@@ -477,6 +502,22 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(500, {"error": "internal server error", "request_id": request_id})
             except Exception:
                 pass
+
+    def do_POST(self):
+        path = urlparse(self.path).path
+        try:
+            # no body is expected; drain one if sent so keep-alive stays in sync
+            length = min(int(self.headers.get("Content-Length") or 0), 4096)
+            if length > 0:
+                self.rfile.read(length)
+            if path != "/api/refresh":
+                return self._json(404, {"error": "unknown endpoint"})
+            result = self.engine.request_refresh()
+            # 202: a sample is on its way and arrives over the stream;
+            # 429: someone refreshed moments ago (or one is running)
+            return self._json(202 if result["accepted"] else 429, result)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
 
     def do_HEAD(self):
         if urlparse(self.path).path == "/api/stream":

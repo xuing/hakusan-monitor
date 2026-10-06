@@ -331,6 +331,8 @@ export interface Snapshot {
   cpu_submit_probes?: CpuSubmitProbe[];
   cpu_submit_probes_generated_at?: number;
   cpu_submit_probe_interval?: number;
+  /** seconds between two "refresh now" samples, for everyone together */
+  refresh_min_interval?: number;
   policy?: PolicySnapshot;
   nodes_down: DownNode[];
   /** raw data shipped in the same payload — tables/occupancy derive from this */

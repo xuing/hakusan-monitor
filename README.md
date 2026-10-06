@@ -60,7 +60,9 @@ screenshots (`HM_MASK_USERS=1`).
 ## Load on the cluster
 
 Everything is read-only. One sample serves every viewer — 100 open browsers
-still cause one query stream.
+still cause one query stream. The refresh button next to the data age asks for
+an extra sample; the server allows one per `HM_REFRESH_MIN_INTERVAL` (15 s at
+least) however many people click.
 
 | What | How often | Cost |
 |---|---|---|
@@ -181,6 +183,7 @@ Set these in the environment or in `.env`.
 | `HM_PORT` | `8787` | listen port |
 | `HM_SAMPLE_INTERVAL` | `300` | seconds between cluster samples |
 | `HM_SOURCE_TIMEOUT` | `75` | seconds before a sample gives up |
+| `HM_REFRESH_MIN_INTERVAL` | `15` | seconds between two "refresh now" samples, for all viewers together (never below 15) |
 | `HM_CPU_PROBE_INTERVAL` | `900` | seconds between CPU start checks |
 | `HM_POLICY_INTERVAL` | `86400` | seconds between policy reads |
 | `HM_SITE` | — | site file, e.g. `sites/hakusan.json` (relative to the repository) |
@@ -219,6 +222,7 @@ Set these in the environment or in `.env`.
 | `GET /api/meta` | cluster name, Slurm version, partitions, container info |
 | `GET /api/site` | site name, links, page switches, partition order and site strings |
 | `GET /api/health` | liveness, data source and data age |
+| `POST /api/refresh` | ask for a sample now: 202 when one is started or queued, 429 with `retry_after` within `HM_REFRESH_MIN_INTERVAL` of the last one |
 
 ## Data and privacy
 

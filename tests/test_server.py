@@ -126,6 +126,52 @@ class PublicRedirectTests(unittest.TestCase):
         self.assertFalse(self._decide("150.65.181.206", url=""))
 
 
+class RefreshTests(unittest.TestCase):
+    def _engine(self, last_attempt):
+        import threading
+        engine = object.__new__(Engine)
+        engine.cfg = {"refresh_min_interval": 15.0}
+        engine._lock = threading.Lock()
+        engine._fetch_lock = threading.Lock()
+        engine._wake = threading.Event()
+        engine._last_attempt = last_attempt
+        return engine
+
+    def test_wakes_the_sampler_once_the_interval_has_passed(self):
+        engine = self._engine(last_attempt=1000.0)
+        self.assertEqual(engine.request_refresh(now=1015.0), {"accepted": True, "retry_after": 0})
+        self.assertTrue(engine._wake.is_set())
+        # a second click before the sampler starts is not another sample
+        self.assertFalse(engine.request_refresh(now=1016.0)["accepted"])
+
+    def test_refuses_within_the_interval_and_says_how_long(self):
+        engine = self._engine(last_attempt=1000.0)
+        self.assertEqual(engine.request_refresh(now=1004.2), {"accepted": False, "retry_after": 11})
+        self.assertFalse(engine._wake.is_set())
+
+    def test_a_click_during_a_long_collection_queues_the_next_one(self):
+        engine = self._engine(last_attempt=1000.0)
+        with engine._fetch_lock:   # still collecting, started 20 s ago
+            self.assertTrue(engine.request_refresh(now=1020.0)["accepted"])
+            self.assertTrue(engine._wake.is_set())
+            self.assertTrue(engine.request_refresh(now=1021.0)["queued"])
+
+    def test_interval_never_goes_below_15_seconds(self):
+        import importlib
+        import os
+        from backend import server
+        old = os.environ.get("HM_REFRESH_MIN_INTERVAL")
+        os.environ["HM_REFRESH_MIN_INTERVAL"] = "3"
+        try:
+            self.assertEqual(importlib.reload(server).CFG["refresh_min_interval"], 15.0)
+        finally:
+            if old is None:
+                os.environ.pop("HM_REFRESH_MIN_INTERVAL")
+            else:
+                os.environ["HM_REFRESH_MIN_INTERVAL"] = old
+            importlib.reload(server)
+
+
 class PublicLocationTests(unittest.TestCase):
     def test_keeps_ordinary_paths_and_queries(self):
         from backend.server import public_location
