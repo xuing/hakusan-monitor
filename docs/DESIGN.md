@@ -200,6 +200,25 @@ Rules learned from shipped bugs, each pinned by a test:
 
 ## 8. Known gaps
 
+- **Hidden partitions are not shown.** `scontrol show` without `-a` omits
+  Hidden=YES partitions and nodes that only they reach: on Hakusan RTX and
+  SEMINAR on `lcpcc-rp6kg01` (16 RTX PRO 6000 slices). Their jobs still
+  appear in squeue, without a pool.
+- **Free totals count PLANNED capacity as held.** Pool and partition
+  aggregates (free cores, free GPUs, available and idle nodes, the
+  Analytics "free" history) leave out booked nodes, though a job that ends
+  before the booking or outranks the booked job can use them; the verdicts
+  apply that rule, the totals do not.
+- **An idle GPU on an ALLOCATED node counts as free** (`gpu.free`), though no
+  job can take it until a core frees up; the GPU blocks show it as short of
+  CPU. No such node exists today.
+- **Reservations are not read** (`scontrol show res`); a reservation's
+  nodes read as held for everyone. None exist today.
+- **A multi-partition job has one priority in squeue**, while Slurm ranks
+  it per partition (PriorityJobFactor 100 / 150 / 200 here).
+- **Job history misses jobs never eligible** (held, waiting on a
+  dependency): `sacct` without `--state` lists only jobs with an eligible
+  time.
 - **The visitor's priority is unknown.** A new request is judged as ranking
   behind every queued job. A user with a high fair-share factor can start
   on nodes booked for lower-priority jobs earlier than the page says.

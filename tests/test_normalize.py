@@ -169,6 +169,11 @@ class NodeAvailabilityTests(unittest.TestCase):
         self.assertEqual(bucket_state(["MIXED", "PLANNED"]), "mixed")
         # maintenance counts with drain so all-maint partitions read as maint
         self.assertEqual(bucket_state(["IDLE", "MAINT"]), "drain")
+        # Slurm prints the flag as MAINTENANCE; an active maint reservation adds RESERVED
+        self.assertEqual(bucket_state(["IDLE", "MAINTENANCE", "RESERVED"]), "drain")
+        # a plain `scontrol reboot` still schedules on the node (job_test.c)
+        self.assertTrue(is_schedulable(["MIXED", "REBOOT_REQUESTED"]))
+        self.assertFalse(is_schedulable(["IDLE", "MAINTENANCE"]))
         self.assertEqual(bucket_state(["IDLE"]), "idle")
 
     def test_duplicate_node_name_is_counted_once_last_value_wins(self):

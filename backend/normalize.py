@@ -50,7 +50,7 @@ def bucket_state(states):
     s = set(states)
     if s & {"DOWN", "NOT_RESPONDING", "FAIL", "FAILING", "POWERED_DOWN"}:
         return "down"
-    if s & {"DRAIN", "DRAINING", "MAINT"}:
+    if s & {"DRAIN", "DRAINING", "MAINT", "MAINTENANCE"}:
         return "drain"
     if "ALLOCATED" in s:
         return "allocated"
@@ -66,11 +66,15 @@ def bucket_state(states):
 # A node can accept ordinary user work only in an IDLE/MIXED base state and
 # without a Slurm flag that removes it from scheduling. Keep this rule here as
 # the single source of truth; the raw snapshot ships the result to the client.
+# Slurm prints the maintenance flag as "MAINTENANCE" (slurm_protocol_defs.c);
+# "MAINT" is kept for older releases. REBOOT_REQUESTED alone does not block:
+# a plain `scontrol reboot` only makes the node a last choice
+# (cons_tres job_test.c), the ASAP form adds DRAIN.
 _BLOCKING_STATES = {
     "DOWN", "NOT_RESPONDING", "DRAIN", "DRAINING", "FAIL", "FAILING",
-    "RESERVED", "PLANNED", "MAINT", "FUTURE", "UNKNOWN",
+    "RESERVED", "PLANNED", "MAINT", "MAINTENANCE", "FUTURE", "UNKNOWN",
     "POWER_DOWN", "POWERING_DOWN", "POWERED_DOWN", "POWERING_UP",
-    "REBOOT_ISSUED", "REBOOT_REQUESTED",
+    "REBOOT_ISSUED",
 }
 
 
@@ -101,10 +105,10 @@ def needs_attention(states):
     s = {str(state).upper() for state in states}
     return bool(s & {
         "DOWN", "NOT_RESPONDING", "DRAIN", "DRAINING", "FAIL", "FAILING",
-        "MAINT", "POWER_DOWN", "POWERING_DOWN", "POWERED_DOWN",
+        "MAINT", "MAINTENANCE", "POWER_DOWN", "POWERING_DOWN", "POWERED_DOWN",
         # a rebooting node is an outage in progress, not a scheduler hold —
         # keep this in sync with the frontend's backfill-candidate exclusions
-        "REBOOT_ISSUED", "REBOOT_REQUESTED",
+        "REBOOT_ISSUED",
     })
 
 

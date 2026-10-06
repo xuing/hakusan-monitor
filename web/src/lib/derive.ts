@@ -34,15 +34,15 @@ export function nodesForPool(snap: Snapshot, poolId: string): RawNode[] {
 
 const BLOCKING_STATES = new Set([
   "DOWN", "NOT_RESPONDING", "DRAIN", "DRAINING", "FAIL", "FAILING",
-  "RESERVED", "PLANNED", "MAINT", "FUTURE", "UNKNOWN", "POWER_DOWN",
-  "POWERING_DOWN", "POWERED_DOWN", "POWERING_UP", "REBOOT_ISSUED", "REBOOT_REQUESTED",
+  "RESERVED", "PLANNED", "MAINT", "MAINTENANCE", "FUTURE", "UNKNOWN", "POWER_DOWN",
+  "POWERING_DOWN", "POWERED_DOWN", "POWERING_UP", "REBOOT_ISSUED",
 ]);
 
 // Kept in sync with backend/normalize.py needs_attention(): these states mean
 // "operator problem", every other non-schedulable state is a scheduler hold.
 const ATTENTION_STATES = new Set([
   "DOWN", "NOT_RESPONDING", "DRAIN", "DRAINING", "FAIL", "FAILING",
-  "MAINT", "POWER_DOWN", "POWERING_DOWN", "POWERED_DOWN", "REBOOT_ISSUED", "REBOOT_REQUESTED",
+  "MAINT", "MAINTENANCE", "POWER_DOWN", "POWERING_DOWN", "POWERED_DOWN", "REBOOT_ISSUED",
 ]);
 
 /** Node is out of service and needs an operator (down, drained, rebooting). */
@@ -210,7 +210,7 @@ export function parseGpuCount(text: string, type: string) {
 export function nodeIsBackfillCandidate(node: RawNode) {
   const states = new Set(node.state.map((state) => String(state).toUpperCase()));
   if (!states.has("PLANNED")) return false;
-  return !["DOWN", "NOT_RESPONDING", "DRAIN", "DRAINING", "FAIL", "FAILING", "MAINT",
-    "POWER_DOWN", "POWERING_DOWN", "POWERED_DOWN", "REBOOT_ISSUED", "REBOOT_REQUESTED"]
+  return !["DOWN", "NOT_RESPONDING", "DRAIN", "DRAINING", "FAIL", "FAILING", "MAINT", "MAINTENANCE",
+    "POWER_DOWN", "POWERING_DOWN", "POWERED_DOWN", "REBOOT_ISSUED"]
     .some((state) => states.has(state));
 }

@@ -54,6 +54,13 @@ JOB_NAME = "hm-policy-check"
 MARK = "@@HM-CHECK@@"
 
 
+def _count(text):
+    """scontrol counts: "26", or a range "26-52" while the request allows one
+    (scontrol/info_job.c) — the lower bound is what the job asked for."""
+    m = re.match(r"\d+", text or "")
+    return int(m.group()) if m else 0
+
+
 def remote_probe_script(partitions: list[tuple[str, str]], lua_path: str) -> str:
     """One SSH round: sources, then a held job per (partition, extra flags)."""
     lua_q = shlex.quote(lua_path)
@@ -90,7 +97,7 @@ def measure(job_line: str) -> dict:
     gres = _kv(job_line, "TresPerNode")
     gm = re.search(r"gpu(?::[^:=,]+)?[:=](\d+)", gres)
     out = {
-        "cpus": int(_kv(job_line, "NumCPUs") or 0),
+        "cpus": _count(_kv(job_line, "NumCPUs")),
         "tasks": int(_kv(job_line, "NumTasks") or 0),
         "cpus_per_task": int(_kv(job_line, "CPUs/Task") or 0),
         "gpus_per_node": int(gm.group(1)) if gm else 0,
@@ -176,7 +183,7 @@ def boundary_issues(r: dict, line: str) -> list[str]:
     if line == "MISSING" or line.startswith("ERROR"):
         return ["rejected at submit: " + line[6:160].strip()]
     nodes = int((_kv(line, "NumNodes") or "1").split("-")[0])
-    cpus = int(_kv(line, "NumCPUs") or 0)
+    cpus = _count(_kv(line, "NumCPUs"))
     issues = []
     if e.get("maxCores") and cpus > e["maxCores"]:
         issues.append(f"{cpus} CPUs at allocation > QoS {e['maxCores']} (would pend forever)")

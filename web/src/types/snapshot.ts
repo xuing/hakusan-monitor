@@ -106,7 +106,8 @@ interface QueueData {
 
 export interface CpuSubmitProbe {
   partition: string;
-  ok: boolean;
+  /** true placed, false Slurm rejected the request, null no answer (timeout) */
+  ok: boolean | null;
   start_time: string;
   start_epoch: number;
   processors: number;

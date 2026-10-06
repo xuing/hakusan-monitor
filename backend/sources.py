@@ -33,8 +33,9 @@ SEP = "|@|"   # field separator unlikely to occur in any value (e.g. job names)
 SQUEUE_FIELDS = ["%i", "%u", "%a", "%P", "%T", "%r", "%D", "%C", "%b", "%V",
                  "%e", "%S", "%L", "%j", "%q", "%N", "%M", "%l", "%m", "%n", "%x", "%Q"]
 SQUEUE_FMT = SEP.join(SQUEUE_FIELDS)
-# JobArrayID, not JobID: -O JobID prints an array's BASE id ("759320") for
-# every task, so no task ever joined its row; JobArrayID matches %i exactly.
+# JobArrayID, not JobID: it prints "759320_5" exactly as %i does (-O JobID
+# prints a task's raw numeric id, and a pending array row the base id), so
+# the two outputs join on it.
 # NumTasks .. MaxNodes: the request's shape as Slurm's node selection reads
 # it (web/src/lib/node-select.ts).
 CONTAINER_COLUMNS = [("JobArrayID", 64), ("tres-alloc", 256), ("SchedNodes", 128),
@@ -99,7 +100,7 @@ def parse_nodes(text):
         gres = "" if gres in ("(null)", "") else gres
         alloc_tres = _kv(line, "AllocTRES")
         used = ",".join(f"gpu:{m[0]}:{m[1]}" for m in
-                        re.findall(r"gres/gpu:([A-Za-z0-9_\-]+)=(\d+)", alloc_tres))
+                        re.findall(r"gres/gpu:([A-Za-z0-9_.\-]+)=(\d+)", alloc_tres))
         reason = re.search(r"Reason=(.+?)(?:\s+\w+=|$)", line)
         parts = _kv(line, "Partitions")
         feats = _kv(line, "ActiveFeatures")
@@ -498,29 +499,18 @@ def parse_topology(text):
     return out
 
 
-def parse_pending_reqtres(text):
-    """`sacct -aX --state=PENDING -o JobID,ReqTRES -P -n` -> {job_id: tres}.
-
-    ReqTRES holds the job's *requested totals* (mem=260000M for a 26-CPU job
-    asking --mem-per-cpu=10000M) — the only place a pending job's real memory
-    footprint is visible without a per-job scontrol call."""
-    out = {}
-    for line in text.splitlines():
-        jid, _, tres = line.partition("|")
-        jid = jid.strip()
-        if jid and tres.strip():
-            out[jid] = tres.strip()
-    return out
-
-
-def parse_queue(text, extras=None, pending_reqtres=None):
+def parse_queue(text, extras=None):
     """`squeue -h -a -r -o SQUEUE_FMT` -> [{...}] like squeue --json, enriched with
     every field the raw Jobs table surfaces (see SQUEUE_FIELDS for order).
 
     `extras` is parse_containers' output: per-job tres-alloc + container.
-    `pending_reqtres` is parse_pending_reqtres' output: per-job requested totals."""
+    """
     extras = extras or {}
-    pending_reqtres = pending_reqtres or {}
+    # %T prints a flag state in place of the base one (job_state_string):
+    # a CONFIGURING job already holds its nodes, a REQUEUE_HOLD or
+    # SPECIAL_EXIT job waits held. Fold them here so every consumer counts
+    # them where Slurm does.
+    lifecycle = {"CONFIGURING": "RUNNING", "REQUEUE_HOLD": "PENDING", "SPECIAL_EXIT": "PENDING"}
     jobs = []
     for line in text.splitlines():
         p = line.split(SEP)
@@ -529,6 +519,7 @@ def parse_queue(text, extras=None, pending_reqtres=None):
         (jid, user, acct, part, state, reason, nnodes, cpus, gres, submit,
          end, start_est, left, name, qos, nodelist, used, timelimit, min_mem,
          req_nodes, exc_nodes, priority) = p[:22]
+        state = lifecycle.get(state, state)
         extra = extras.get(str(jid)) or {}
         alloc = _parse_tres(extra.get("tres", ""))
         gm = re.search(r"gpu:(?:([A-Za-z0-9_.\-]+):)?(\d+)", gres or "")
@@ -545,14 +536,12 @@ def parse_queue(text, extras=None, pending_reqtres=None):
         gpu_type = requested_type if state == "PENDING" else (alloc.get("gpu_type") or requested_type)
         # Memory: %m prints per-CPU requests with no suffix (MinMemoryCPU=6000M
         # shows as plain "6000M"), so it can be wrong by a factor of NumCPUs.
-        # tres-alloc's mem= is the job's real total for RUNNING jobs, but it's
-        # null while pending — there sacct's ReqTRES holds the requested total.
-        req = _parse_tres(pending_reqtres.get(str(jid), "")) if state == "PENDING" else {}
-        # No total from either source (the enrichment command failed): %m alone
-        # is ambiguous — a --mem-per-cpu job prints its PER-CPU value, so a
-        # 64-CPU x 6000M job would read 6000 MB instead of 384000. Report
-        # unknown (0) rather than a number that can be 64x off.
-        mem_mb = req.get("mem_mb") or alloc.get("mem_mb") or 0
+        # tres-alloc's mem= is the job's total: the allocation once running,
+        # the request while pending (squeue prints tres_req_str when nothing
+        # is allocated yet, squeue/print.c). Without it (the -O command
+        # failed) %m alone is ambiguous — a --mem-per-cpu job prints its
+        # PER-CPU value, 64x off for 64 CPUs — so report unknown (0).
+        mem_mb = alloc.get("mem_mb") or 0
         cpus_i = int(cpus) if cpus.isdigit() else 0
         per_cpu, per_node = _memory_kind(extra.get("min_memory_raw", ""), mem_mb, cpus_i, nnodes_i)
         jobs.append({
@@ -611,9 +600,11 @@ def parse_licenses(text):
 def parse_cpu_submit_probes(text):
     """`sbatch --test-only` rows for CPU partitions.
 
-    This does not submit jobs. It asks Slurm for the predicted placement/start
-    time of the partition's default request, which is more accurate than
-    inferring queueability from idle node counts alone.
+    This submits nothing. Slurm answers with a node list and a start time;
+    the dashboard uses only an outright rejection of the request (its start
+    times plan behind skipped waiters and ignore backfill bookings — see
+    web/src/lib/cpu-probes.ts). ok: True = placed, False = Slurm rejected the
+    request, None = no answer (timeout, controller unreachable).
     """
     probes = []
     start_re = re.compile(
@@ -639,9 +630,11 @@ def parse_cpu_submit_probes(text):
                 "raw": raw,
             })
         else:
+            no_answer = _int(rc_s) == 124 or not raw or re.search(
+                r"Unable to contact|Socket timed out|Zero Bytes were transmitted|Connection refused", raw)
             probes.append({
                 "partition": partition,
-                "ok": False,
+                "ok": None if no_answer else False,
                 "start_time": "",
                 "start_epoch": 0,
                 "processors": 0,
@@ -748,14 +741,14 @@ class Source:
         singularity_cmd = ("singularity --version 2>/dev/null || true"
                            if not self._singularity_read else "true")
         sep_q = shlex.quote(SEP)
-        # The probe's verdict is displayed next to a `salloc -p X` command, and
-        # job_submit.lua pins the walltime of interactive jobs per partition
-        # (read from the Lua; a partition without that rule honors -t). Probe
-        # with that same walltime so "starts now" is a statement about the
-        # salloc the user will actually run — walltime decides backfill.
+        # Probe the request a user's `salloc -p X` makes: job_submit.lua pins
+        # the walltime of interactive jobs per partition (read from the Lua; a
+        # partition without that rule honors -t), and a walltime over the
+        # QoS MaxWall is rejected. Only rejections are used (see
+        # parse_cpu_submit_probes).
         cpu_probes = "; ".join(
             "out=$(timeout 4s sbatch --test-only -p {p}{t} --wrap=hostname 2>&1); rc=$?; "
-            "printf '%s%s%s%s%s\\n' {p} \"$SEP\" \"$rc\" \"$SEP\" \"$out\"".format(
+            "printf '%s%s%s%s%s\\n' {p} \"$SEP\" \"$rc\" \"$SEP\" \"$(printf '%s' \"$out\" | tr '\\n' ' ')\"".format(
                 p=shlex.quote(p), t=self._interactive_t_flag(p))
             for p in cpu_test_partitions(self.policy_snapshot, self.node_partitions, self.gpu_partitions,
                                          self.probe_order(self.policy_snapshot)))
@@ -786,11 +779,6 @@ class Source:
                          # so pending counts ran ~10 short (audit 2026-10-01).
                          f"squeue -h -a -r -o '{SQUEUE_FMT}' || exit $?; echo {MARK}; "
                          f"(squeue -h -a -r -O '{CONTAINER_FMT}' 2>/dev/null || true); echo {MARK}; "
-                         # pending jobs' AllocTRES is null and squeue %m prints
-                         # per-CPU requests indistinguishably from totals (a
-                         # 26-CPU job asking 10000M/CPU shows "10000M" — 26x
-                         # off); sacct's ReqTRES is the only cheap total
-                         f"(timeout 8s sacct -aX --state=PENDING -o JobID,ReqTRES -P -n 2>/dev/null || true); echo {MARK}; "
                          f"{singularity_cmd}; echo {MARK}; "
                          f"{cpu_probe_cmd}; echo {MARK}; "
                          # licenses (Materials Studio): names the -L must
@@ -799,8 +787,8 @@ class Source:
                          f"{qos_cmd}; echo {MARK}; "
                          f"{partition_cmd}; echo {MARK}; "
                          f"{lua_cmd}")
-        sections = (out.split(MARK) + [""] * 10)[:10]
-        (nodes_txt, queue_txt, containers_txt, reqtres_txt, sing_txt, cpu_probe_txt,
+        sections = (out.split(MARK) + [""] * 9)[:9]
+        (nodes_txt, queue_txt, containers_txt, sing_txt, cpu_probe_txt,
          license_txt, qos_txt, partition_txt, lua_section) = sections
         if not self._singularity_read and "version" in sing_txt:
             self._singularity_read = True
@@ -814,7 +802,7 @@ class Source:
             partition_txt, _, topology_txt = partition_txt.partition(TOPO_MARK)
             self._set_policy(qos_txt.strip("\n"), partition_txt.strip("\n"),
                              lua_txt.lstrip("\n"), stat_txt.strip(), now, topology_txt.strip("\n"))
-        queue = parse_queue(queue_txt, parse_containers(containers_txt), parse_pending_reqtres(reqtres_txt))
+        queue = parse_queue(queue_txt, parse_containers(containers_txt))
         queue["licenses"] = parse_licenses(license_txt)
         queue["cpu_submit_probes"] = self.cpu_probes
         queue["cpu_submit_probes_generated_at"] = int(self.cpu_probe_at) if self.cpu_probe_at else 0

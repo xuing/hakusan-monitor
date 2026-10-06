@@ -14,7 +14,6 @@ from backend.sources import (
     build_policy_snapshot,
     parse_containers,
     parse_cpu_submit_probes,
-    parse_pending_reqtres,
     parse_qos_policies,
     parse_queue,
 )
@@ -247,10 +246,20 @@ class QueueParserTests(unittest.TestCase):
         self.assertEqual(job["gpus"], 1)
         self.assertEqual(job["gpu_type"], "")
 
-    def test_parse_queue_uses_sacct_reqtres_for_pending_memory(self):
-        # A pending 26-CPU job asking --mem-per-cpu=10000M: %m shows "10000M",
-        # tres-alloc is null, and only sacct's ReqTRES has the 260000M total.
-        # Without it the fit logic sees a 10 GB waiter that fits everywhere.
+    def test_parse_queue_folds_flag_states_into_running_or_pending(self):
+        base = ["1", "u", "a", "DEF", "STATE", "None", "1", "16", "N/A", "2026-10-07T01:00:00", "N/A",
+                "N/A", "1:00:00", "j", "def", "lcpcc-001", "0:01", "1:00:00", "6000M", "", "", "100"]
+        def state_of(raw):
+            return parse_queue(SEP.join(base).replace("STATE", raw))["jobs"][0]["job_state"]
+        self.assertEqual(state_of("CONFIGURING"), "RUNNING")   # holds its nodes
+        self.assertEqual(state_of("REQUEUE_HOLD"), "PENDING")
+        self.assertEqual(state_of("SPECIAL_EXIT"), "PENDING")
+        self.assertEqual(state_of("COMPLETING"), "COMPLETING")
+
+    def test_parse_queue_reads_the_pending_total_from_tres(self):
+        # A pending 26-CPU job asking --mem-per-cpu=10000M: %m shows "10000M";
+        # squeue -O tres-alloc prints the request (260000M) while nothing is
+        # allocated. Without it the fit logic sees a 10 GB waiter.
         line = SEP.join(
             [
                 "406523", "user03", "student", "GPU-S", "PENDING", "Resources",
@@ -260,13 +269,9 @@ class QueueParserTests(unittest.TestCase):
                 "spcc-cld-gl01", "spcc-cld-gl[02-03]", "22691",
             ],
         )
-        reqtres = parse_pending_reqtres(
-            "406523|billing=26,cpu=26,gres/gpu:h100-20c=1,mem=260000M,node=1\n"
-            "999999|cpu=1,mem=4G,node=1\n"
-            "|\n",
-        )
+        pending = {"406523": {"tres": "billing=26,cpu=26,gres/gpu:h100-20c=1,mem=260000M,node=1", "container": ""}}
 
-        job = parse_queue(line, None, reqtres)["jobs"][0]
+        job = parse_queue(line, pending)["jobs"][0]
 
         self.assertEqual(job["min_memory_mb"], 260000)
         self.assertEqual(job["min_memory"], "260000M")
@@ -274,10 +279,9 @@ class QueueParserTests(unittest.TestCase):
         self.assertEqual(job["exc_nodes"], "spcc-cld-gl[02-03]")
         self.assertEqual(job["priority"], 22691)
 
-        # Running jobs must keep trusting tres-alloc, not the pending map.
         running = line.replace("PENDING", "RUNNING")
         extras = {"406523": {"tres": "cpu=26,mem=240G,node=1", "container": ""}}
-        job = parse_queue(running, extras, reqtres)["jobs"][0]
+        job = parse_queue(running, extras)["jobs"][0]
         self.assertEqual(job["min_memory_mb"], 245760)
 
     def test_parse_containers_slices_fixed_width_columns(self):
@@ -311,6 +315,12 @@ class QueueParserTests(unittest.TestCase):
             {"name": "lcpcc-ibsw1", "level": 0, "nodes": "lcpcc-[001-050,113-124]", "switches": ""},
             {"name": "xfusion", "level": 1, "nodes": "lcpcc-[001-124]", "switches": "lcpcc-ibsw[1-2]"},
         ])
+
+    def test_probe_without_an_answer_is_not_a_rejection(self):
+        timed_out = parse_cpu_submit_probes(SEP.join(["DEF", "124", ""]))[0]
+        down = parse_cpu_submit_probes(SEP.join(["DEF", "1", "sbatch: error: Unable to contact slurm controller"]))[0]
+        rejected = parse_cpu_submit_probes(SEP.join(["DEF", "1", "allocation failure: Requested node configuration is not available"]))[0]
+        self.assertEqual((timed_out["ok"], down["ok"], rejected["ok"]), (None, None, False))
 
     def test_parse_cpu_submit_probes(self):
         raw = (

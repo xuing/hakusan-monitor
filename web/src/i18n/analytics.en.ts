@@ -58,7 +58,6 @@ export const analyticsEn = {
   "an.free.title.node": "When whole nodes are free",
   "an.free.hint.gpu": "From this site's periodic samples. Each cell is the share of samples in that hour with at least one GPU that is unallocated, up and not held by the scheduler; whether that node still has enough cores and memory is not checked.",
   "an.free.hint.node": "From this site's periodic samples. Each cell is the share of samples in that hour with at least one completely idle node.",
-  "an.free.hint.nodeParts": "{parts} hand out whole nodes only and need one.",
   "an.free.extra": "Site samples · since {since}",
   "an.free.finding": "{pool} on weekdays most often has {thing} at {best} ({a}) and least often at {worst} ({b}); weekend average {c}.",
   "an.free.thing.gpu": "a free GPU",

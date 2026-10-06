@@ -6,7 +6,6 @@ import {
   freeFinding,
   heatColor,
   hourRange,
-  joinList,
   mainPool,
   pctText,
   poolColor,
@@ -143,11 +142,7 @@ export function FreeHours({ view }: { view: AnalyticsView }) {
   return (
     <AnCard
       title={t(metric === "gpu" ? "an.free.title.gpu" : "an.free.title.node")}
-      hint={metric === "gpu"
-        ? t("an.free.hint.gpu")
-        : [t("an.free.hint.node"), view.whole_node_partitions.length
-          ? t("an.free.hint.nodeParts", { parts: joinList(t, view.whole_node_partitions) }) : ""]
-          .filter(Boolean).join(" ")}
+      hint={t(metric === "gpu" ? "an.free.hint.gpu" : "an.free.hint.node")}
       extra={view.free.since ? t("an.free.extra", { since: dayLabel(view.free.since, true) }) : undefined}
       finding={main && f && rich(t, "an.free.finding", {
         pool: poolLabel(t, main.id),

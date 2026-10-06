@@ -86,8 +86,10 @@ def pool_free(pool):
     """(free units, anything free?) of one snapshot pool for the hourly rollup.
 
     GPU pools: GPUs that are idle, up and not held by the scheduler (gpu.free).
-    CPU pools: whole idle nodes — jobs that take full nodes need one, and a
-    pool-wide free-core total says nothing about whether a node is empty.
+    CPU pools: whole idle nodes — what a job asking for a full node or
+    --exclusive needs. Jobs without that spread over partly free nodes (a
+    256-CPU LARGE probe landed on 12 nodes, 2026-10-07), so this is not a
+    "can a job start" figure.
     """
     gpu = pool.get("gpu")
     if pool.get("kind") == "gpu":

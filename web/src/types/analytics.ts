@@ -33,7 +33,6 @@ export interface AnalyticsView {
   pools: AnalyticsPool[];
   users: number;
   submissions: number;
-  whole_node_partitions: string[];
   submit: {
     cells: number[][];          // [weekday Mon..Sun][hour] people submitting per hour
     by_hour: number[];

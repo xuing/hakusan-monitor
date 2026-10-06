@@ -290,11 +290,6 @@ def _kind(kind, kind_pools, rows, history, free_rows, ctx, clock, now, window_da
                    "nodes": p.get("nodes"), "down": p.get("down", 0)} for p in kind_pools],
         "users": len(users),
         "submissions": len(firsts),
-        # partitions that hand out whole nodes only (minimum cores >= a node's cores)
-        "whole_node_partitions": sorted(
-            name for p in kind_pools for name in p.get("partitions", [])
-            if p.get("nodes") and (caps.get(name) or {}).get("min_cores")
-            and caps[name]["min_cores"] >= (p.get("units") or 0) / p["nodes"]) if kind == "cpu" else [],
     }
 
     # ---- submission rhythm --------------------------------------------------

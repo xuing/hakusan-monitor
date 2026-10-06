@@ -42,6 +42,7 @@ export function cpuProbeState(
 ): CpuProbeState {
   if (!probe) return "unknown";
   if (!probedAt || observedAt - probedAt > maxAge || observedAt < probedAt - 120) return "unknown";
+  if (probe.ok === null) return "unknown";   // no answer: timeout, controller unreachable
   if (!probe.ok) return "failed";
   if (!probe.start_epoch) return "queued";
   // Judge the scheduler prediction at the instant it was tested. A queued

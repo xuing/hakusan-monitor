@@ -58,7 +58,6 @@ export const analyticsZh: Record<AnalyticsKey, string> = {
   "an.free.title.node": "整节点空闲时段",
   "an.free.hint.gpu": "来自本站的定时采样。每格为该小时的采样中，至少有 1 张 GPU 未分配、未下线、未被调度器预留的比例；不判断该节点剩余的 CPU 核和内存是否够用。",
   "an.free.hint.node": "来自本站的定时采样。每格为该小时的采样中，至少有 1 台节点完全空闲的比例。",
-  "an.free.hint.nodeParts": "{parts} 只按整节点分配，需要整台空闲的节点。",
   "an.free.extra": "本站采样 · {since} 起",
   "an.free.finding": "{pool} 工作日 {best}最常有{thing}（{a}），{worst}最少（{b}）；周末平均 {c}。",
   "an.free.thing.gpu": "空闲 GPU",

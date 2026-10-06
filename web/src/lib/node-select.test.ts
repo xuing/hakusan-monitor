@@ -3,7 +3,7 @@ import { expandHostlist, parseGpuCount } from "./derive";
 import { CAPTURE } from "./node-select.fixtures";
 import { selectNodes, switchTable, type FreeNode, type NodeRequest } from "./node-select";
 
-const BLOCKED = /^(DOWN|DRAIN|DRAINING|FAIL|FAILING|NOT_RESPONDING|MAINT|POWERED_DOWN|POWERING_DOWN|REBOOT_ISSUED|REBOOT_REQUESTED|RESERVED)$/;
+const BLOCKED = /^(DOWN|DRAIN|DRAINING|FAIL|FAILING|NOT_RESPONDING|MAINT|MAINTENANCE|POWERED_DOWN|POWERING_DOWN|REBOOT_ISSUED|REBOOT_REQUESTED|RESERVED)$/;
 const TABLE = switchTable(CAPTURE.topology, expandHostlist);
 
 /** The nodes of a partition a job could land on, in Slurm's node order. */
