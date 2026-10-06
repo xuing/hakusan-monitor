@@ -126,6 +126,21 @@ class PublicRedirectTests(unittest.TestCase):
         self.assertFalse(self._decide("150.65.181.206", url=""))
 
 
+class PublicLocationTests(unittest.TestCase):
+    def test_keeps_ordinary_paths_and_queries(self):
+        from backend.server import public_location
+        self.assertEqual(public_location("http://h/hakusan", "/analytics", "view=cpu"),
+                         "http://h/hakusan/analytics?view=cpu")
+        self.assertEqual(public_location("http://h/hakusan", "/nodes%20x", ""), "http://h/hakusan/nodes%20x")
+
+    def test_control_characters_cannot_split_the_header(self):
+        from backend.server import public_location
+        loc = public_location("http://h/hakusan", "/a\r\nSet-Cookie: x=1", "q=\r\nX: y")
+        self.assertNotIn("\r", loc)
+        self.assertNotIn("\n", loc)
+        self.assertEqual(loc, "http://h/hakusan/a%0D%0ASet-Cookie:%20x=1?q=%0D%0AX:%20y")
+
+
 class _ExplodingLogin:
     calls = 0
 

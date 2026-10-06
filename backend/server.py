@@ -19,7 +19,7 @@ from __future__ import annotations
 import gzip, ipaddress, json, math, os, queue, re, secrets, sys, threading, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from types import MappingProxyType
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import parse_qs, quote, urlparse
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import analytics               # noqa: E402
@@ -55,6 +55,15 @@ load_dotenv(os.path.join(ROOT, ".env"))   # before CFG is read
 
 def env(name: str, default: str) -> str:
     return os.environ.get(name, default)
+
+
+def public_location(public_url, path, query=""):
+    """Redirect target for a page request that reached the port directly.
+    The path and query come from the client, so they are percent-encoded:
+    a control character (CR/LF) can never reach the Location header, while
+    valid escapes and URL punctuation pass through unchanged."""
+    url = public_url + quote(path, safe="/%-._~!$&'()*+,;=:@")
+    return url + ("?" + quote(query, safe="/%-._~!$&'()*+,;=:@?") if query else "")
 
 
 def clamp(value, low, high):
@@ -582,9 +591,8 @@ class Handler(BaseHTTPRequestHandler):
         return not ipaddress.ip_address(self.client_address[0].removeprefix("::ffff:")).is_loopback
 
     def _redirect_public(self, path):
-        query = urlparse(self.path).query
         self.send_response(302)
-        self.send_header("Location", f"{CFG['public_url']}{path}" + (f"?{query}" if query else ""))
+        self.send_header("Location", public_location(CFG["public_url"], path, urlparse(self.path).query))
         self.send_header("Content-Length", "0")
         self.end_headers()
 
