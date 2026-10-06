@@ -567,6 +567,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(200, eng.policy_source())
         if path == "/api/site":
             out = SITE.public(eng.src.policy_snapshot)
+            # the zone Slurm prints its times in; the page reads them in it
+            out["time_zone"] = getattr(CLUSTER_TZ, "key", "")
             # the Containers page only where `singularity` answered on the cluster
             out["pages"]["containers"] = bool(eng.src.singularity) or CFG["source"] == "mock"
             return self._json(200, out)

@@ -3,6 +3,7 @@ import { dayClockLabel } from "@/components/common/gpu-release-hint";
 import { jobSizeText } from "@/components/common/verdict-text";
 import { useLive } from "@/hooks/live-context";
 import { reasonLabel, type TFn } from "@/i18n";
+import { clusterMs } from "@/lib/cluster-time";
 import { poolWaiters, turnOrder } from "@/lib/queue";
 import type { Pool, RawJob } from "@/types/snapshot";
 
@@ -34,7 +35,7 @@ function PendingJobRow({ job, t }: { job: RawJob; t: TFn }) {
       </div>
       <div className="mt-1 truncate text-xs text-muted-foreground">
         {reasonLabel(t, rawReason)}
-        {job.start_est && Number.isFinite(Date.parse(job.start_est)) && (
+        {Number.isFinite(clusterMs(job.start_est)) && (
           <> · {t("pool.pendingStartEst", { when: dayClockLabel(job.start_est, t) })}</>
         )}
       </div>

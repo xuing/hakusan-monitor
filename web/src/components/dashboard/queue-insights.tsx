@@ -5,7 +5,8 @@ import { ReasonText } from "@/components/common/reason-text";
 import { SectionCard } from "@/components/common/section-card";
 import { useLive } from "@/hooks/live-context";
 import { coresText, reasonLabel, useT } from "@/i18n";
-import { fmtAt, fmtEpoch } from "@/lib/format";
+import { fmtEpoch } from "@/lib/cluster-time";
+import { fmtAt } from "@/lib/format";
 
 import { partitionOrderRank } from "@/lib/site";
 import { cn } from "@/lib/utils";

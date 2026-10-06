@@ -11,7 +11,8 @@ import { useApi } from "@/hooks/use-api";
 import { useLive } from "@/hooks/live-context";
 import { useT } from "@/i18n";
 import { api } from "@/lib/api";
-import { CLUSTER_TIME_ZONE, nf } from "@/lib/format";
+import { clusterTimeZone } from "@/lib/cluster-time";
+import { nf } from "@/lib/format";
 import { type Tone } from "@/lib/slurm";
 import { partitionOrderRank } from "@/lib/site";
 import { cn } from "@/lib/utils";
@@ -36,7 +37,7 @@ function fmtDateTime(ts: number | undefined): string {
   if (!ts) return "—";
   // sv-SE renders ISO-like "2026-10-01 15:58", unambiguous in every UI language
   return new Date(ts * 1000).toLocaleString("sv-SE", {
-    timeZone: CLUSTER_TIME_ZONE,
+    timeZone: clusterTimeZone(),
     year: "numeric",
     month: "2-digit",
     day: "2-digit",

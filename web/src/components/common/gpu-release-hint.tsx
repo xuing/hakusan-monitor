@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Tag } from "./tag";
-import { clockOf, clusterDayOffset, fmtAt, parseDur } from "@/lib/format";
+import { clusterDayOffset } from "@/lib/cluster-time";
+import { clockOf, fmtAt, parseDur } from "@/lib/format";
 import { durText, useT, type TFn } from "@/i18n";
 import { cn } from "@/lib/utils";
 import type { NextFree } from "@/types/snapshot";

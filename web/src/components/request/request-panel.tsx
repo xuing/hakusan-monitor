@@ -20,6 +20,7 @@ import { Tag } from "@/components/common/tag";
 import { PartitionTable, type PartitionAxis, type PartitionTableRow } from "@/components/request/partition-table";
 import { useLive } from "@/hooks/live-context";
 import { coresText, durText, tOptional, wallText, type TFn } from "@/i18n";
+import { clusterClock } from "@/lib/cluster-time";
 import { cpuPartitionStatus, cpuPartitionVerdict } from "@/lib/cpu-partition";
 import {
   cpuDefaultSpreads,
@@ -59,7 +60,7 @@ import {
 import { cn } from "@/lib/utils";
 import type { Partition, Pool, Snapshot } from "@/types/snapshot";
 import { DisclosureRow } from "@/components/pools/pool-card";
-import { CommandVerdict, GpuBackfillQuickTip, GpuFitExplanation, HintAction, MemLinkToggle, clockShort, layoutPlacementLabel } from "@/components/request/request-parts";
+import { CommandVerdict, GpuBackfillQuickTip, GpuFitExplanation, HintAction, MemLinkToggle, layoutPlacementLabel } from "@/components/request/request-parts";
 import { fmtGb, fmtGbNear, largestPassing, linearTicks, logTicks, niceCoreCount, normalizeMem, numberOptions, parseHumanTime, parseMemoryInputMb, quantizeWalltime, walltimeTicks, withinCapInt } from "@/lib/request-input";
 
 /** Collapsible starter request for this pool, in two steps: a table of its
@@ -469,7 +470,7 @@ export function RequestPanel({ pool, t }: { pool: Pool; t: TFn }) {
     ? (
         <>
           {bfTip
-            ? t("pool.hintTimeOver", { t: durText(t, timeGreenSec), node: bfTip.node, until: clockShort(bfTip.untilMs) })
+            ? t("pool.hintTimeOver", { t: durText(t, timeGreenSec), node: bfTip.node, until: clusterClock(bfTip.untilMs) })
             : t("pool.hintTimeOverPlain", { t: durText(t, timeGreenSec) })}
           <HintAction label={t("pool.useTime", { t: durText(t, timeGreenSec) })} onClick={() => setTimeSec(timeGreenSec)} />
         </>

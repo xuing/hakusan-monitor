@@ -2,7 +2,7 @@
 // with one sentence computed here from the payload, so the copy always states
 // what the current data says (no hand-written numbers).
 import type { Lang, TFn, TranslationKey } from "@/i18n";
-import { CLUSTER_TIME_ZONE } from "@/lib/format";
+import { clusterTimeZone } from "@/lib/cluster-time";
 import type { AnalyticsView } from "@/types/analytics";
 
 export const WINDOW = 4; // hours in a "busiest / quietest" window
@@ -72,7 +72,7 @@ export function monthLabel(month: string, lang: Lang): string {
 /** Epoch -> cluster-local "MM-DD" / "YYYY-MM-DD". */
 export function dayLabel(ts: number, withYear = false): string {
   const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone: CLUSTER_TIME_ZONE, year: "numeric", month: "2-digit", day: "2-digit",
+    timeZone: clusterTimeZone(), year: "numeric", month: "2-digit", day: "2-digit",
   }).format(new Date(ts * 1000));
   return withYear ? parts : parts.slice(5);
 }

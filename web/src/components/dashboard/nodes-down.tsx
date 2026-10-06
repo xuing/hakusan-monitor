@@ -3,6 +3,7 @@ import { SectionCard } from "@/components/common/section-card";
 import { useLive } from "@/hooks/live-context";
 import { useResourceFilter } from "@/hooks/resource-filter-context";
 import { durText, poolTitle, useT, type TFn } from "@/i18n";
+import { clusterMs } from "@/lib/cluster-time";
 import { compressHostlist, groupDownNodes, type DownGroup, type DownTone } from "@/lib/down-groups";
 import { cn } from "@/lib/utils";
 import type { Pool } from "@/types/snapshot";
@@ -45,7 +46,7 @@ export function NodesDown() {
 }
 
 function DownEntry({ g, pools, t }: { g: DownGroup; pools: Pool[]; t: TFn }) {
-  const startedMs = Date.parse(g.since);
+  const startedMs = clusterMs(g.since);
   const lasted = Number.isFinite(startedMs) ? Math.max(0, (Date.now() - startedMs) / 1000) : 0;
   // days for anything a day or longer: "181 天", not "181 天 3 小时"
   const lastedText = lasted >= 86400 ? t("dur.d", { n: Math.floor(lasted / 86400) }) : durText(t, lasted);

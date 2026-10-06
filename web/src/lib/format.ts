@@ -1,8 +1,5 @@
-// Pure formatting helpers (no i18n, no React).
-
-/** All absolute times in the UI are cluster-local so they match Slurm's own
- * strings (fmtAt slices those verbatim) regardless of the viewer's zone. */
-export const CLUSTER_TIME_ZONE = "Asia/Tokyo";
+// Pure formatting helpers (no i18n, no React). Times that need the
+// cluster's zone are in cluster-time.ts.
 
 export const pct = (x: number | null | undefined, digits = 0) =>
   `${((x ?? 0) * 100).toFixed(digits)}%`;
@@ -13,18 +10,6 @@ export const nf = (n: number | null | undefined) => (n ?? 0).toLocaleString();
 export const clockOf = (iso: string) => (iso ? iso.slice(11, 16) : ""); // "23:44"
 const dateOf = (iso: string) => (iso ? iso.slice(5, 10) : ""); // "06-27"
 export const fmtAt = (iso: string) => (iso ? `${dateOf(iso)} ${clockOf(iso)}` : "—");
-
-/** Which cluster-local day a Slurm timestamp falls on: 0 = today,
- * 1 = tomorrow, 2 = anything else (farther out, or already past) —
- * for choosing "today 02:39" / "tomorrow 02:39" / a numeric date. */
-export function clusterDayOffset(iso: string): 0 | 1 | 2 {
-  if (!iso) return 2;
-  const dayAt = (ms: number) => new Date(ms).toLocaleDateString("en-CA", { timeZone: CLUSTER_TIME_ZONE });
-  const day = iso.slice(0, 10);
-  if (day === dayAt(Date.now())) return 0;
-  if (day === dayAt(Date.now() + 86_400_000)) return 1;
-  return 2;
-}
 
 /** Slurm duration string -> two-unit form so the magnitude is unmistakable:
  * "1-13:17:04" -> "1d 13h", "2:27:53" -> "2h 27m", "5:09" -> "5m 9s", "0:42" -> "42s".
@@ -94,15 +79,3 @@ export function fmtCountdown(sec: number): string {
   return d > 0 ? `${d}d ${hms}` : hms;
 }
 
-/** Unix epoch -> short cluster-local date-time, 24h (matches fmtAt's zone/format). */
-export const fmtEpoch = (ts: number) =>
-  ts
-    ? new Date(ts * 1000).toLocaleString(undefined, {
-        timeZone: CLUSTER_TIME_ZONE,
-        month: "2-digit",
-        day: "2-digit",
-        hour: "2-digit",
-        minute: "2-digit",
-        hour12: false,
-      })
-    : "—";

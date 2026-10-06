@@ -17,7 +17,8 @@ import {
 import { useApi } from "@/hooks/use-api";
 import { useT } from "@/i18n";
 import { api } from "@/lib/api";
-import { fmtDur, fmtEpoch, pct } from "@/lib/format";
+import { fmtEpoch } from "@/lib/cluster-time";
+import { fmtDur, pct } from "@/lib/format";
 import type { Tone } from "@/lib/slurm";
 import type {
   LoginHistoryPoint,

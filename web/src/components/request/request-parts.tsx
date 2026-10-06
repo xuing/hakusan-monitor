@@ -5,6 +5,7 @@ import { jobSizeText, missingText, nodeFreeText, resourceParts, resourceText } f
 import { Tag } from "@/components/common/tag";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { type TFn } from "@/i18n";
+import { clusterClock } from "@/lib/cluster-time";
 import { slotContenders, type GpuBackfillTipData, type GpuFitInfo, type GpuFitNode } from "@/lib/gpu-fit";
 import { type GpuLayout } from "@/lib/gpu-layout";
 import { type Waiter } from "@/lib/queue";
@@ -89,7 +90,7 @@ export function GpuBackfillQuickTip({
   onApply: () => void;
   t: TFn;
 }) {
-  const until = clockShort(tip.untilMs);
+  const until = clusterClock(tip.untilMs);
   const text =
     variant === "switch"
       ? tip.mem
@@ -131,12 +132,6 @@ export function GpuBackfillQuickTip({
 }
 
 /** "01:45" today, "7/9 01:45" once it crosses midnight. */
-export function clockShort(ms: number) {
-  const d = new Date(ms);
-  const hm = `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
-  return d.toDateString() === new Date().toDateString() ? hm : `${d.getMonth() + 1}/${d.getDate()} ${hm}`;
-}
-
 function strandedTipNode(fit: GpuFitInfo | null) {
   return fit?.stranded.find((row) => row.freeGpu >= 1 && row.freeCores >= fit.need.cores && row.freeMemMb > 1024) ?? null;
 }

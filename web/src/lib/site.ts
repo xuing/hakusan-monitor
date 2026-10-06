@@ -16,6 +16,8 @@ export interface SiteInfo {
   partition_order: string[];
   /** partition of the Containers page's interactive example ("" = Slurm's default) */
   container_shell_partition?: string;
+  /** IANA zone Slurm prints its times in (HM_CLUSTER_TZ); "" = unknown */
+  time_zone?: string;
   strings: Partial<Record<Lang, Record<string, string>>>;
 }
 

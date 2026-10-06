@@ -1,7 +1,8 @@
 import type { ColumnDef, SortFn } from "@tanstack/react-table";
 import type { DataTableFeatures } from "./table-features";
 import { reasonLabel, type TFn } from "@/i18n";
-import { fmtAt, fmtDurUnits, fmtEpoch, fmtMB } from "@/lib/format";
+import { fmtEpoch } from "@/lib/cluster-time";
+import { fmtAt, fmtDurUnits, fmtMB } from "@/lib/format";
 import type { RawJob } from "@/types/snapshot";
 import { JobStateBadge } from "./cells";
 import { commaArrayFilter, exactArrayFilter, setSingleFacet } from "./table-filters";

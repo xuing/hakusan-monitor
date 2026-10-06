@@ -26,6 +26,7 @@
  * start in, best fit, using up GrpJobs / MaxJobsPerUser slots as it goes.
  * What they take is the `claims` every "starts now" verdict subtracts.
  */
+import { clusterMs } from "@/lib/cluster-time";
 import { expandHostlist, nodeIsSchedulable, parseGpuCount } from "@/lib/derive";
 import { partitionPolicy, wallLabelSec } from "@/lib/slurm";
 import type { RawJob, RawNode, Snapshot } from "@/types/snapshot";
@@ -111,7 +112,7 @@ export function turnOrder(waiters: Waiter[]): Waiter[] {
   const group = (w: Waiter) =>
     w.kind === "next" ? 0 : w.kind === "never" || /^JobHeld/.test(w.job.state_reason || "") ? 2 : 1;
   const booked = (w: Waiter) => {
-    const ms = Date.parse(w.job.start_est || "");
+    const ms = clusterMs(w.job.start_est);
     return Number.isFinite(ms) ? ms : Number.POSITIVE_INFINITY;
   };
   return [...waiters].sort((a, b) => group(a) - group(b) || booked(a) - booked(b) || (b.job.priority ?? 0) - (a.job.priority ?? 0));
@@ -185,7 +186,7 @@ function buildModel(snap: QueueInput): QueueModel {
 
   // ---- rule 3: Slurm's own bookings ----
   const bookedAt = (job: RawJob) => {
-    const ms = Date.parse(job.start_est || "");
+    const ms = clusterMs(job.start_est);
     return job.sched_nodes && Number.isFinite(ms) ? ms : null;
   };
 
