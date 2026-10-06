@@ -1,13 +1,9 @@
 import os
 import tempfile
 import unittest
-from unittest.mock import patch
 
 from backend.store import JOB_COLUMNS, Store, pool_free
 
-METRICS = dict(cpu_util=0.5, gpu_util=0.5, mem_util=0.5, cpus_total=10, cpus_alloc=5,
-               gpus_total=10, gpus_used=5, nodes_total=1, nodes_avail=1, nodes_down=0,
-               running=1, pending=0)
 POOLS = [{"id": "a40", "kind": "gpu", "gpu": {"free": 2, "maint": False}},
          {"id": "h100", "kind": "gpu", "gpu": {"free": 0, "maint": False}},
          {"id": "cpu", "kind": "cpu", "idle_nodes": 3}]
@@ -63,9 +59,8 @@ class StoreJobTests(unittest.TestCase):
         store.close()
 
     def test_record_rolls_up_free_pools(self):
-        with patch("backend.store._metrics", return_value=METRICS):
-            self.store.record({"pools": POOLS}, 7200)
-            self.store.record({"pools": POOLS}, 7300)
+        self.store.record({"pools": POOLS}, 7200)
+        self.store.record({"pools": POOLS}, 7300)
         rows = {pool: (n, free) for _, pool, n, free in self.store.pool_hours(0)}
         self.assertEqual(rows, {"a40": (2, 2), "h100": (2, 0), "cpu": (2, 2)})
 

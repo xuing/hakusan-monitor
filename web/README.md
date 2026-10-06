@@ -23,19 +23,33 @@ npm test         # Vitest unit tests
 
 ```
 src/
-  pages/         route entry points: overview, partitions, analytics, nodes, jobs
+  pages/         one file per route (overview, partitions, analytics, nodes,
+                 jobs, login-nodes, slurm-guide, containers, project-guide)
   components/
-    layout/      app shell — sidebar, topbar, footer, language + resource filter
-    dashboard/   live monitor widgets — KPIs, GPU board, releases, queue, …
-    data/        TanStack data tables (nodes, jobs) + column defs
-    analytics/   usage heatmap + trend charts
-    common/      shared building blocks — section card, bar, tag, empty
+    pools/       Overview pool groups and cards: occupants, pending jobs
+    request/     quick-request panel, its partition table and parts
+    partitions/  the Partitions page list
+    dashboard/   other live widgets: KPIs, releases, queue, down nodes, users
+    analytics/   Analytics cards
+    data/        TanStack tables (nodes, jobs) and column definitions
+    guide/       policy-source viewer on the project page
+    layout/      app shell: sidebar, topbar, footer, language, resource filter
+    common/      shared pieces: section card, bars, tags, verdict wording
+    charts/      owned SVG charts
     ui/          shadcn/ui primitives (owned, copy-in)
-  hooks/         use-live (SSE), use-api, use-resource-filter
-  i18n/          ja / en / zh dictionaries (type-checked for completeness)
-  lib/           api client, live transport, formatters, slurm + theme helpers
-  types/         snapshot + raw API types
+  hooks/         live snapshot (SSE), API fetch, resource filter, theme
+  i18n/          en / ja / zh dictionaries; ja and zh are typed against en
+  lib/           domain logic as plain functions, tested with vitest:
+                 queue.ts (the pending-queue model), gpu-partition.ts and
+                 cpu-partition.ts (one start verdict per partition),
+                 pool-status.ts (a pool's tone), gpu-availability.ts and
+                 gpu-fit.ts (per-node GPU states), slurm.ts (policy),
+                 cluster-time.ts (Slurm times in the cluster's zone),
+                 request-*.ts (the quick request's input, limits, command)
+  types/         snapshot and API types
 ```
 
-The dark theme is built on **Radix Colors** scales (`src/index.css`); semantic
-status tokens map to the accessible high-contrast steps in `tailwind.config.js`.
+How these fit together, and why: [`../docs/DESIGN.md`](../docs/DESIGN.md).
+
+The theme is built on **Radix Colors** scales (`src/index.css`); semantic
+status tokens map to their high-contrast steps in `tailwind.config.js`.

@@ -4,14 +4,14 @@
 Architecture:
     Source(ssh|local|mock) ─▶ normalize ─▶ Engine
                                               ├─ keeps latest snapshot (real-time)
-                                              ├─ Store (SQLite TSDB: retention + rollup)
-                                              └─ fan-out to SSE subscribers
-    HTTP: /api/snapshot /api/stream(SSE) /api/history /api/usage /api/analytics
-          /api/visits /api/meta /api/site /api/health · POST /api/refresh
-          + static SPA.
+                                              ├─ fan-out to SSE subscribers
+                                              └─ Store (SQLite: pool_hourly, job history)
+    HTTP: /api/snapshot /api/stream(SSE) /api/analytics /api/login-nodes[/history]
+          /api/visits /api/policy-source /api/meta /api/site /api/health
+          · POST /api/refresh + static SPA.
 
-A background Sampler thread polls on a fixed cadence, so data collection is
-decoupled from requests (true real-time push + durable history for peak/trough).
+A background sampler thread polls on a fixed cadence, so collection never
+runs in a request thread.
 
 Run:  python3 backend/server.py     (see env vars below)
 """

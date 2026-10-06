@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import { validateSnapshot } from "./api";
 
 const compatibleSnapshot = {
-  totals: {},
   pools: [],
   partitions: [],
   nodes: [],

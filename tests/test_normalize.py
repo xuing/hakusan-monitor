@@ -87,7 +87,7 @@ class NodeAvailabilityTests(unittest.TestCase):
 
         pool = snap["pools"][0]
         part = snap["partitions"][0]
-        self.assertEqual(snap["totals"]["nodes"]["available"], 0)
+        self.assertEqual(pool["available_nodes"], 0)
         self.assertEqual(pool["cores"]["free"], 0)
         self.assertEqual(pool["gpu"]["free"], 0)
         self.assertEqual(part["cpus"]["free"], 0)
@@ -102,7 +102,6 @@ class NodeAvailabilityTests(unittest.TestCase):
                     {"jobs": []},
                 )
                 pool = snap["pools"][0]
-                self.assertEqual(snap["totals"]["nodes"]["available"], 0)
                 self.assertEqual(pool["available_nodes"], 0)
                 self.assertEqual(pool["cores"]["free"], 0)
 
@@ -120,7 +119,7 @@ class NodeAvailabilityTests(unittest.TestCase):
         self.assertEqual(gpu["reserved"], 1)
         self.assertEqual(gpu["down"], 0)
         self.assertEqual(gpu["free"], 0)
-        self.assertEqual(snap["totals"]["nodes"]["down"], 0)
+        self.assertEqual(snap["nodes_down"], [])
 
     def test_idle_gpu_on_allocated_node_is_free_not_reserved(self):
         # Every core taken, one GPU idle: nothing reserves that GPU, it is just
@@ -178,9 +177,10 @@ class NodeAvailabilityTests(unittest.TestCase):
 
         snap = normalize({"nodes": [first, last]}, {"jobs": []})
 
-        self.assertEqual(snap["totals"]["nodes"]["total"], 1)
-        self.assertEqual(snap["totals"]["cpus"]["total"], 10)
-        self.assertEqual(snap["totals"]["cpus"]["alloc"], 10)
+        pool = snap["pools"][0]
+        self.assertEqual(pool["nodes"], 1)
+        self.assertEqual(pool["cores"]["total"], 10)
+        self.assertEqual(pool["cores"]["alloc"], 10)
 
     def test_native_slurm_number_object_works_for_partition_memory_spec(self):
         node = raw_node(state=["IDLE"], cpus=10, alloc=0, gres="", gres_used="")

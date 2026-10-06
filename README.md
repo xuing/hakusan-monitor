@@ -84,7 +84,7 @@ HM_SOURCE=mock python3 backend/server.py          # open http://localhost:8787
 
 Mock mode reads `mock/nodes.json`, `mock/squeue.json` and `mock/login_nodes.json`.
 They were captured from the live cluster, so they are not in this repository —
-supply your own. `python3 scripts/seed_demo.py` adds 14 days of fake history.
+supply your own. Analytics stays empty in mock mode: it reads `sacct`.
 
 ## Run it against Hakusan
 
@@ -197,7 +197,7 @@ Set these in the environment or in `.env`.
 | `HM_JOBS_RETAIN_DAYS` | `400` | days of job history kept (and read on first start) |
 | `HM_ANALYTICS_INTERVAL` | `1800` | seconds between Analytics recomputations |
 | `HM_DB` | `data/hakusan.sqlite` | database file |
-| `HM_RETAIN_DAYS` | `60` | days of raw samples kept (hourly rollups are kept longer) |
+| `HM_RETAIN_DAYS` | `60` | days of sample timestamps kept (they make recording idempotent); the hourly free-capacity rollup behind Analytics is kept indefinitely |
 | `HM_LOGIN_RETAIN_DAYS` | `HM_RETAIN_DAYS` | days of login-node samples kept |
 | `HM_VISIT_RETAIN_DAYS` | `365` | days of anonymous visit counts kept |
 | `HM_CLUSTER_TZ` | `Asia/Tokyo` | time zone Slurm prints times in |
@@ -215,13 +215,13 @@ Set these in the environment or in `.env`.
 | `GET /api/snapshot` | the current cluster snapshot (versioned JSON) |
 | `GET /api/stream` | Server-Sent Events: a new snapshot after every sample |
 | `GET /api/analytics` | job-history aggregates for the Analytics page (GPU and CPU views) |
-| `GET /api/history?hours=24` | down-sampled cluster time series |
-| `GET /api/usage?days=30` | allocation by hour of day and weekday |
 | `GET /api/login-nodes` | current login-node health |
 | `GET /api/login-nodes/history?hours=24` | login-node history |
+| `GET /api/policy-source` | the raw policy texts (`job_submit.lua`, QoS, partitions), their reading and the last daily check |
+| `GET /api/visits?days=30` | anonymous daily visitor counts for the project page |
 | `GET /api/meta` | cluster name, Slurm version, partitions, container info |
-| `GET /api/site` | site name, links, page switches, partition order and site strings |
-| `GET /api/health` | liveness, data source and data age |
+| `GET /api/site` | site name, links, page switches, partition order, cluster time zone and site strings |
+| `GET /api/health` | liveness, data source, data age, and the last database error (`store_error`) |
 | `POST /api/refresh` | ask for a sample now: 202 when one is started or queued, 429 with `retry_after` within `HM_REFRESH_MIN_INTERVAL` of the last one |
 
 ## Data and privacy
@@ -244,7 +244,7 @@ backend/   server.py · sources.py · normalize.py · site_config.py · store.py
 sites/     site files (hakusan.json)
 web/       React frontend (see web/README.md)
 tests/     backend unit tests
-scripts/   run.sh, demo data, cluster policy check, GPU memory probe
+scripts/   run.sh, cluster policy check, GPU memory probe, queue fixture capture
 deploy/    systemd units
-docs/      deployment, design notes, architecture.svg, screenshots/
+docs/      design (DESIGN.md), deployment (DEPLOY.md), architecture.svg, screenshots/
 ```

@@ -1,8 +1,8 @@
 """SQLite store for Hakusan Monitor (stdlib `sqlite3` only).
 
-  • samples       — one compact row per collected snapshot, pruned to a retention
-                    window. Its timestamp key makes recording idempotent across
-                    restarts and retries.
+  • samples       — the timestamp of every recorded snapshot, pruned to a
+                    retention window: the key that makes recording idempotent
+                    across restarts and retries.
   • pool_hourly   — per pool and hour: how often anything was free (the
                     Analytics "when is it free" card), kept indefinitely.
   • login_samples — login-node load; visits; jobs / job_attempts (sacct history).
@@ -15,15 +15,9 @@ import hashlib, os, json, secrets, sqlite3, sys, threading, time
 SCHEMA_VERSION = 1
 
 SCHEMA = """
-CREATE TABLE IF NOT EXISTS samples (
-  ts          INTEGER PRIMARY KEY,           -- unix seconds
-  cpu_util    REAL, gpu_util REAL, mem_util REAL,
-  cpus_total  INTEGER, cpus_alloc INTEGER,
-  gpus_total  INTEGER, gpus_used  INTEGER,
-  nodes_total INTEGER, nodes_avail INTEGER, nodes_down INTEGER,
-  running     INTEGER, pending INTEGER,
-  detail      TEXT                            -- no longer written (was per-pool JSON)
-);
+CREATE TABLE IF NOT EXISTS samples (           -- databases before 2026-10 also
+  ts          INTEGER PRIMARY KEY            -- carry cluster-metric columns, no
+);                                           -- longer written or read
 CREATE TABLE IF NOT EXISTS login_samples (
   ts              INTEGER,
   node_id         TEXT,
@@ -103,19 +97,6 @@ def pool_free(pool):
     return idle, int(idle >= 1)
 
 
-def _metrics(snap):
-    t = snap["totals"]
-    return {
-        "cpu_util": t["cpus"]["util"], "gpu_util": t["gpus"]["util"],
-        "mem_util": t["memory"]["util"],
-        "cpus_total": t["cpus"]["total"], "cpus_alloc": t["cpus"]["alloc"],
-        "gpus_total": t["gpus"]["total"], "gpus_used": t["gpus"]["used"],
-        "nodes_total": t["nodes"]["total"], "nodes_avail": t["nodes"]["available"],
-        "nodes_down": t["nodes"]["down"],
-        "running": snap["queue"]["running"], "pending": snap["queue"]["pending"],
-    }
-
-
 class Store:
     def __init__(self, path, retain_days=60, login_retain_days=None, visit_retain_days=365,
                  job_retain_days=400):
@@ -149,20 +130,10 @@ class Store:
     # ---- write -------------------------------------------------------------
     def record(self, snap, ts):
         with self._record_lock:
-            m = _metrics(snap)
             c = self._conn()
             with c:
                 inserted = c.execute(
-                    """INSERT INTO samples
-                       (ts,cpu_util,gpu_util,mem_util,cpus_total,cpus_alloc,
-                        gpus_total,gpus_used,nodes_total,nodes_avail,nodes_down,
-                        running,pending)
-                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
-                       ON CONFLICT(ts) DO NOTHING""",
-                    (ts, m["cpu_util"], m["gpu_util"], m["mem_util"], m["cpus_total"],
-                     m["cpus_alloc"], m["gpus_total"], m["gpus_used"], m["nodes_total"],
-                     m["nodes_avail"], m["nodes_down"], m["running"], m["pending"]),
-                )
+                    "INSERT INTO samples (ts) VALUES (?) ON CONFLICT(ts) DO NOTHING", (ts,))
                 # Database-backed idempotency also survives restarts and
                 # out-of-order retries: the sample and its rollup commit together.
                 if inserted.rowcount == 0:

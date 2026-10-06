@@ -32,7 +32,7 @@ policy = {
 }
 pool_rows = [{k: p[k] for k in ("id", "kind", "nodes", "mem_per_node", "down_nodes", "available_nodes", "idle_nodes", "cores", "gpu", "partitions", "queue")}
              for p in snap["pools"] if p["id"] in pools]
-part_rows = [{k: p[k] for k in ("name", "kind", "nodes", "pool", "gpu", "jobs", "spec", "nodes_state", "free_nodes", "available_nodes")}
+part_rows = [{k: p[k] for k in ("name", "kind", "nodes", "pool", "gpu", "jobs", "spec", "nodes_state", "available_nodes")}
              for p in snap["partitions"] if p["name"] in parts]
 def node_row(n):
     return [n["name"], n["pool"], "+".join(n["state"]), ",".join(n["partitions"]), n["cpus"], n["alloc_cpus"],

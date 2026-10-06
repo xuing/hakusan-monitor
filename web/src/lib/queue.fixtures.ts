@@ -173,7 +173,6 @@ const PARTITIONS = [
       "allocated": 4,
       "mixed": 6
     },
-    "free_nodes": 0,
     "available_nodes": 0
   },
   {
@@ -202,7 +201,6 @@ const PARTITIONS = [
       "mixed": 9,
       "allocated": 11
     },
-    "free_nodes": 0,
     "available_nodes": 0
   },
   {
@@ -231,7 +229,6 @@ const PARTITIONS = [
       "mixed": 9,
       "allocated": 11
     },
-    "free_nodes": 0,
     "available_nodes": 0
   },
   {
@@ -260,7 +257,6 @@ const PARTITIONS = [
       "allocated": 4,
       "mixed": 6
     },
-    "free_nodes": 0,
     "available_nodes": 0
   },
   {
@@ -289,7 +285,6 @@ const PARTITIONS = [
       "mixed": 9,
       "allocated": 11
     },
-    "free_nodes": 0,
     "available_nodes": 0
   },
   {
@@ -319,7 +314,6 @@ const PARTITIONS = [
       "drain": 1,
       "mixed": 1
     },
-    "free_nodes": 0,
     "available_nodes": 0
   }
 ] as unknown as Partition[];

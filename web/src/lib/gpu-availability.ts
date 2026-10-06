@@ -41,8 +41,8 @@
  *    single-GPU job in front of nine idle A40 nodes takes one GPU; the other
  *    fourteen stay `ready`. Marking every node a waiter *could* use as
  *    contested turned two never-startable jobs into "all 15 GPUs queue"
- *    (measured 2026-10-01). The adapter places waiters (`queueClaims` in
- *    gpu-fit.ts) and hands each node its claimed share.
+ *    (measured 2026-10-01). queue.ts places the waiters (`queueModel`'s
+ *    claims) and the adapter hands each node its claimed share.
  *
  * 5. "Idle" is not "free". `physicalIdle` counts every unused GPU, including
  *    ones on drained/down nodes and scheduler-held ones — it exists so the

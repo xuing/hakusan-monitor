@@ -1,7 +1,8 @@
 """Pure transforms: Slurm JSON  ->  compact Hakusan Monitor snapshot.
 
-No I/O here so it stays unit-testable. Input is already-parsed dicts from
-`scontrol show nodes --json` and `squeue --json` (Slurm 25.05 schema).
+No I/O here so it stays unit-testable. Input is the node and job dicts
+sources.py parses from Slurm's compact output, in the shapes of
+`scontrol show nodes --json` and `squeue --json` (Slurm 25.05).
 """
 from __future__ import annotations
 import re
@@ -45,7 +46,7 @@ def bucket_state(states):
     # outage flags, then maintenance/drain, then busy base states (a node
     # running jobs is "busy" even under a future reservation), then scheduler
     # holds — an idle node under RESERVED/PLANNED/FUTURE is NOT free capacity
-    # and must never land in the "idle" bucket that feeds free_nodes.
+    # and must never land in the "idle" bucket that feeds idle_nodes.
     s = set(states)
     if s & {"DOWN", "NOT_RESPONDING", "FAIL", "FAILING", "POWERED_DOWN"}:
         return "down"
@@ -159,15 +160,9 @@ def normalize(nodes_json, squeue_json, *, site, pool_of=None, cluster="slurm",
     nodes = list(by_name.values())
 
     # ---- per-node pass -------------------------------------------------------
-    tot_cpu = alloc_cpu = 0
-    tot_mem = alloc_mem = 0
-    nodes_total = 0
-    gpu_total = Counter()
-    gpu_used = Counter()
     pools = {}            # id -> accumulator
     part_nodes = defaultdict(list)
     nodes_down = []
-    sched_avail = 0       # idle/mixed nodes that are NOT draining (schedulable)
 
     for nd in nodes:
         name = nd.get("name", "")
@@ -175,22 +170,12 @@ def normalize(nodes_json, squeue_json, *, site, pool_of=None, cluster="slurm",
             continue
         states = state_list(nd)
         b = bucket_state(states)
-        nodes_total += 1
         cpus = num(nd.get("cpus")) or 0
         acpu = num(nd.get("alloc_cpus")) or 0
         rmem = num(nd.get("real_memory")) or 0
-        amem = num(nd.get("alloc_memory")) or 0
-        tot_cpu += cpus
-        alloc_cpu += acpu
-        tot_mem += rmem
-        alloc_mem += amem
 
         g_tot = parse_gres(nd.get("gres"))
         g_use = parse_gres(nd.get("gres_used"))
-        for k, v in g_tot.items():
-            gpu_total[k] += v
-        for k, v in g_use.items():
-            gpu_used[k] += v
         node_up = is_schedulable(states)
         gpu_bucket_name = idle_gpu_bucket(states)
 
@@ -230,15 +215,9 @@ def normalize(nodes_json, squeue_json, *, site, pool_of=None, cluster="slurm",
             part_nodes[p].append((nd, b, cpus, acpu, g_tot, g_use))
             pa["parts"].add(p)
 
-        if node_up:
-            sched_avail += 1
-
         if needs_attention(states):
             nodes_down.append({"name": name, "state": states,
                                "pool": pid, "reason": nd.get("reason") or ""})
-
-    gpu_total_n = sum(gpu_total.values())
-    gpu_used_n = sum(gpu_used.values())
 
     # partition -> dominant GPU type (GPU jobs report only a count, not a type)
     # partition -> hardware pool (its nodes' pool)
@@ -439,15 +418,6 @@ def normalize(nodes_json, squeue_json, *, site, pool_of=None, cluster="slurm",
         "schema_version": 1,
         "cluster": cluster,
         "slurm_version": slurm_version,
-        # cluster-wide figures the store keeps per sample (store._metrics)
-        "totals": {
-            "nodes": {"total": nodes_total, "available": sched_avail, "down": len(nodes_down)},
-            "cpus": {"total": tot_cpu, "alloc": alloc_cpu,
-                     "util": round(alloc_cpu / tot_cpu, 3) if tot_cpu else 0.0},
-            "memory": {"util": round(alloc_mem / tot_mem, 3) if tot_mem else 0.0},
-            "gpus": {"total": gpu_total_n, "used": gpu_used_n,
-                     "util": round(gpu_used_n / gpu_total_n, 3) if gpu_total_n else 0.0},
-        },
         "pools": pool_out,
         "partitions": partitions,
         "queue": {

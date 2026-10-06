@@ -1,335 +1,175 @@
-# Hakusan Monitor — Overall Design
+# Design
 
-Companion to `PLAN.md`. Covers the data flow, API contract, normalization rules,
-current UI structure, visual language, and i18n model.
+How the dashboard turns Slurm's output into the verdicts it shows, and the
+rules that keep two screens from disagreeing. The README covers what the pages
+show, configuration and the API; [`DEPLOY.md`](DEPLOY.md) covers running it.
 
-## 1. Data flow & normalization
-
-```
-scontrol -o show nodes ────────────┐
-squeue -h -a -o <fmt> ─────────────┼─▶ sources.py parse ─▶ normalize.py ─▶ latest snapshot ─▶ /api/snapshot
-squeue -O tres/SchedNodes/Container┤                            │                       └─▶ /api/stream
-sacct pending ReqTRES ─────────────┘                            │
-sbatch --test-only CPU probes ─▶ probe cache ──────────────────┤
-sacctmgr/scontrol partition ─▶ policy cache ───────────────────┤
-login-node /proc/df/iostat/ps ─▶ login sampler ────────────────┤
-                                                               └─▶ store.py SQLite ─▶ history / usage APIs
-```
-
-Normalization rules (the important correctness bits):
-- **Dedupe nodes** by `name` from `scontrol show nodes` — never sum `sinfo`
-  partition rows (partitions overlap the same physical nodes).
-- **Node pools** (physical hardware groups) are derived from node-name prefix +
-  gres, independent of the many logical partitions:
-  `cpu` (`lcpcc-*`), `a40`, `a100`, `vm-cpu` (`spcc-cld-NN`), `h100-80`
-  (`spcc-cld-gl*`), `h100-20c` (`spcc-cld-g09..12`), `lm` (`spcc-cld-lm*`).
-- **GPU counting** parses `gres` / `gres_used`: `gpu:<type>:<n>(...)` → totals and
-  used per type. Free = total − used.
-- **State bucketing:** map raw Slurm states → `{allocated, mixed, idle, down,
-  drain, reserved}`. A node is "available" if idle/mixed and not drain/down.
-- **Queue:** group `squeue` jobs by `state` (RUNNING/PENDING) and `partition`;
-  tally `state_reason` for pending; extract per-job GPU ask from `tres_req_str`.
-- **Pressure score** per partition ∈ [0,1]:
-  `0.6 * util + 0.4 * min(pending/(running+1), 1)`
-  where `util` = GPU util for GPU partitions else CPU util. Buckets:
-  `<0.5 low · <0.75 moderate · <0.9 high · ≥0.9 critical`.
-
-## 2. API contract
-
-Backend serves the SPA (static) **and** JSON endpoints. All localizable values are
-**stable enum keys**, never prose.
-
-- `GET /api/snapshot` — the whole normalized snapshot.
-- `GET /api/stream` — SSE updates whenever a new snapshot is sampled.
-- `GET /api/history?hours=24` — down-sampled cluster history.
-- `GET /api/login-nodes` — current Hakusan 1 / Hakusan 2 login-node health.
-- `GET /api/login-nodes/history?hours=24` — down-sampled login-node history.
-- `GET /api/usage?days=30` — hour-of-day and weekday usage patterns.
-- `GET /api/analytics` — job-history aggregates (`backend/analytics.py`) for
-  the GPU and CPU views: submit rhythm, free hours, waits per partition,
-  requested vs. used time, job shapes, interactive sessions, weekly
-  allocation, concentration, outcomes. Shares weight every user equally.
-- `GET /api/health` — `{ok, source, stale, age_s}`.
-- `GET /api/meta` — cluster name, slurm version, partitions catalog, container
-  info (static + detected).
-
-### `/api/snapshot` shape
-
-```jsonc
-{
-  "schema_version": 1,
-  "generated_at": 1779800000, "cluster": "hakusan", "slurm_version": "25.05.5",
-  "source": "ssh", "stale": false, "age_s": 3,
-  "totals": {
-    "nodes": { "total": 219, "available": 104, "down": 17,
-               "by_state": { "allocated": 88, "mixed": 66, "idle": 47, "down": 17, "drain": 1 } },
-    "cpus":   { "total": 35064, "alloc": 28693, "free": 6371, "util": 0.818 },
-    "memory": { "total_mb": 0, "alloc_mb": 0, "util": 0.0 },
-    "gpus":   { "total": 80, "used": 60, "reserved": 2, "down": 0,
-                "free": 18, "util": 0.75,
-                "by_type": { "nvidia_a40": {"total":40,"used":36,"reserved":2}, "...": {} } }
-  },
-  "pools": [ { "id":"a40","kind":"gpu","nodes":20,"cpus_total":1040,"cpus_alloc":620,
-               "util":0.6,"gpu":{"total":40,"used":36,"free":4} } ],
-  "partitions": [ { "name":"GPU-1","kind":"gpu","nodes":20,
-                    "cpus":{"total":1040,"alloc":620,"util":0.6},
-                    "gpu":{"total":40,"used":36,"free":4,"util":0.9},
-                    "jobs":{"running":25,"pending":55},
-                    "pending_reasons":{"Resources":30,"Priority":15,"QOSMaxCpuPerJobLimit":10},
-                    "pressure":0.91,"level":"critical","timelimit":"infinite" } ],
-  "gpus": [ { "type":"nvidia_a40","label":"A40","total":40,"used":36,"free":4 } ],
-  "queue": { "running":288,"pending":138,"total":426,
-             "pending_reasons":{"Resources":50,"Priority":40,"QOSMaxCpuPerJobLimit":30},
-             "by_partition":[ {"partition":"GPU-1","running":25,"pending":55} ],
-             "top_pending":[ {"job_id":141369,"user":"s2***","partition":"GPU-1A",
-                              "gpu":"h100-80c×1","reason":"QOSMaxCpuPerJobLimit","wait_s":3600} ],
-             "container_jobs": 0 },
-  "nodes_down": [ { "name":"spcc-cld-g09","state":["DOWN"],"reason":"maintenance" } ],
-  "top_users": [ { "user":"reno-h","running":12,"cpus":3072,"gpus":0 } ]
-}
-```
-
-## 3. UI structure
-
-The React app is route-based rather than one giant dashboard:
-
-- **Overview**: resource-filtered KPIs, hardware pools, occupants, pending jobs,
-  quick request commands, releases, queue insights, down nodes, and top users.
-- **Partitions**: policy-aware partition rows grouped by physical pool, including
-  CPU `sbatch --test-only` predictions and copyable commands when available.
-- **Analytics**: 24 h trends and hour/weekday usage patterns from SQLite rollups.
-- **Login nodes**: Hakusan 1 / 2 load, iowait, memory, disk pressure, users, and
-  top processes.
-- **Nodes / Jobs**: TanStack raw-data tables with search, facets, column toggles,
-  pagination, and node/job expansion details.
-- **Guides**: Slurm, Containers, and Project Description pages.
-
-## 4. Visual language
-
-- **Dark, control-room aesthetic** (HPC ops feel), light mode available.
-- Palette: bg `#0c1018`, panel `#151b26`, line `#222c3a`, text `#e6edf6`,
-  muted `#8a97a8`. Accent `#4cc2ff` (Hakusan blue). Load ramp green→amber→red:
-  `#3fb950 / #d29922 / #f85149`; "full/critical" pulses subtly.
-- Type: system UI stack + `ui-monospace` for numbers/IDs. Big tabular-nums for KPIs.
-- Charts use small owned SVG components; compact inline bars and status dots are
-  hand-built in React/Tailwind. This keeps the production bundle predictable.
-- Accessibility: levels carry text labels + ARIA, not color alone; ≥4.5:1 contrast.
-
-## 5. i18n keys (excerpt)
+## 1. Data flow
 
 ```
-app.title, app.subtitle, refresh.in, refresh.now, updated.ago,
-kpi.cpu, kpi.gpu, kpi.nodes, kpi.queue, kpi.running, kpi.pending,
-nodes.up, nodes.busy, nodes.down,
-gpu.board, gpu.free, gpu.full, gpu.maint,
-helper.title, helper.instant, helper.short, helper.long, helper.copy, helper.none,
-part.pressure, level.low, level.moderate, level.high, level.critical,
-reason.Resources, reason.Priority, reason.QOSMaxCpuPerJobLimit, reason.Other,
-queue.insights, queue.longestWait, queue.reasons, trend.title,
-container.title, container.version, container.module, container.examples,
-container.gotchas, container.jobs,
-cheatsheet.title, cheatsheet.slurm, cheatsheet.conda, cheatsheet.singularity,
-cheatsheet.cuda, footer.disclaimer, footer.source, lang.name
+scontrol -o show nodes ─────────────┐
+squeue -h -a -o <fmt> ──────────────┤
+squeue -O tres/SchedNodes/Container ┼─▶ sources.py ─▶ normalize.py ─▶ Engine.latest ─▶ /api/snapshot
+sacct --state=PENDING ReqTRES ──────┘                                      │           └─▶ /api/stream (SSE)
+sbatch --test-only CPU probes ─▶ probe cache ──┐                           │
+sacctmgr / scontrol partition / job_submit.lua ┴─▶ policy cache ───────────┤
+                                                                           └─▶ store.py: pool_hourly ─▶ /api/analytics
+sacct -aX (job history) ─▶ job_history.py ─▶ store.py: jobs ─▶ analytics.py ─▶ /api/analytics
+login-node /proc, df, iostat, ps ─▶ login_nodes.py ─▶ store.py: login_samples ─▶ /api/login-nodes
 ```
 
-Three locale files: `en.ts`, `ja.ts`, `zh.ts`. Enum-key labels
-(`state.*`, `level.*`, `reason.*`, `pool.*`) live in each locale so the backend
-stays language-neutral.
+- One sampler thread collects for every viewer; HTTP requests never trigger
+  collection. A failed sample keeps serving the last snapshot marked `stale`.
+  A database error does not: the fresh snapshot is served, and
+  `/api/health` reports the error as `store_error`.
+- The snapshot carries the raw `nodes` and `jobs` next to the derived pools
+  and partitions. Every page derives from that one payload (`lib/derive.ts`):
+  the Nodes and Jobs tables, the occupancy maps and every verdict below.
+- `web/src/types/snapshot.ts` is the snapshot contract. The backend sends
+  data and stable keys (`state_bucket`, Slurm reason names), never prose.
 
-## 6. As built — deltas from this design
+## 2. Normalization
 
-- **Collection is compact, not `--json`.** `sources.py` runs `scontrol -o show
-  nodes` + `squeue -h -a -o '<fmt>'` (+ singularity) in **one SSH round trip**
-  over a reused `ControlMaster` connection, and parses the text into the same
-  `{nodes:[…]}` / `{jobs:[…]}` shapes this design assumed — so `normalize.py` is
-  unchanged. Payload ~210 KB vs ~17 MB. Rationale: keep the login node light.
-- **Real-time via SSE + SQLite TSDB.** `store.py` keeps raw samples plus hourly
-  rollups. A background sampler pushes to SSE subscribers and records history in
-  one step.
-- **Added endpoints:** `GET /api/stream` (SSE), `GET /api/history`,
-  `GET /api/usage` (peak/trough), alongside `/api/snapshot`, `/api/meta`,
-  `/api/health`.
-- **GPU board carries `down`/`maint`** so a type whose nodes are offline (e.g.
-  H100-MIG) shows *maintenance*, never a misleading "free".
-- **Scheduler reservations are not outages.** Idle GPUs on `PLANNED` or other
-  scheduler-blocked nodes are reported as `reserved`; only GPUs on nodes that
-  need operator attention contribute to `down`.
+- **Nodes are deduplicated by name** from `scontrol show nodes`. Partitions
+  overlap (Hakusan's 16 CPU partitions share the same 124 nodes), so summing
+  partition rows counts hardware several times.
+- **Pools are the physical hardware.** A site file's regular expressions
+  assign nodes to pools; without one, GPU nodes group by gres type and CPU
+  nodes by core count and memory (`site_config.py`). Partitions are views
+  onto pools.
+- **State buckets** (`bucket_state`): outage flags, then drain/maintenance,
+  then busy states, then scheduler holds. An idle node under
+  `PLANNED`/`RESERVED` is held, not free. `is_schedulable` is the one test
+  for "a new job may land here".
+- **Idle is not free.** A GPU on a drained node or a scheduler-held node is
+  unused but not available: the backend reports such GPUs as `down` or
+  `reserved`, and only `free` is ever labelled free.
+- **Times stay in the cluster's zone.** Slurm prints local times without an
+  offset. The UI shows them as printed and computes with
+  `lib/cluster-time.ts`, which reads them in `HM_CLUSTER_TZ` (sent with
+  `/api/site`), so a viewer in another zone sees the cluster's clock and
+  correct waits.
 
-## 7. v2 — React frontend (shadcn/ui + owned SVG charts)
+## 3. Cluster policy is read from the cluster
 
-The frontend was rebuilt as a React + TypeScript app (`web/`) — the backend API
-is the stable contract, so nothing server-side changed except the new raw-data
-endpoints.
-
-- **Stack:** Vite · Tailwind v4 · **shadcn/ui** (owned, copy-in Radix primitives)
-  · owned responsive SVG charts · **Radix Colors** dark scales · TanStack Table
-  · react-router. One unified dark theme maps semantic status tokens onto the
-  high-contrast Radix palette (`web/src/index.css` + `tailwind.config.js`).
-- **Subsystems (one folder each):** `layout/` (sidebar + topbar shell, language
-  switcher, live indicator, resource filter), `dashboard/` (all the live widgets),
-  `data/` (reusable TanStack `DataTable` + node/job column defs), `analytics/`
-  (usage heatmap + SVG trends), `charts/` (owned chart primitives), `common/` +
-  `ui/` (shared + shadcn primitives).
-- **Data flow:** a single SSE connection in a `LiveProvider` context feeds every
-  widget (`useLive`); table/history/usage views fetch via `useApi`; a
-  `ResourceFilterProvider` holds the All/CPU/GPU-type lens.
-- **i18n:** `en.ts` is the source of truth for the key set; `ja.ts`/`zh.ts` are
-  `Record<TranslationKey, string>` so a missing key fails the type-check.
-- **Routing & bundle:** pages are `React.lazy`-split; removing the general chart
-  vendor avoids loading a large dependency for two compact charts.
-
-## 8. v3 — pools-first model (correctness + user value)
-
-User testing exposed that leading with Slurm **partitions** is wrong: Hakusan's
-25 partitions are overlapping views of ~7 physical pools (16 CPU partitions = the
-same 124 `lcpcc` nodes), so the UI showed "124 nodes / 1.5 TB / 0 free nodes"
-sixteen times. Verified every aggregate against `sinfo` — the numbers were exact;
-the **framing** was the bug.
-
-- **Hardware pools are the primary entity.** `normalize.py` builds one pool per
-  physical group (`cpu`, `vm-cpu`, `lm`, `a40`, `a100`, `h100-80`, `h100-20c`)
-  with node-state breakdown, **free cores** (idle cores on mixed nodes — the real
-  "can I run" number, not idle whole nodes), GPUs-by-type with `next_free`/`maint`,
-  the partitions that submit to it, per-pool queue (R/PD/releasing), an `avail`
-  summary, and **`occupants`** — the running jobs (user · GPU/CPU · node · time
-  left) so you can see *who is using the H100/A100 right now*.
-- **The resource filter transforms the view.** Picking a pool re-scopes the KPI
-  cards (e.g. A100 → GPUs used/free, A100 nodes, A100 queue) and the pools/lists,
-  instead of repeating cluster-wide CPU/GPU numbers.
-- Load bars now reflect real per-pool utilization (VM-CPU 0%, A100 100%), so they
-  no longer read as "all red".
-
-## 9. v4 — refinements (raw/derived split, node view, full occupancy)
-
-- **One pull feeds everything.** The SSE snapshot now carries the **raw** `nodes`,
-  `jobs` and a `part_pool` map alongside the derived view. The Nodes/Jobs tables
-  and the per-pool occupancy all *derive* from this single payload client-side
-  (`lib/derive.ts`) — no more separate `/api/nodes` · `/api/jobs` polling. Raw
-  (server-provided) and derived (computed here) are cleanly separated.
-- **The "All" KPIs are node-centric**, not core-centric: total available nodes,
-  **GPU nodes free** and **CPU nodes free** (each with a bar). Picking a pool still
-  swaps the KPIs to that pool's own numbers.
-- **"Who's using it" shows everyone** — every running job on the pool, in a
-  scrollable list with a per-job **search filter** and a **share bar** per row.
-- **The helper respects the filter** — choosing H100 recommends H100 (and says
-  "will queue" if it's full) instead of redirecting you to a CPU pool.
-- Free cores exclude down/drained nodes, so they equal `sinfo`'s idle value exactly.
-- **Node-level occupancy**: each row of the Nodes table expands to show the jobs
-  running *on that node* (user · job id · GPU/CPU · time left), via a Slurm
-  hostlist expander (`expandHostlist`) over the raw jobs. Most-active-users now
-  carry a share bar.
-
-## 10. v5 — GPU availability as one owned decision
-
-Every GPU number, colour and status label comes from a single module,
-`web/src/lib/gpu-availability.ts`. It takes plain per-node numbers and returns
-mutually exclusive states — `ready` · `contested` · `memory` · `cpu` ·
-`cpu-memory` · `reserved` · `down` · `full` — that sum back to the pool's
-physically idle GPUs. No React, no i18n, no snapshot types: the Overview pool
-cards and the Partitions page both adapt into it (`gpuNodeFacts`) and both
-render out of it (`components/common/gpu-status.tsx`), so a GPU can never read
-"available" on one screen and "reserved" on the other.
-
-**The default request is not the QoS cap.** The two are different numbers and
-mixing them up produced a shipped bug: three completely empty H100 nodes read
-"memory insufficient".
-
-| partition | flagless request (real) | QoS MaxTRES (ceiling) | node holds |
-|---|---|---|---|
-| `GPU-1` | 26 cores x 9845 MB = 255970 MB | `mem=256G` | 515306 MB / 2 GPUs |
-| `VM-GPU-L` | 32 cores x 14900 MB = 476800 MB | `mem=480G` | 469070 MB / 1 GPU |
-
-The backend now collects both: `DefMemPerCPU` live from `scontrol show
-partition`, and the submit plugin's core count from `job_submit.lua` itself
-(§11). They ship as `policy.partition_defaults`.
-
-**Two rules keep the verdicts honest.**
-
-1. *One GPU's need never exceeds one GPU's hardware share.* `VM-GPU-L` really
-   does ask for more memory than a `spcc-cld-gl0x` node has; Slurm answers by
-   spreading the job across two nodes (verified: it landed on `gl[02-03]` and
-   took 2 GPUs), not by refusing. So the per-GPU need is capped at
-   `node_memory / gpus_per_node`.
-2. *Shortage means "the default request would queue here", not "this GPU is
-   unusable".* A node with a free GPU and 12 spare cores still runs a `-n 12`
-   job; the card's tip offers the flag that fits.
-
-Together they give the invariant the test suite asserts directly: **a fully
-idle, schedulable node's GPUs are always `ready`.**
-
-**Two more rules from the 2026-10-01 audit.**
-
-3. *A waiter claims what it asks for, not the whole node.* Startable queued
-   jobs are placed pool-wide (`queueClaims` in `gpu-fit.ts`, best fit); each
-   takes its per-node share and the rest of the node is judged GPU by GPU.
-   The old per-node check let one single-GPU waiter mark every idle node
-   "contested" — two `DependencyNeverSatisfied` jobs (also now treated as
-   limit-blocked) turned 15 free A40s into "15 GPUs queue".
-4. *"Idle" is not "free".* `physicalIdle` counts every unused GPU, drained and
-   scheduler-held ones included; it only anchors the sum invariant. Anything
-   labelled free/空闲 uses `free` (in-service, not held = backend `gpu.free`).
-   Showing `physicalIdle` as "2 张 GPU 空闲" called a drained H100 idle.
-
-One entry point, `poolGpuAvailability(snap, pool)` (most permissive sibling
-partition wins), feeds the pool cards, Partitions headers, filter chips, group
-headers and pool KPIs, so no screen can colour a pool differently from another.
-
-**Tests are real data, one case per display mode.**
-`web/src/lib/gpu-availability.fixtures.ts` holds cluster records captured on
-2026-07-29 and 2026-10-01 (with the commands used to capture them), and
-`gpu-availability.test.ts` pins each display mode to one of them, running the
-real adapter → classifier path. Nothing is hand-tuned to make a rule pass; a
-failure means the rules changed, not that a fixture drifted.
-
-## 11. v6 — cluster policy read from the cluster, never hard-coded
-
-No limit or default lives in this repository any more. Every number the UI
-states about a partition comes from one of three cluster sources, read once a
-day (`HM_POLICY_INTERVAL`) and cached in `data/cluster_policy.json` so a
-restart shows real values at once:
+No limit or default is written into this repository. Every number the UI
+states about a partition comes from one of three sources, read once a day
+(`HM_POLICY_INTERVAL`) and cached in `data/cluster_policy.json`:
 
 | source | read with | gives |
 |---|---|---|
 | QoS | `sacctmgr show qos` | caps (cores, memory, GPUs, nodes, wall), per-user and group concurrency |
 | partitions | `scontrol show partition` | QoS wiring, DefMemPerCPU / MaxMemPerCPU |
-| submit plugin | `cat /app/slurm/job_submit.lua` (+ `stat` of its `_YYMMDD` backups) | default tasks/CPUs/GPUs, forced interactive walltime, license requirement, whether a GPU request survives |
+| submit plugin | `cat job_submit.lua` (+ `stat` of its dated backups) | default tasks/CPUs/GPUs, forced interactive walltime, license requirement, whether a GPU request survives |
 
-`backend/lua_policy.py` parses the Lua literally: comments are stripped first
-(they contradict the code — "-- 12 hours" above `max_time = 2880`), then only
-plain assignments inside each `job_desc.partition == "NAME"` branch count.
-A value no source states is absent, and the UI shows it as absent: the old
-built-in tables invented "SMALL: 3 nodes" and "GPU-LA: 8 GPUs", neither of
-which Slurm enforces.
+`backend/lua_policy.py` reads the Lua literally: comments are stripped first
+(they contradict the code — `-- 12 hours` above `max_time = 2880`), then only
+plain assignments inside each `job_desc.partition == "NAME"` branch count. A
+value no source states is absent, and the UI shows it as absent.
 
-Reading Lua is still interpretation, so `scripts/check_cluster_policy.py`
-verifies it against Slurm every day (`deploy/hakusan-monitor-policy-check.timer`):
-one held job per partition (`sbatch -H`, cancelled at once) plus a
-`--gres=gpu:2` job on GPU partitions, compared with the expected values. The
-report (`data/policy_check.json`) feeds back into the snapshot — measured CPUs
-and memory win over the Lua reading — and is shown on the project page with
-the raw source texts (`GET /api/policy-source`).
+Reading Lua is interpretation, so `scripts/check_cluster_policy.py` checks it
+against Slurm daily (`deploy/hakusan-monitor-policy-check.timer`): one held job
+per partition (`sbatch -H`, cancelled at once), plus the largest value of every
+quick-request field from `web/src/lib/request-limits.ts`
+(`boundaryCommands`, emitted by `boundary.emit.test.ts`). It compares the CPUs,
+nodes, GPUs and memory Slurm grants with the reading and the hardware;
+acceptance alone proves nothing (`-p GPU-1 --exclusive` is accepted and never
+starts). Measured values win over the reading, and problems are named on the
+project page with the raw sources (`GET /api/policy-source`).
 
-The same daily run also sweeps the quick request's boundaries: the largest
-value of every field (cores, `--mem`, `-N`, `-t`, each multi-GPU layout) for
-every partition, generated by the UI's own `web/src/lib/request-limits.ts`
-(`boundaryCommands`, via `src/lib/boundary.emit.test.ts`), is submitted held
-and Slurm's answer is checked — not just accepted, but CPUs, nodes, CPUs per
-node, GPUs and memory per node within the QoS and the hardware. Acceptance
-alone proves nothing: `-p GPU-1 --exclusive`, `-p GPU-L -N 27` and
-`--mem=503G` on GPU-L are all accepted and never start. Any problem fails the
-check and is named on the project page.
+Findings that shape the request builder (`lib/request-command.ts`):
 
-What the first run (2026-10-01) established:
+- DefMemPerCPU is set before the plugin runs, so the Lua's `pn_min_memory`
+  defaults are never applied.
+- The plugin pins the task count unless `-n` is given, so `-c N` alone means
+  N CPUs per task; a core count is spelled `-n 1 -c N` (or `-n N` across
+  nodes).
+- GPU partitions honour `--gres=gpu:N` and `--gpus-per-node=N`. `--gpus` and
+  `--gpus-per-task` get the plugin's 1-GPU default added, so multi-GPU
+  layouts run one task per GPU (`-n N -c share --gres=gpu:N`).
 
-- All 17 probeable partitions match the reading (7 Materials Studio
-  partitions need `-L` and are skipped).
-- The Lua's `pn_min_memory` defaults are never applied: DefMemPerCPU is set
-  before the plugin runs, so its `== NO_VAL` test is false.
-- GPU partitions honour `--gres=gpu:N` and `--gpus-per-node=N` (the plugin
-  tests `job_desc.gres`, i.e. tres_per_node). `--gpus` (tres_per_job) and
-  `--gpus-per-task` (tres_per_task) are not tested, so the plugin adds its
-  1-GPU-per-node default to them. Multi-GPU layouts run one task per GPU
-  (`-n N -c share --gres=gpu:N`): a bare `--gres=gpu:2` keeps the plugin's
-  26 cores, and `-c 52` alone is refused because the plugin fills in its task
-  count.
+## 4. The pending queue: one model
 
+`web/src/lib/queue.ts` decides which waiting jobs start before a new one and
+what they take. Every "starts now / queues" verdict, contention count and
+pending list reads it; nothing else interprets `state_reason`.
+
+Slurm reports one Reason per pending job, but its limits are per partition.
+A job queued to `GPU-1,GPU-1A,GPU-S` said `QOSGrpJobsLimit` (GPU-S was at
+10/10) while Slurm had already booked it onto an A40 node through GPU-1. Reading
+the string as the truth was patched one symptom at a time before this model
+existed. The rules:
+
+1. A reason that holds the whole job (hold, dependency, begin time, a limit
+   the model cannot count) is believed.
+2. GrpJobs and MaxJobsPerUser are counted per partition QoS from the running
+   jobs; their reason strings are not read.
+3. A job with booked nodes (`SchedNodes`) is next, whatever its reason says.
+4. A waiter older than the longest time limit on its nodes is stuck and
+   takes nothing.
+
+`queueModel(snap)` then plays the scheduler once over the cluster: waiters in
+priority order, each into the first partition of its own list it may start
+in, best fit, using up group and per-user slots as it goes. The result —
+`claims` per node, `bookings`, `groupFull(partition)` — is memoised per
+snapshot. A claim is the share a waiter asks for, not the whole node.
+
+## 5. Verdicts
+
+Each question has one module, and every page reads it:
+
+| question | module | read by |
+|---|---|---|
+| what is each GPU on a node (ready, contested, short of CPU/memory, reserved, down, full) | `lib/gpu-availability.ts` (pure), adapted by `gpuNodeFacts` in `lib/gpu-fit.ts` | pool cards, GPU status bars |
+| does a GPU partition's request start now | `lib/gpu-partition.ts` (`gpuStatus`, `gpuVerdict`) | request panel, partition table, Partitions page |
+| does a CPU partition's flagless request start now | `lib/cpu-partition.ts`, with `sbatch --test-only` rows from `lib/cpu-probes.ts` | the same three |
+| what tone a pool shows | `lib/pool-status.ts` (`poolPick`, `poolTone`) | filter chip, group header, pool card, collapsed request row |
+
+GPU precedence: maintenance > group cap full > starts now > `--mem` bypass of a
+stranded GPU > backfill gap > queues. A pool's tone leads with the same pick
+as its collapsed request row, so the chip and the row cannot disagree. Each
+state has one label (`verdict.*` in the i18n files).
+
+Rules learned from shipped bugs, each pinned by a test:
+
+- **The default request is not the QoS cap.** `salloc -p VM-GPU-L` asks for
+  32 cores × DefMemPerCPU = 476800 MB; the QoS ceiling is `mem=480G`. Fitting
+  the cap made three empty H100 nodes read "memory insufficient".
+- **One GPU's need never exceeds one GPU's hardware share.** Slurm spreads a
+  request larger than a node over two nodes rather than refusing it, so the
+  per-GPU need is capped at `node memory / GPUs per node`. Invariant: a fully
+  idle, schedulable node's GPUs are always `ready`.
+- **Short means the default request queues here,** not that the GPU is
+  unusable. The card offers the `--mem` or `-n` that fits.
+- **A waiter claims its share, not the node.** Marking every node a waiter
+  could use as contested turned two never-startable jobs into "15 GPUs queue".
+
+## 6. Frontend
+
+- One SSE connection in `LiveProvider` feeds every widget (`useLive`), with a
+  polling fallback (`lib/live.ts`). Pages are lazy routes.
+- `lib/` holds the domain logic as plain functions (no React, no i18n except
+  where a function returns a label); `components/` renders it. Components
+  are grouped by what they own: `pools/`, `request/`, `partitions/`,
+  `dashboard/`, `analytics/`, `data/`, `layout/`, `common/`, `ui/` (shadcn).
+- `i18n/en.ts` defines the keys; `ja.ts` and `zh.ts` are typed against it, so
+  a missing translation fails the type check. Site files may override strings.
+- Colour never carries meaning alone: every tone has a text label.
+
+## 7. Tests
+
+- Display rules are tested against captured cluster records, one fixture
+  per display mode, through the same adapter path the pages use:
+  `gpu-availability.fixtures.ts` (2026-07-29, 2026-10-01) and
+  `queue.fixtures.ts` (2026-10-06, captured and anonymised by
+  `scripts/capture_queue_fixture.py`). A failing test means a rule changed.
+- Backend: `python3 -m unittest discover -s tests`, including the generated
+  collection script run against shell stubs and SQLite rollback/reopen.
+
+## 8. Known gaps
+
+- **Login sampling rides the cluster cycle.** It runs after every cluster
+  sample (also a failed one), so `HM_LOGIN_INTERVAL` below
+  `HM_SAMPLE_INTERVAL` cannot sample login nodes more often.
+- **No HTTP request timeout.** SSE connections are capped (`HM_MAX_SSE`), but
+  connection threads and socket writes have no application timeout.

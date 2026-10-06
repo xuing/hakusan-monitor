@@ -3,13 +3,6 @@
 type ResourceKind = "cpu" | "gpu";
 
 /** Cluster-wide figures the backend keeps per sample (store._metrics). */
-interface Totals {
-  nodes: { total: number; available: number; down: number };
-  cpus: { total: number; alloc: number; util: number };
-  memory: { util: number };
-  gpus: { total: number; used: number; util: number };
-}
-
 export interface Occupant {
   job_id: number | string;
   user: string;
@@ -277,7 +270,6 @@ export interface Snapshot {
   schema_version: 1;
   cluster: string;
   slurm_version: string;
-  totals: Totals;
   pools: Pool[];
   partitions: Partition[];
   queue: QueueData;

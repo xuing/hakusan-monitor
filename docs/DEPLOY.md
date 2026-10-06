@@ -55,7 +55,7 @@ restart is still required to activate backend fixes.
 ### Daily cluster-policy verification
 
 Partition limits and defaults are read from the cluster (QoS, partitions,
-`job_submit.lua`) — see DESIGN.md §11. A daily timer checks that reading
+`job_submit.lua`) — see [DESIGN.md §3](DESIGN.md#3-cluster-policy-is-read-from-the-cluster). A daily timer checks that reading
 against Slurm with held probe jobs and writes `data/policy_check.json`, which
 the service picks up on its next sample:
 
@@ -109,8 +109,10 @@ service account.
 - Login-node health sampling is also read-only and TTL-paced by
   `HM_LOGIN_INTERVAL` (default 300 s), collecting `/proc`, byte/inode `df`, and compact `ps`
   summaries for the Login nodes page.
-- Set `TZ=Asia/Tokyo` (both unit and compose already do) so *Usage patterns*
-  hour-of-day is in cluster time.
+- `HM_CLUSTER_TZ` (default `Asia/Tokyo`) is the zone Slurm prints its times
+  in; Analytics and every clock on the page use it. `TZ=Asia/Tokyo` (set by
+  both the unit and compose) makes the daily visit counts roll over at the
+  cluster's midnight.
 - Change the port with `HM_PORT`; usernames are shown by default. Set
   `HM_MASK_USERS=1` to anonymize them.
 - Cluster, login-node, and anonymous visit retention are independently

@@ -53,7 +53,6 @@ export function validateSnapshot(value: unknown): Snapshot {
   // prevents a transient blank dashboard during the hand-off.
   if (!isRecord(value)
       || (value.schema_version !== undefined && value.schema_version !== 1)
-      || !isRecord(value.totals)
       || !Array.isArray(value.pools)
       || !Array.isArray(value.partitions)
       || !Array.isArray(value.nodes)

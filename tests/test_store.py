@@ -2,19 +2,13 @@ import os
 import tempfile
 import unittest
 import sqlite3
-from unittest.mock import patch
 
 from backend.store import Store
 
 
 class StoreHistoryTests(unittest.TestCase):
     def record_sample(self, ts, free=1):
-        metrics = dict(cpu_util=0.5, gpu_util=0.5, mem_util=0.5,
-                       cpus_total=10, cpus_alloc=5, gpus_total=10, gpus_used=5,
-                       nodes_total=1, nodes_avail=1, nodes_down=0, running=1, pending=0)
-        snap = {"pools": [{"id": "a40", "kind": "gpu", "gpu": {"free": free, "maint": False}}]}
-        with patch("backend.store._metrics", return_value=metrics):
-            self.store.record(snap, ts)
+        self.store.record({"pools": [{"id": "a40", "kind": "gpu", "gpu": {"free": free, "maint": False}}]}, ts)
 
     def test_duplicate_samples_do_not_change_rollup_after_reopen(self):
         self.record_sample(3600)
