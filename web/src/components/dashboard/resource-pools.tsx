@@ -205,18 +205,18 @@ function PoolCard({ pool, snap, t }: { pool: Pool; snap: Snapshot; t: TFn }) {
   const free = isGpu ? freeGpu : pool.cores.free;
   const total = isGpu && pool.gpu ? pool.gpu.total : pool.cores.total;
   const used = isGpu && pool.gpu ? pool.gpu.used : pool.cores.alloc;
-  const freeRatio = total ? free / total : 0;
   const cpuHeld = isGpu ? { reserved: 0, down: 0 } : unschedulableCores(snap.nodes, pool.id);
-  // colour by how much is free: none = red, scarce (<10%) = amber, plenty = green
+  // the same verdict as the dot beside the title: green when a job can start
+  // now, amber when what is idle can't take the default request, red when
+  // nothing is free. A share rule (<10% = amber) painted 75 free cores of
+  // 31,744 amber on a card whose dot said a job starts now.
   const freeColor = maint
     ? "text-muted-foreground"
-    : hasStrandedGpu
-      ? "text-warn-fg"
-    : free === 0
-      ? "text-bad-fg"
-      : freeRatio < 0.1
+    : hasAvailable
+      ? "text-ok-fg"
+      : hasStrandedGpu || free > 0
         ? "text-warn-fg"
-        : "text-ok-fg";
+        : "text-bad-fg";
 
   return (
     <Card
