@@ -272,3 +272,12 @@ describe("2026-10-01 audit: headline counts match what they say", () => {
     ]);
   });
 });
+
+describe("a CPU-only waiter on a GPU node", () => {
+  it("takes the cores it starts with, so the GPUs behind them are not ready", () => {
+    const facts = { name: "n1", gpusTotal: 2, gpusUsed: 0, coresTotal: 52, coresFree: 52, memTotalMb: 515_306, memFreeMb: 515_306, offline: false, held: false };
+    const request = { partition: "GPU-1", cores: 26, memPerCoreMb: 9845, gpusPerNode: 1 };
+    expect(gpuAvailability([facts], request).ready).toBe(2);
+    expect(gpuAvailability([{ ...facts, claim: { gpus: 0, cores: 52, memMb: 100_000 } }], request).ready).toBe(0);
+  });
+});

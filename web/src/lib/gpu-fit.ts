@@ -268,15 +268,23 @@ export function slotContenders(row: GpuFitNode, contenders: Waiter[]): number {
   return n;
 }
 
+/** What a node has free once the queue has taken its claim there. */
+function freeAfterClaims(row: GpuFitNode, claims: Map<string, Claim>) {
+  const claim = claims.get(row.node.name);
+  return {
+    gpus: row.freeGpu - (claim?.gpus ?? 0),
+    cores: row.freeCores - (claim?.cores ?? 0),
+    memMb: row.freeMemMb - (claim?.memMb ?? 0),
+  };
+}
+
+const holdsNeed = (fit: GpuFitInfo, free: ReturnType<typeof freeAfterClaims>) =>
+  free.gpus >= fit.need.gpus && free.cores >= fit.need.cores && free.memMb >= fit.need.memMb;
+
 /** Is a default-request slot still open once the queue has taken its share?
  *  Two waiters in front of nine idle nodes leave seven open — not zero. */
 export function fitHasClearSlot(fit: GpuFitInfo, claims: Map<string, Claim>): boolean {
-  return fit.fitNodes.some((row) => {
-    const claim = claims.get(row.node.name);
-    return row.freeGpu - (claim?.gpus ?? 0) >= fit.need.gpus
-      && row.freeCores - (claim?.cores ?? 0) >= fit.need.cores
-      && row.freeMemMb - (claim?.memMb ?? 0) >= fit.need.memMb;
-  });
+  return fit.fitNodes.some((row) => holdsNeed(fit, freeAfterClaims(row, claims)));
 }
 
 // ---- backfill window ------------------------------------------------------
@@ -319,10 +327,12 @@ export function gpuBackfillTipCommand(fit: GpuFitInfo, pool: Pool, q: QueueModel
   let bestTip: GpuBackfillTipData | null = null;
   let bestSec = 0;
   for (const row of [...fit.reservedNodes, ...fit.fitNodes, ...strandedCandidates(fit)]) {
-    if (row.freeGpu < fit.need.gpus || row.freeCores < fit.need.cores) continue;
+    // a gap the queue fills now is no gap
+    const free = freeAfterClaims(row, q.claims);
+    if (free.gpus < fit.need.gpus || free.cores < fit.need.cores) continue;
     let mem = "";
-    if (fit.need.memMb > 0 && row.freeMemMb < fit.need.memMb) {
-      const memGb = conservativeMemGb(row.freeMemMb);
+    if (fit.need.memMb > 0 && free.memMb < fit.need.memMb) {
+      const memGb = conservativeMemGb(free.memMb);
       if (memGb <= 0) continue;
       mem = `${memGb}G`;
     }
@@ -334,13 +344,15 @@ export function gpuBackfillTipCommand(fit: GpuFitInfo, pool: Pool, q: QueueModel
   return bestTip;
 }
 
-/** True when some fitting node's backfill window still holds a job of
- *  `userTimeSec` — the basis for flipping "will queue" back to "can start"
- *  once the user picks a short enough -t. */
-export function withinBackfillWindow(fit: GpuFitInfo, bookings: Map<string, number[]>, nowMs: number, userTimeSec: number): boolean {
+/** True when a node the request fits once the queue has taken its share has
+ *  a backfill window that still holds a job of `userTimeSec` — PLANNED nodes
+ *  included — the basis for flipping "will queue" back to "can start" once
+ *  the user picks a short enough -t. */
+export function withinBackfillWindow(fit: GpuFitInfo, q: Pick<QueueModel, "claims" | "bookings">, nowMs: number, userTimeSec: number): boolean {
   if (userTimeSec <= 0) return false;
   return [...fit.fitNodes, ...fit.reservedNodes].some((row) => {
-    const win = backfillWindow(row, bookings, nowMs);
+    if (!holdsNeed(fit, freeAfterClaims(row, q.claims))) return false;
+    const win = backfillWindow(row, q.bookings, nowMs);
     return win !== null && userTimeSec <= win.suggestSec;
   });
 }

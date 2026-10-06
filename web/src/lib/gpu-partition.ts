@@ -5,6 +5,9 @@
  *
  *   maintenance > group cap full > starts now > --mem bypass > backfill gap > queues
  *
+ * "Starts now" is a slot the queue leaves, or a booked node's gap — PLANNED
+ * nodes too — that the request's walltime fits.
+ *
  * The CPU counterpart is cpu-partition.ts. Who is ahead in the queue comes
  * from queue.ts; this module only applies it to one partition's request.
  */
@@ -90,16 +93,14 @@ export function gpuStatus(snap: Snapshot, pool: Pool, partition: string, req: Gp
   if (q.groupFull(partition)) {
     return out(null, { kind: "group", running: q.running(partition), cap: partitionPolicy(partition, snap.policy).grpJobs ?? 0 }, false);
   }
+  if (fit.schedulable > 0 && fitHasClearSlot(fit, q.claims)) return out("clear", null);
+  if (withinBackfillWindow(fit, q, nowMs, Number.isFinite(hold) ? hold : 0)) return out("backfill", null);
   if ((part?.available_nodes ?? 0) <= 0) return out(null, { kind: "no-node" });
   if ((part?.gpu?.free ?? 0) <= 0) return out(null, { kind: "no-gpu" });
   if (fit.rawFree > 0 && fit.schedulable <= 0) {
     const best = fit.stranded.find((row) => row.freeGpu >= 1) ?? fit.stranded[0];
     const n = best ? slotContenders(best, contenders) : 0;
     return out(null, n > 0 ? { kind: "contested", n } : { kind: "short" });
-  }
-  if (fit.schedulable > 0 && fitHasClearSlot(fit, q.claims)) return out("clear", null);
-  if (fit.schedulable > 0 && withinBackfillWindow(fit, q.bookings, nowMs, Number.isFinite(hold) ? hold : 0)) {
-    return out("backfill", null);
   }
   return out(null, { kind: "ahead", n: contenders.length, free: fit.schedulable });
 }

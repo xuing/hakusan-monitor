@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { poolGpuAvailability } from "./gpu-fit";
 import { poolContenders, queueModel, reasonKind, turnOrder, type QueueInput } from "./queue";
 import { GENERATED_AT, JOBS, NODES, PART_POOL, POLICY, POOLS } from "./queue.fixtures";
+import { applySite, getSite } from "./site";
 import type { RawJob, RawNode, Snapshot } from "@/types/snapshot";
 
 const live: QueueInput = { jobs: JOBS, nodes: NODES, pools: POOLS, policy: POLICY, part_pool: PART_POOL, generated_at: GENERATED_AT };
@@ -159,6 +160,74 @@ describe("queue claims (one rule each)", () => {
     const old = job(1, { submit_time: 1_791_276_000 - 8 * 86_400 });
     expect(queueModel(snapOf(two, [old])).waiters[0].kind).toBe("stuck");
     expect(claimed(snapOf(two, [old]))).toEqual([]);
+  });
+});
+
+describe("reasons against bookings", () => {
+  const two = [node("g02"), node("g03")];
+  const later = new Date(1_791_276_000_000 + 6 * 3600_000).toISOString();
+
+  it("puts a booked job in line whatever QoS or partition reason it shows", () => {
+    // the reason may be GPU-S's wall limit while Slurm runs it through GPU-1
+    const wall = { partition: "GPU-1,GPU-S", state_reason: "QOSMaxWallDurationPerJobLimit" };
+    expect(queueModel(snapOf(two, [job(1, { ...wall, sched_nodes: "g02", start_est: later })])).waiters[0].kind).toBe("next");
+    expect(queueModel(snapOf(two, [job(1, wall)])).waiters[0].kind).toBe("never");
+  });
+
+  it("believes a whole-job limit even when Slurm has booked the job", () => {
+    for (const reason of ["Licenses", "AssocGrpGRES", "JobArrayTaskLimit"]) {
+      const s = snapOf(two, [job(1, { state_reason: reason, sched_nodes: "g02", start_est: later })]);
+      expect(queueModel(s).waiters[0].kind).toBe("limit");
+      expect(claimed(s)).toEqual([]);
+    }
+  });
+
+  it("drops the booking of a waiter that starts now", () => {
+    const s = snapOf(two, [job(1, { sched_nodes: "g03", start_est: later })]);
+    expect(claimed(s)).toEqual(["g02:1"]);
+    expect(queueModel(s).bookings.size).toBe(0);
+  });
+
+  it("reads bookings again once the cluster's zone arrives", () => {
+    // three GPUs fit no node now, so the booking stands
+    const s = snapOf(two, [job(1, { gpus: 3, sched_nodes: "g03", start_est: "2026-10-07T12:00:00" })]);
+    const site = getSite();
+    try {
+      applySite({ ...site, time_zone: "Asia/Tokyo" });
+      expect(queueModel(s).bookings.get("g03")).toEqual([Date.parse("2026-10-07T12:00:00+09:00")]);
+      applySite({ ...site, time_zone: "America/New_York" });
+      expect(queueModel(s).bookings.get("g03")).toEqual([Date.parse("2026-10-07T12:00:00-04:00")]);
+    } finally {
+      applySite(site);
+    }
+  });
+});
+
+describe("where a waiter starts, and what it takes", () => {
+  const a40 = node("g02");
+  const a100 = node("a1", { pool: "a100", partitions: ["GPU-1A"], gres: "gpu:nvidia_a100:2" });
+
+  it("counts a waiter that starts in another pool out of this one's queue", () => {
+    const s = snapOf([a40, a100], [job(1, { partition: "GPU-1A,GPU-1" })]);
+    expect(claimed(s)).toEqual(["a1:1"]);
+    expect(poolContenders(s, "a100").map((w) => w.job.job_id)).toEqual([1]);
+    expect(poolContenders(s, "a40")).toEqual([]);
+    // with no room in either pool it waits for both
+    const full = { gres_used: "gpu:nvidia_a40:2" };
+    const none = snapOf([node("g02", full), node("a1", { ...full, pool: "a100", partitions: ["GPU-1A"], gres: "gpu:nvidia_a100:2", gres_used: "gpu:nvidia_a100:2" })],
+      [job(1, { partition: "GPU-1A,GPU-1" })]);
+    expect([poolContenders(none, "a100").length, poolContenders(none, "a40").length]).toEqual([1, 1]);
+  });
+
+  it("starts a job that names its GPU type only on that type", () => {
+    const s = snapOf([a40, a100], [job(1, { partition: "GPU-1A,GPU-1", gpu_type: "nvidia_a40" })]);
+    expect(claimed(s)).toEqual(["g02:1"]);
+  });
+
+  it("uses up the group slots a new job would need", () => {
+    const pol = { "GPU-1": { grpJobs: 2 } };
+    const q = queueModel(snapOf([node("g02")], [running("x"), job(1)], pol));
+    expect([q.running("GPU-1"), q.slotsLeft("GPU-1"), q.groupFull("GPU-1")]).toEqual([1, 0, true]);
   });
 });
 

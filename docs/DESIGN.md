@@ -100,19 +100,30 @@ A job queued to `GPU-1,GPU-1A,GPU-S` said `QOSGrpJobsLimit` (GPU-S was at
 the string as the truth was patched one symptom at a time before this model
 existed. The rules:
 
-1. A reason that holds the whole job (hold, dependency, begin time, a limit
-   the model cannot count) is believed.
+1. A reason that holds the whole job (hold, dependency, begin time,
+   association, license, array limit) is believed.
 2. GrpJobs and MaxJobsPerUser are counted per partition QoS from the running
    jobs; their reason strings are not read.
-3. A job with booked nodes (`SchedNodes`) is next, whatever its reason says.
+3. A job with booked nodes (`SchedNodes`) is next, whatever QoS or partition
+   reason it shows: that reason may come from any partition of its list.
 4. A waiter older than the longest time limit on its nodes is stuck and
    takes nothing.
 
 `queueModel(snap)` then plays the scheduler once over the cluster: waiters in
 priority order, each into the first partition of its own list it may start
-in, best fit, using up group and per-user slots as it goes. The result —
-`claims` per node, `bookings`, `groupFull(partition)` — is memoised per
-snapshot. A claim is the share a waiter asks for, not the whole node.
+in, best fit, on nodes of the GPU type it names, using up group and per-user
+slots as it goes. A new job gets what is left:
+
+- `claims` per node: the share each waiter that starts now asks for, not the
+  whole node.
+- `groupFull(partition)`: no group slot left once those waiters started.
+- `bookings` per node: Slurm's future starts for the waiters that do not
+  start now. A new job starts on a booked node only if it ends before the
+  first booking (backfill; PLANNED nodes are booked nodes Slurm holds idle).
+- `poolContenders(pool)`: the waiters ahead of a new job in a pool; one that
+  starts in another pool is not among them.
+
+The model is memoised per snapshot and cluster time zone.
 
 ## 5. Verdicts
 
@@ -125,8 +136,9 @@ Each question has one module, and every page reads it:
 | does a CPU partition's flagless request start now | `lib/cpu-partition.ts`, with `sbatch --test-only` rows from `lib/cpu-probes.ts` | the same three |
 | what tone a pool shows | `lib/pool-status.ts` (`poolPick`, `poolTone`) | filter chip, group header, pool card, collapsed request row |
 
-GPU precedence: maintenance > group cap full > starts now > `--mem` bypass of a
-stranded GPU > backfill gap > queues. A pool's tone leads with the same pick
+GPU precedence: maintenance > group cap full > starts now (a slot the queue
+leaves, or a booked node's gap the request's walltime fits) > `--mem` bypass
+of a stranded GPU > a shorter `-t` that fits a gap > queues. A pool's tone leads with the same pick
 as its collapsed request row, so the chip and the row cannot disagree. Each
 state has one label (`verdict.*` in the i18n files).
 
@@ -168,6 +180,13 @@ Rules learned from shipped bugs, each pinned by a test:
 
 ## 8. Known gaps
 
+- **GPU blocks do not show a full group cap.** Pool cards draw the hardware
+  after the queue's claims; a full GrpJobs cap reaches only the verdict, so
+  a block can read ready beside "Will queue". Showing it needs a block state
+  of its own.
+- **Multi-node waiters are split evenly.** A waiter's cores and memory are
+  divided equally over its nodes; Slurm may spread tasks unevenly, so a
+  waiter that would fit uneven leftovers claims nothing.
 - **Login sampling rides the cluster cycle.** It runs after every cluster
   sample (also a failed one), so `HM_LOGIN_INTERVAL` below
   `HM_SAMPLE_INTERVAL` cannot sample login nodes more often.

@@ -131,7 +131,6 @@ export function GpuBackfillQuickTip({
   );
 }
 
-/** "01:45" today, "7/9 01:45" once it crosses midnight. */
 function strandedTipNode(fit: GpuFitInfo | null) {
   return fit?.stranded.find((row) => row.freeGpu >= 1 && row.freeCores >= fit.need.cores && row.freeMemMb > 1024) ?? null;
 }

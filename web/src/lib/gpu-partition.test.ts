@@ -99,13 +99,36 @@ describe("gpuStatus: one precedence for every page", () => {
     expect(gpuStatus(contested, pool, "GPU-1", {}, AT).reason).toEqual({ kind: "contested", n: 1 });
   });
 
-  it("starts inside a booked node's gap when the request ends before the booking", () => {
-    // every slot is claimed by a waiter Slurm booked 20 h out on g1
-    const booked = waiter(1, { sched_nodes: "g1", start_est: new Date(AT + 20 * 3600_000).toISOString(), node_count: 1, gpus: 2, cpus: 52 });
-    const others = [waiter(2, { gpus: 2, cpus: 52 })];
-    const s = (timeSec?: number) => gpuStatus(snapOf([node("g1"), node("g2")], [booked, ...others]), pool, "GPU-1", { timeSec }, AT);
+  it("starts inside a PLANNED node's gap when the request ends before the booking", () => {
+    // Slurm holds idle g1 (IDLE+PLANNED) for a two-GPU job it booked 20 h out:
+    // no in-service node is free, yet a job that ends in time backfills
+    const planned = node("g1", { state: ["IDLE", "PLANNED"], state_bucket: "idle", schedulable: false });
+    const booked = waiter(1, { sched_nodes: "g1", start_est: new Date(AT + 20 * 3600_000).toISOString(), gpus: 2, cpus: 52, min_memory_mb: 511_940 });
+    const held = { available_nodes: 0, gpu: { total: 2, used: 0, free: 0, down: 0, reserved: 2 } } as never;
+    const s = (timeSec?: number) => gpuStatus(snapOf([planned], [booked], held), pool, "GPU-1", { timeSec }, AT);
     expect(s().now).toBe("backfill");       // the 12 h interactive default fits
+    expect(gpuVerdict(s())).toBe("now");
     expect(s(30 * 3600).now).toBeNull();    // a 30 h job does not
     expect(gpuVerdict(s(30 * 3600))).toBe("gap");
+  });
+
+  it("finds no gap where a waiter that starts now takes the free GPU", () => {
+    // g1 has one GPU free and is booked 20 h out for a two-GPU job; a
+    // one-GPU waiter starts on that GPU now, so nothing is left to backfill
+    const g1 = node("g1", { state: ["MIXED"], gres_used: "gpu:nvidia_a40:1", alloc_cpus: 26, alloc_memory: 255_970 });
+    const booked = waiter(1, { sched_nodes: "g1", start_est: new Date(AT + 20 * 3600_000).toISOString(), gpus: 2, cpus: 52, min_memory_mb: 511_940 });
+    const one = { available_nodes: 1, gpu: { total: 2, used: 1, free: 1, down: 0, reserved: 0 } } as never;
+    const alone = gpuStatus(snapOf([g1], [booked], one), pool, "GPU-1", {}, AT);
+    expect(alone.now).toBe("clear");
+    const taken = gpuStatus(snapOf([g1], [booked, waiter(2)], one), pool, "GPU-1", {}, AT);
+    expect(taken.now).toBeNull();
+    expect(taken.gapTip).toBeNull();
+  });
+
+  it("queues when the waiters that start now take the last group slots", () => {
+    // GrpJobs 2: one running elsewhere, one waiter starts on g1 now
+    const running = waiter(9, { job_state: "RUNNING", nodelist: "elsewhere" });
+    const s = gpuStatus(snapOf([node("g1")], [running, waiter(1)], {}, 2), pool, "GPU-1", {}, AT);
+    expect(s.reason).toEqual({ kind: "group", running: 1, cap: 2 });
   });
 });

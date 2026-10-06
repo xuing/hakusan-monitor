@@ -193,10 +193,11 @@ function classifyGpuNode(node: GpuNodeFacts, need: GpuPerGpuNeed): GpuNodeVerdic
   else {
     // Queued jobs that can start now take their share first; what they leave
     // is judged GPU by GPU against the default request's per-GPU footprint.
+    // a CPU-only waiter on a GPU node takes cores and memory, no GPU
     const claimed = Math.min(idleGpu, Math.max(0, node.claim?.gpus ?? 0));
     const rest = idleGpu - claimed;
-    const coresLeft = Math.max(0, node.coresFree - (claimed ? node.claim?.cores ?? 0 : 0));
-    const memLeft = Math.max(0, node.memFreeMb - (claimed ? node.claim?.memMb ?? 0 : 0));
+    const coresLeft = Math.max(0, node.coresFree - (node.claim?.cores ?? 0));
+    const memLeft = Math.max(0, node.memFreeMb - (node.claim?.memMb ?? 0));
     const fits = Math.min(
       rest,
       Math.floor(coresLeft / Math.max(1, need.cores)),

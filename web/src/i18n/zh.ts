@@ -216,6 +216,7 @@ export const zh: Record<TranslationKey, string> = {
   "pool.legendNow": "不用排队",
   "pool.msGroup": "需许可证的分区 {n} 个 · 需 -L",
   "pool.groupFullReason": "{p} 全体同时运行 {n} / {max}，有作业结束才放行",
+  "pool.groupTakenReason": "{p} 全体同时运行 {n} / {max}，其余 {k} 个名额由排在前面的作业占用，有作业结束才放行",
   "pool.taskFlagOne": "-n 1：作业只启动 1 个任务，-c 是这个任务的核数。不写 -n 时插件按 {tasks} 个任务算，-c 会被乘以 {tasks}。",
   "pool.taskFlagMany": "-n 是任务（进程）数，每个任务 1 核，可分布在多台节点上。",
   "pool.gpuLinkNode": "",

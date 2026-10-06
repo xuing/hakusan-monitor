@@ -216,6 +216,7 @@ export const ja: Record<TranslationKey, string> = {
   "pool.legendNow": "待ちなし",
   "pool.msGroup": "ライセンス専用 {n} 個 · -L が必要",
   "pool.groupFullReason": "{p} は全ユーザー合計の同時実行が {n} / {max}：いずれかのジョブが終わるまで開始されません",
+  "pool.groupTakenReason": "{p} は全ユーザー合計の同時実行が {n} / {max}、残り {k} 枠は先に開始する待ちジョブが使います：いずれかのジョブが終わるまで開始されません",
   "pool.taskFlagOne": "-n 1：ジョブは 1 タスクで、-c はそのタスクのコア数です。-n を省くとプラグインが {tasks} タスクとみなし、-c が {tasks} 倍になります。",
   "pool.taskFlagMany": "-n はタスク（プロセス）数で、1 タスクあたり 1 コアです。タスクは複数ノードに分散できます。",
   "pool.gpuLinkNode": "",

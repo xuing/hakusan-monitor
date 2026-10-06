@@ -43,14 +43,19 @@ export function clusterMs(iso: string | null | undefined, zone = clusterTimeZone
 const clusterDay = (ms: number, zone: string | undefined) =>
   new Date(ms).toLocaleDateString("en-CA", { timeZone: zone });
 
+/** The calendar day after "2026-10-06" (not 24 h later: DST days are 23 or 25 h). */
+const nextDay = (day: string) =>
+  new Date(Date.UTC(+day.slice(0, 4), +day.slice(5, 7) - 1, +day.slice(8, 10) + 1)).toISOString().slice(0, 10);
+
 /** Which cluster-local day a Slurm time falls on: 0 = today, 1 = tomorrow,
  *  2 = anything else (farther out, or already past) — for choosing
  *  "today 02:39" / "tomorrow 02:39" / a numeric date. */
 export function clusterDayOffset(iso: string, zone = clusterTimeZone(), nowMs = Date.now()): 0 | 1 | 2 {
   if (!iso) return 2;
   const day = iso.slice(0, 10);
-  if (day === clusterDay(nowMs, zone)) return 0;
-  if (day === clusterDay(nowMs + 86_400_000, zone)) return 1;
+  const today = clusterDay(nowMs, zone);
+  if (day === today) return 0;
+  if (day === nextDay(today)) return 1;
   return 2;
 }
 

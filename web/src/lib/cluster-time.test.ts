@@ -34,4 +34,9 @@ describe("Slurm times are read in the cluster's zone", () => {
     // 14:30 on 10-06 in UTC: the 10-07 release is still tomorrow there
     expect(clusterDayOffset("2026-10-07T02:39:00", "UTC", now)).toBe(1);
   });
+
+  it("names tomorrow by the calendar on a 25 h or 23 h day", () => {
+    expect(clusterDayOffset("2026-11-02T08:00:00", "America/New_York", Date.parse("2026-11-01T00:30:00-04:00"))).toBe(1);
+    expect(clusterDayOffset("2026-03-09T08:00:00", "America/New_York", Date.parse("2026-03-07T23:30:00-05:00"))).toBe(2);
+  });
 });

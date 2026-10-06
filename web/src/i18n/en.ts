@@ -217,6 +217,7 @@ export const en = {
   "pool.legendNow": "Starts now",
   "pool.msGroup": "{n} license-only partitions · need -L",
   "pool.groupFullReason": "{p} has {n} / {max} jobs running, its group limit; new jobs wait for one to end",
+  "pool.groupTakenReason": "{p} has {n} / {max} jobs running and queued jobs take the other {k}; new jobs wait for one to end",
   "pool.taskFlagOne": "-n 1: the job runs one task and -c is that task's cores. Without -n the plugin sets {tasks} tasks and -c is multiplied by {tasks}.",
   "pool.taskFlagMany": "-n is the task (process) count, one core each; tasks may spread across nodes.",
   "pool.gpuLinkNode": "",

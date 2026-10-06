@@ -513,7 +513,9 @@ export function RequestPanel({ pool, t }: { pool: Pool; t: TFn }) {
       : licenseQueued && licPlan.license
         ? t("pool.licenseBusy", { name: licPlan.license.name, used: licPlan.license.used, total: licPlan.license.total })
         : groupLimitReached && policy.grpJobs
-          ? t("pool.groupFullReason", { p: partition, n: groupRunning, max: policy.grpJobs })
+          ? groupRunning >= policy.grpJobs
+            ? t("pool.groupFullReason", { p: partition, n: groupRunning, max: policy.grpJobs })
+            : t("pool.groupTakenReason", { p: partition, n: groupRunning, max: policy.grpJobs, k: policy.grpJobs - groupRunning })
           : verdict?.tone !== "warn" || sliderHintShown || bfTipShown
             ? null
             : gpuNoneReason ?? coreNoneReason ?? (shown?.detail && !showGpuFitDetails ? shown.detail : null);

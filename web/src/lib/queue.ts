@@ -12,21 +12,22 @@
  * cap, months-old stuck waiters, the first-listed pool. The rules instead:
  *
  *  1. A reason that holds the whole job — a hold, a dependency, a begin
- *     time, an association or other limit this model cannot count — is
- *     believed.
+ *     time, an association, license or array limit — is believed.
  *  2. The QoS caps it can count, GrpJobs and MaxJobsPerUser, are counted per
  *     partition from the running jobs; their Reason string is not read.
  *  3. A job Slurm has booked nodes for (SchedNodes) is waiting for nodes,
- *     whatever its reason says.
+ *     whatever QoS or partition reason it shows: that reason may come from
+ *     any one partition of its list.
  *  4. A waiter older than the longest time limit on its nodes is stuck:
  *     every job running when it arrived has ended since, and it took no slot.
  *
  * queueModel() then plays the scheduler once over the whole cluster: waiters
  * in priority order, each into the first partition of its own list it may
  * start in, best fit, using up GrpJobs / MaxJobsPerUser slots as it goes.
- * What they take is the `claims` every "starts now" verdict subtracts.
+ * What they take — the `claims` on each node and the group slots — every
+ * "starts now" verdict subtracts.
  */
-import { clusterMs } from "@/lib/cluster-time";
+import { clusterMs, clusterTimeZone } from "@/lib/cluster-time";
 import { expandHostlist, nodeIsSchedulable, parseGpuCount } from "@/lib/derive";
 import { partitionPolicy, wallLabelSec } from "@/lib/slurm";
 import type { RawJob, RawNode, Snapshot } from "@/types/snapshot";
@@ -53,6 +54,8 @@ export interface Waiter {
   kind: WaitKind;
   /** partitions it may start in now, in its own order (kind "next") */
   open: string[];
+  /** the partition it starts in now, when the queue's play placed it */
+  placed?: string;
 }
 
 export interface Claim {
@@ -66,11 +69,11 @@ export interface QueueModel {
   waiters: Waiter[];
   /** what the waiters that can start now take from each node first */
   claims: Map<string, Claim>;
-  /** future starts Slurm's backfill has booked on each node (ms, ascending) */
+  /** future starts Slurm has booked on each node for waiters that do not start now (ms, ascending) */
   bookings: Map<string, number[]>;
   /** jobs running in the partition's QoS */
   running(partition: string): number;
-  /** the partition's QoS GrpJobs cap is full now */
+  /** no GrpJobs slot is left for a new job once the queue has started what it can */
   groupFull(partition: string): boolean;
   /** GrpJobs slots still open once the queue has started what it can (Infinity: no cap) */
   slotsLeft(partition: string): number;
@@ -79,21 +82,26 @@ export interface QueueModel {
 /** The parts of a snapshot the model reads (tests pass just these). */
 export type QueueInput = Pick<Snapshot, "jobs" | "nodes" | "pools" | "policy" | "part_pool" | "generated_at">;
 
-const cache = new WeakMap<QueueInput, QueueModel>();
+const cache = new WeakMap<QueueInput, { zone: string | undefined; model: QueueModel }>();
 
-/** The queue model of one snapshot, built once and shared by every caller. */
+/** The queue model of one snapshot, built once and shared by every caller
+ *  (again once the cluster's time zone arrives: bookings are read in it). */
 export function queueModel(snap: QueueInput): QueueModel {
-  let model = cache.get(snap);
-  if (!model) {
-    model = buildModel(snap);
-    cache.set(snap, model);
+  const zone = clusterTimeZone();
+  let hit = cache.get(snap);
+  if (!hit || hit.zone !== zone) {
+    hit = { zone, model: buildModel(snap) };
+    cache.set(snap, hit);
   }
-  return model;
+  return hit.model;
 }
 
-/** Waiters that can start now and may run in this pool, in priority order. */
+/** Waiters ahead of a new job in this pool, in priority order: the ones that
+ *  start here now, and the ones that may run here and wait for nodes. */
 export function poolContenders(snap: QueueInput, poolId: string): Waiter[] {
-  return queueModel(snap).waiters.filter((w) => w.kind === "next" && w.open.some((p) => snap.part_pool[p] === poolId));
+  const partPool = snap.part_pool ?? {};
+  return queueModel(snap).waiters.filter((w) => w.kind === "next"
+    && (w.placed ? partPool[w.placed] === poolId : w.open.some((p) => partPool[p] === poolId)));
 }
 
 /** Every pending job listing a partition of this pool. */
@@ -146,6 +154,7 @@ export function reasonKind(reason: string): WaitKind | null {
 interface Room {
   name: string;
   partitions: Set<string>;
+  gpuType: string;
   gpus: number;
   cores: number;
   memMb: number;
@@ -168,7 +177,7 @@ function buildModel(snap: QueueInput): QueueModel {
   }
   const groupCap = (p: string) => partitionPolicy(p, policy).grpJobs ?? 0;
   const userCap = (p: string) => partitionPolicy(p, policy).maxJobsPerUser ?? 0;
-  const groupFull = (p: string) => groupCap(p) > 0 && (running.get(qosOf(p)) ?? 0) >= groupCap(p);
+  const capFull = (p: string) => groupCap(p) > 0 && (running.get(qosOf(p)) ?? 0) >= groupCap(p);
   const userFull = (user: string, p: string) =>
     userCap(p) > 0 && (userRunning.get(`${user}\0${qosOf(p)}`) ?? 0) >= userCap(p);
 
@@ -192,12 +201,13 @@ function buildModel(snap: QueueInput): QueueModel {
 
   const classify = (job: RawJob): Waiter => {
     const parts = partitionsOf(job);
-    const byReason = reasonKind(String(job.state_reason || ""));
+    const reason = String(job.state_reason || "");
+    const byReason = reasonKind(reason);
     const booked = bookedAt(job) !== null;
-    if (byReason && (byReason !== "limit" || !booked)) return { job, kind: byReason, open: [] };
-    const open = parts.filter((p) => !groupFull(p) && !userFull(job.user_name, p));
+    if (byReason && !(booked && /^(QOS|Partition)/.test(reason))) return { job, kind: byReason, open: [] };
+    const open = parts.filter((p) => !capFull(p) && !userFull(job.user_name, p));
     if (!booked) {
-      if (open.length === 0) return { job, kind: parts.every(groupFull) ? "group-cap" : "user-cap", open };
+      if (open.length === 0) return { job, kind: parts.every(capFull) ? "group-cap" : "user-cap", open };
       if (stuck(job)) return { job, kind: "stuck", open: [] };
     }
     return { job, kind: "next", open: open.length ? open : parts };
@@ -210,19 +220,6 @@ function buildModel(snap: QueueInput): QueueModel {
       (b.job.priority ?? 0) - (a.job.priority ?? 0)
       || (a.job.submit_time ?? 0) - (b.job.submit_time ?? 0)
       || String(a.job.job_id).localeCompare(String(b.job.job_id)));
-
-  // ---- bookings: future starts per node ----
-  const bookings = new Map<string, number[]>();
-  for (const w of waiters) {
-    const at = bookedAt(w.job);
-    if (at === null) continue;
-    for (const node of expandHostlist(w.job.sched_nodes || "")) {
-      const list = bookings.get(node) ?? [];
-      list.push(at);
-      bookings.set(node, list);
-    }
-  }
-  for (const list of bookings.values()) list.sort((a, b) => a - b);
 
   // ---- play the scheduler once: who starts now, and on what ----
   const pools = snap.pools ?? [];
@@ -257,17 +254,33 @@ function buildModel(snap: QueueInput): QueueModel {
       }
       groupLeft.set(qos, g - 1);
       userLeft.set(userKey, u - 1);
+      w.placed = p;
       break;
     }
   }
 
+  // ---- bookings: Slurm's future starts for the waiters that do not start now ----
+  // (one that starts now leaves its booking moot)
+  const bookings = new Map<string, number[]>();
+  for (const w of waiters) {
+    const at = bookedAt(w.job);
+    if (at === null || w.placed) continue;
+    for (const node of expandHostlist(w.job.sched_nodes || "")) {
+      const list = bookings.get(node) ?? [];
+      list.push(at);
+      bookings.set(node, list);
+    }
+  }
+  for (const list of bookings.values()) list.sort((a, b) => a - b);
+
+  const slotsLeft = (p: string) => left(groupLeft, qosOf(p), groupCap(p), running.get(qosOf(p)) ?? 0);
   return {
     waiters,
     claims,
     bookings,
     running: (p) => running.get(qosOf(p)) ?? 0,
-    groupFull,
-    slotsLeft: (p) => left(groupLeft, qosOf(p), groupCap(p), running.get(qosOf(p)) ?? 0),
+    groupFull: (p) => slotsLeft(p) <= 0,
+    slotsLeft,
   };
 }
 
@@ -275,6 +288,7 @@ function freeRoom(node: RawNode, gpuType: string): Room {
   return {
     name: node.name,
     partitions: new Set(node.partitions),
+    gpuType,
     gpus: Math.max(0, parseGpuCount(node.gres, gpuType) - parseGpuCount(node.gres_used, gpuType)),
     cores: Math.max(0, node.cpus - node.alloc_cpus),
     memMb: Math.max(0, node.real_memory - node.alloc_memory),
@@ -316,7 +330,8 @@ export function mayUseNode(job: RawJob, nodeName: string): boolean {
  *  best fit (fewest spare GPUs, then cores, keeping the widest gaps open as
  *  Slurm's packing does) — or null when it cannot start in full now. */
 function place(rooms: Room[], job: RawJob, share: Share): Room[] | null {
-  const fits = (r: Room) => mayUseNode(job, r.name)
+  // a GPU type named in the request (--gres=gpu:nvidia_a40:1) holds on every partition of its list
+  const fits = (r: Room) => mayUseNode(job, r.name) && (!share.gpus || !job.gpu_type || job.gpu_type === r.gpuType)
     && share.gpus <= r.gpus && share.cores <= r.cores && share.memMb <= r.memMb;
   const required = new Set(expandHostlist(job.req_nodes || ""));
   const pinned = rooms.filter((r) => required.has(r.name));

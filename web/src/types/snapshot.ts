@@ -2,7 +2,6 @@
 
 type ResourceKind = "cpu" | "gpu";
 
-/** Cluster-wide figures the backend keeps per sample (store._metrics). */
 export interface Occupant {
   job_id: number | string;
   user: string;
