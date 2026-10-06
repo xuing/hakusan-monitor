@@ -18,7 +18,7 @@ if [ "${1:-}" = "--result" ]; then
 fi
 
 # partition : model : GB the catalog states (keep in step with GPU_CATALOG)
-PROBES=("GPU-1:A40:48" "GPU-1A:A100:80")
+PROBES=("GPU-1:A40:48" "GPU-1A:A100:40")
 
 "${SSH[@]}" "mkdir -p ~/$DIR"
 scp -q -o BatchMode=yes "$(dirname "$0")/gpu_memory_conclude.sh" "$HOST:$DIR/conclude.sh"

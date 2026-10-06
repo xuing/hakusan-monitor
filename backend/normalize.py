@@ -10,7 +10,7 @@ from collections import defaultdict, Counter
 # ---- GPU type catalog (label + approx per-GPU memory, GB) --------------------
 GPU_CATALOG = {
     "nvidia_a40":  {"label": "A40",       "mem_gb": 48},
-    "nvidia_a100": {"label": "A100",      "mem_gb": 80},  # unconfirmed: scripts/probe_gpu_memory.sh
+    "nvidia_a100": {"label": "A100",      "mem_gb": 40},  # A100-PCIE-40GB: 40960 MiB (probe 2026-10-05)
     "h100-80c":    {"label": "H100 80GB", "mem_gb": 80},
     "h100-20c":    {"label": "H100 MIG 20GB", "mem_gb": 20},
 }

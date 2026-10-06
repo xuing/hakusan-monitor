@@ -44,7 +44,7 @@ export const POOL_A40 = pool({
 export const POOL_A100 = pool({
   id: "a100", kind: "gpu", nodes: 10, mem_per_node: 515306,
   cores: { total: 520, alloc: 376, free: 68, unavailable: 76, util: 0.723 },
-  gpu: { type: "nvidia_a100", label: "A100", mem_gb: 80, total: 20, used: 20, down: 0, reserved: 0, free: 0, maint: false, util: 1.0, next_free: null },
+  gpu: { type: "nvidia_a100", label: "A100", mem_gb: 40, total: 20, used: 20, down: 0, reserved: 0, free: 0, maint: false, util: 1.0, next_free: null },
   partitions: ["GPU-1A", "GPU-LA"],
   queue: { running: 20, pending: 42, releasing: { jobs: 0, nodes: 0 } },
 });
