@@ -1,6 +1,6 @@
 import { nodeIsSchedulable } from "@/lib/derive";
 import { partitionRunningJobs } from "@/lib/gpu-advice";
-import { isLimitBlocked } from "@/lib/gpu-fit";
+import { isLimitBlocked, isStaleWaiter } from "@/lib/gpu-fit";
 import type { CpuSubmitProbe, Pool, Snapshot } from "@/types/snapshot";
 
 export type CpuProbeState = "now" | "queued" | "failed" | "unknown";
@@ -72,7 +72,8 @@ interface CpuSlot { cores: number; memMb: number }
  *  Priority/Resources waiter takes the smallest node its per-node share fits.
  *  SINGLE's 51 Priority jobs all want a whole 256-core node and never touched
  *  a 16-core request on a part-used node (measured 2026-10-05, also with the
- *  2-day walltime). Limit-capped and dependency-held jobs take nothing. */
+ *  2-day walltime). Limit-capped, dependency-held and stale (isStaleWaiter)
+ *  jobs take nothing. */
 function cpuOpenSlots(snap: Snapshot, partition: string): CpuSlot[] {
   const free = snap.nodes
     .filter((n) => n.partitions.includes(partition) && nodeIsSchedulable(n))
@@ -82,6 +83,7 @@ function cpuOpenSlots(snap: Snapshot, partition: string): CpuSlot[] {
       String(j.job_state).toUpperCase() === "PENDING"
       && String(j.partition || "").split(",").includes(partition)
       && !isLimitBlocked(j)
+      && !isStaleWaiter(j, snap)
       && (j.state_reason === "Priority" || j.state_reason === "Resources"))
     .map((j) => Math.ceil((j.cpus || 1) / Math.max(1, j.node_count || 1)))
     .sort((a, b) => b - a);
@@ -202,12 +204,23 @@ export function cpuDefaultSpreads(snap: Snapshot, partition: string, cores: numb
   return !cpuOpenSlots(snap, partition).some((f) => slotCores(f, memPerCore) >= Math.max(1, cores));
 }
 
+/** How long Slurm's own "starts now" outranks the live judgement. */
+export const PROBE_NOW_TRUST_S = 300;
+
 /** The verdict shown for a CPU partition: the live judgement, except that a
- *  probe the scheduler rejected outright stays "failed". */
+ *  probe the scheduler rejected outright stays "failed", and a fresh probe
+ *  that starts now wins. Slurm's "now" sees backfill into nodes it holds for
+ *  a far-off job, which the live judgement counts out: a 16-core TINY job
+ *  started in 19 s on PLANNED lcpcc-003 while the live view said "queued"
+ *  (2026-10-06). Its "later" stays untrusted — it plans behind QOS-capped
+ *  waiters (DEF "10-09" while a real DEF job started in 9 s). */
 export function cpuStartState(row: Pick<CpuProbeRow, "partition" | "probe">, snap: Snapshot): CpuProbeState {
-  const probed = cpuProbeState(row.probe, snap.cpu_submit_probes_generated_at || snap.generated_at,
-                               snap.generated_at, cpuProbeMaxAge(snap));
+  const probedAt = snap.cpu_submit_probes_generated_at || snap.generated_at;
+  const probed = cpuProbeState(row.probe, probedAt, snap.generated_at, cpuProbeMaxAge(snap));
   if (probed === "failed") return probed;
+  // a full group cap is live fact; the probe may predate it
+  if (groupFull(snap, row.partition)) return "queued";
+  if (probed === "now" && snap.generated_at - probedAt <= PROBE_NOW_TRUST_S) return "now";
   return liveCpuStart(snap, row.partition) ?? probed;
 }
 

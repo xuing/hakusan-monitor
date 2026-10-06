@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { cpuDefaultSpreads, cpuProbeState, cpuStartLimits, cpuStartMemMb, liveCpuStart } from "./cpu-probes";
+import { cpuDefaultSpreads, cpuProbeState, cpuStartLimits, cpuStartMemMb, cpuStartState, liveCpuStart } from "./cpu-probes";
 import type { CpuSubmitProbe } from "@/types/snapshot";
 
 const probe = (startEpoch: number): CpuSubmitProbe => ({
@@ -154,5 +154,25 @@ describe("cpuStartLimits / cpuStartMemMb (the sliders' no-queue end)", () => {
     const lim = cpuStartLimits(s, "SINGLE")!;
     expect(lim.groupFull).toBe(true);
     expect(lim.maxCores).toBe(256);
+  });
+});
+
+describe("cpuStartState", () => {
+  // no node has 16 free cores, so the live view queues the default request
+  const snapAt = (now: number) => ({
+    generated_at: now, cpu_submit_probes_generated_at: 1_000,
+    nodes: [{ name: "lcpcc-003", partitions: ["TINY"], state: ["MIXED"], schedulable: true, cpus: 256, alloc_cpus: 243,
+              real_memory: 1543224, alloc_memory: 0, gres: "" }],
+    jobs: [],
+    policy: { partition_defaults: { TINY: { cores: 16, def_mem_per_cpu_mb: 6000 } }, partition_caps: { TINY: { maxNodes: 1 } }, partition_policies: {} },
+  }) as unknown as Parameters<typeof cpuStartState>[1];
+  const row = { partition: "TINY", probe: { ...probe(1_001), partition: "TINY", processors: 16 } };
+
+  it("takes a fresh probe's 'starts now' over the live view (backfill into held nodes)", () => {
+    expect(cpuStartState(row, snapAt(1_100))).toBe("now");
+  });
+
+  it("falls back to the live view once that probe is older than 5 minutes", () => {
+    expect(cpuStartState(row, snapAt(1_400))).toBe("queued");
   });
 });

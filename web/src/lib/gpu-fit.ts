@@ -10,7 +10,7 @@ import {
   type GpuDefaultRequest,
   type GpuNodeFacts,
 } from "@/lib/gpu-availability";
-import { capPerGpu, effectiveGpuLimit, partitionCap, partitionDefaultRequest, partitionPolicy, type PartitionCap } from "@/lib/slurm";
+import { capPerGpu, effectiveGpuLimit, partitionCap, partitionDefaultRequest, partitionPolicy, wallLabelSec, type PartitionCap } from "@/lib/slurm";
 import type { Pool, RawJob, RawNode, Snapshot } from "@/types/snapshot";
 
 export interface GpuFitNeed {
@@ -458,6 +458,22 @@ export function isLimitBlocked(job: RawJob) {
   );
 }
 
+/** A waiter that has pended longer than the longest time limit of any
+ *  partition on its nodes: every job running when it was submitted has ended
+ *  since, so every slot came free and it took none — it is stuck, not next
+ *  in line. 2026-10-06: four TINY jobs from 06-18 still said "Priority" and
+ *  painted TINY "will queue", while a real 16-core TINY job started in 9 s. */
+export function isStaleWaiter(job: RawJob, snap: Pick<Snapshot, "generated_at" | "part_pool" | "policy">): boolean {
+  if (!job.submit_time) return false;
+  const partPool = snap.part_pool ?? {};
+  const pools = new Set(String(job.partition || "").split(",").map((p) => partPool[p]).filter(Boolean));
+  let longest = 0;
+  for (const [p, pool] of Object.entries(partPool)) {
+    if (pools.has(pool)) longest = Math.max(longest, wallLabelSec(snap.policy?.partition_caps?.[p]?.wall));
+  }
+  return longest > 0 && snap.generated_at - job.submit_time > longest;
+}
+
 /** Pending jobs that actually compete for capacity: limit-blocked waiters
  *  (QOSMax*, Dependency…) cannot claim a slot right now, so they don't gate
  *  the "can start immediately" verdict. */
@@ -486,7 +502,8 @@ export function contendersForPool(snap: Snapshot, poolId: string): RawJob[] {
   const homePool = (j: RawJob) =>
     String(j.partition || "").split(",").map((p) => snap.part_pool[p]).find(Boolean);
   return activePendingForPool(snap.jobs, snap.part_pool, poolId).filter((j) =>
-    homePool(j) === poolId
+    !isStaleWaiter(j, snap)
+      && homePool(j) === poolId
       && String(j.partition || "").split(",").some((p) => snap.part_pool[p] === poolId && groupOpen(p)),
   );
 }

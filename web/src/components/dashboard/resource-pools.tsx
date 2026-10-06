@@ -58,6 +58,7 @@ import { licenseBusy, licensePlan } from "@/lib/licenses";
 import { defaultRequestFit, singleNodeCoreFlag } from "@/lib/default-request";
 import { gpuPartitionAdvice, partitionRunningJobs } from "@/lib/gpu-advice";
 import { getSite } from "@/lib/site";
+import { cpuPartitionStatus, cpuPartitionVerdict } from "@/lib/cpu-partition";
 import type { Occupant, Partition, Pool, PoolGpu, RawJob, Snapshot } from "@/types/snapshot";
 
 
@@ -902,27 +903,16 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
         selected: p === partition, marker: p === partition ? gpuCount : undefined,
       };
     }
-    const lim = snap ? cpuStartLimits(snap, p) : null;
     const lo = capP.minCores ?? 1;
-    const row = cpuRows.find((r) => r.partition === p);
-    // what the panel's command for this row gets, -L included
-    const planP = licensePlan(partitionDefaults(p, snap?.policy), clusterLicenses, "", "");
-    const live = snap ? liveCpuStart(snap, p) ?? "unknown" : "unknown";
-    const state = planP.flag ? live : row?.state ?? live;
-    const rowVerdict = planP.kind === "required"
-      ? { tone: "bad" as const, label: t("pool.needsL") }
-      : planP.kind === "missing"
-        ? { tone: "bad" as const, label: t("pool.verdictRejected") }
-        : licenseBusy(planP) && state === "now"
-          ? { tone: "warn" as const, label: t("pool.queueHintWillQueue") }
-          : { tone: cpuProbeTone(state), label: cpuProbeLabel(state, t) };
+    // the same status the Partitions page shows for this partition
+    const st = snap ? cpuPartitionStatus(snap, p) : null;
     // the same rule as the sliders: a refused command is not judged, a
     // full group or a used-up license starts nothing
-    const refused = planP.kind === "required" || planP.kind === "missing" || state === "failed";
+    const refused = !st || st.license.kind === "required" || st.license.kind === "missing" || st.state === "failed";
     return {
       name: p, title: desc, lo, hi: Math.max(lo, capP.maxCores ?? poolCoresPerNode(pool)),
-      now: lim && !lim.groupFull && !licenseBusy(planP) ? lim.maxCores : 0, wall, perUser: perUserText(policyP.maxJobsPerUser),
-      verdict: rowVerdict, judged: Boolean(lim) && !refused,
+      now: st?.maxCores ?? 0, wall, perUser: perUserText(policyP.maxJobsPerUser),
+      verdict: st ? cpuPartitionVerdict(st, t) : { tone: cpuProbeTone("unknown"), label: cpuProbeLabel("unknown", t) }, judged: !refused,
       selected: p === partition, marker: p === partition ? coresNow : undefined,
     };
   };
@@ -1794,9 +1784,12 @@ function bestPartitionPick(
   const multi = pool.partitions.length > 1;
   const prefix = (p: string, text: string) => (multi ? (text ? `${p} · ${text}` : p) : text);
   // CPU pool: sbatch --test-only probes already hold a per-partition verdict.
-  if (!isGpu && cpuRows.length > 0) {
+  // License-only partitions (Materials Studio) are no pick for an ordinary
+  // job, the same exclusion the summaries below make.
+  const generalRows = cpuRows.filter((row) => !isLicensePartition(row.partition, snap.policy));
+  if (!isGpu && generalRows.length > 0) {
     const rank = (row: CpuProbeRow) => (row.state === "now" ? 0 : row.state === "queued" ? 2 : 3);
-    const best = [...cpuRows].sort((a, b) => rank(a) - rank(b))[0];
+    const best = [...generalRows].sort((a, b) => rank(a) - rank(b))[0];
     const state = best.state;
     return { tone: cpuProbeTone(state), label: cpuProbeLabel(state, t), text: `-p ${best.partition}` };
   }

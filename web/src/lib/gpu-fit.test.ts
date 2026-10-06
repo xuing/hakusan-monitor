@@ -8,6 +8,7 @@ import {
   gpuNodeFacts,
   queueClaims,
   slotContention,
+  isStaleWaiter,
 } from "./gpu-fit";
 import { gpuAvailability } from "./gpu-availability";
 import { REQUEST_GPU_1 } from "./gpu-availability.fixtures";
@@ -227,5 +228,22 @@ describe("multi-pool waiters", () => {
 
     expect(contendersForPool(snap, "a40")).toHaveLength(1);
     expect(contendersForPool(snap, "a100")).toHaveLength(0);
+  });
+});
+
+describe("isStaleWaiter", () => {
+  const snap = {
+    generated_at: 1_791_276_000,
+    part_pool: { TINY: "cpu", LONG: "cpu", "GPU-1": "a40" },
+    policy: { partition_caps: { TINY: { wall: "30m" }, LONG: { wall: "21d" }, "GPU-1": { wall: "7d" } } },
+  } as unknown as Snapshot;
+  const job = (partition: string, ageDays: number) =>
+    ({ partition, submit_time: snap.generated_at - ageDays * 86_400, job_state: "PENDING", state_reason: "Priority" }) as unknown as RawJob;
+
+  it("ignores waiters older than the longest time limit on their nodes", () => {
+    // TINY shares lcpcc with LONG (21 d): 110 days is stuck, 13 days is still in line
+    expect(isStaleWaiter(job("TINY", 110), snap)).toBe(true);
+    expect(isStaleWaiter(job("TINY", 13), snap)).toBe(false);
+    expect(isStaleWaiter(job("GPU-1", 8), snap)).toBe(true);
   });
 });
