@@ -1,0 +1,110 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 560" width="980" height="560" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" role="img" aria-labelledby="title desc">
+  <title id="title">Hakusan Monitor architecture</title>
+  <desc id="desc">The collector reads Slurm on the Hakusan login node over one reused SSH connection, stores samples and job history in SQLite, and serves a React web app with a REST API and Server-Sent Events.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#5a687c"/>
+    </marker>
+    <style>
+      .panel { fill: #ffffff; stroke: #cfd6df; stroke-width: 1.5; }
+      .box { fill: #f3f6fa; stroke: #dce2ea; stroke-width: 1; }
+      .store { fill: #eef4fc; stroke: #b7d3f6; stroke-width: 1; }
+      .head { font-size: 15px; font-weight: 600; fill: #11192c; }
+      .sub { font-size: 12px; fill: #5a687c; }
+      .name { font-size: 13px; font-weight: 600; fill: #11192c; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+      .text { font-size: 12px; fill: #3b4658; }
+      .mono { font-size: 11.5px; fill: #3b4658; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+      .link { stroke: #5a687c; stroke-width: 1.5; fill: none; }
+      .label { font-size: 12px; fill: #11192c; font-weight: 600; }
+      .note { font-size: 11.5px; fill: #5a687c; }
+    </style>
+  </defs>
+
+  <rect x="0" y="0" width="980" height="560" fill="#ffffff"/>
+
+  <!-- Hakusan cluster -->
+  <rect class="panel" x="20" y="40" width="230" height="480" rx="12"/>
+  <text class="head" x="40" y="72">Hakusan cluster</text>
+  <text class="sub" x="40" y="90">read-only, nothing is submitted</text>
+
+  <rect class="box" x="36" y="108" width="198" height="214" rx="8"/>
+  <text class="name" x="50" y="132">hakusan2 (login)</text>
+  <text class="mono" x="50" y="156">scontrol show nodes</text>
+  <text class="mono" x="50" y="176">squeue  (jobs, tres)</text>
+  <text class="mono" x="50" y="196">sacct   (pending ReqTRES)</text>
+  <text class="mono" x="50" y="216">sbatch --test-only</text>
+  <text class="mono" x="50" y="236">sacctmgr show qos</text>
+  <text class="mono" x="50" y="256">scontrol show partition</text>
+  <text class="mono" x="50" y="276">job_submit.lua (rules)</text>
+  <text class="mono" x="50" y="300">sacct -aX -D (history)</text>
+
+  <rect class="box" x="36" y="340" width="198" height="84" rx="8"/>
+  <text class="name" x="50" y="364">hakusan1 / hakusan2</text>
+  <text class="text" x="50" y="386">login-node health:</text>
+  <text class="mono" x="50" y="406">/proc, df, iostat, ps</text>
+
+  <text class="note" x="36" y="452">hakusan1 is the fallback</text>
+  <text class="note" x="36" y="468">SSH host when hakusan2</text>
+  <text class="note" x="36" y="484">does not answer.</text>
+
+  <!-- Collector -->
+  <rect class="panel" x="330" y="40" width="380" height="480" rx="12"/>
+  <text class="head" x="350" y="72">Collector — backend/ (Python stdlib)</text>
+  <text class="sub" x="350" y="90">background threads; requests never trigger collection</text>
+
+  <rect class="box" x="346" y="108" width="348" height="112" rx="8"/>
+  <text class="label" x="360" y="130">Sampler thread · every HM_SAMPLE_INTERVAL</text>
+  <text class="text" x="360" y="152"><tspan class="name">sources.py</tspan>  compact Slurm text → dicts</text>
+  <text class="text" x="360" y="174"><tspan class="name">normalize.py</tspan>  pools, partitions, verdicts</text>
+  <text class="text" x="360" y="196"><tspan class="name">login_nodes.py</tspan>  login-node health</text>
+
+  <rect class="box" x="346" y="234" width="348" height="90" rx="8"/>
+  <text class="label" x="360" y="256">Job-history thread · every HM_JOBS_INTERVAL</text>
+  <text class="text" x="360" y="278"><tspan class="name">job_history.py</tspan>  sacct backfill + increments</text>
+  <text class="text" x="360" y="300"><tspan class="name">analytics.py</tspan>  per-user-weighted aggregates</text>
+
+  <rect class="store" x="346" y="338" width="348" height="72" rx="8"/>
+  <text class="label" x="360" y="360"><tspan class="name">store.py</tspan> · SQLite (data/hakusan.sqlite)</text>
+  <text class="text" x="360" y="382">samples + hourly rollup, login samples,</text>
+  <text class="text" x="360" y="400">jobs + attempts, free-hours rollup, visits</text>
+
+  <rect class="box" x="346" y="424" width="348" height="80" rx="8"/>
+  <text class="label" x="360" y="446"><tspan class="name">server.py</tspan> · HTTP on :8787</text>
+  <text class="text" x="360" y="468">latest snapshot in memory → SSE fan-out</text>
+  <text class="text" x="360" y="488">/api/* JSON + the built web app (web/dist)</text>
+
+  <!-- internal arrows -->
+  <line class="link" x1="520" y1="220" x2="520" y2="234" marker-end="url(#arrow)"/>
+  <line class="link" x1="520" y1="324" x2="520" y2="338" marker-end="url(#arrow)"/>
+  <line class="link" x1="520" y1="410" x2="520" y2="424" marker-end="url(#arrow)"/>
+
+  <!-- Browser -->
+  <rect class="panel" x="790" y="40" width="170" height="480" rx="12"/>
+  <text class="head" x="810" y="72">Browser</text>
+  <text class="sub" x="810" y="90">React SPA (web/)</text>
+
+  <rect class="box" x="806" y="108" width="138" height="250" rx="8"/>
+  <text class="text" x="820" y="132">Overview</text>
+  <text class="text" x="820" y="156">Partitions</text>
+  <text class="text" x="820" y="180">Analytics</text>
+  <text class="text" x="820" y="204">Login nodes</text>
+  <text class="text" x="820" y="228">Nodes · Jobs</text>
+  <text class="text" x="820" y="252">Slurm guide</text>
+  <text class="text" x="820" y="276">Containers</text>
+  <text class="text" x="820" y="300">About</text>
+  <text class="note" x="820" y="332">日本語 · English · 中文</text>
+
+  <!-- cluster ↔ collector -->
+  <path class="link" d="M 346 170 L 250 170" marker-end="url(#arrow)"/>
+  <path class="link" d="M 346 280 L 250 280" marker-end="url(#arrow)"/>
+  <path class="link" d="M 346 200 L 300 200 L 300 382 L 250 382" marker-end="url(#arrow)"/>
+  <text class="label" x="290" y="122" text-anchor="middle">SSH</text>
+  <text class="note" x="290" y="138" text-anchor="middle">one warm</text>
+  <text class="note" x="290" y="152" text-anchor="middle">connection</text>
+
+  <!-- collector ↔ browser -->
+  <path class="link" d="M 790 440 L 694 440" marker-end="url(#arrow)"/>
+  <path class="link" d="M 694 478 L 790 478" marker-end="url(#arrow)"/>
+  <text class="label" x="742" y="432" text-anchor="middle">REST</text>
+  <text class="label" x="742" y="498" text-anchor="middle">SSE push</text>
+</svg>

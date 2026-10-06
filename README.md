@@ -1,240 +1,172 @@
 # Hakusan Monitor
 
-A lightweight, **multilingual** status dashboard for the JAIST **Hakusan** HPC
-cluster. Open a web page and see — at a glance — how busy the cluster is, where
-there is free capacity, how long the queue is, why jobs are waiting, when the
-cluster is usually busy, and how to run your job (including containers).
+A status dashboard for JAIST's **Hakusan** HPC cluster. One web page shows how
+busy the cluster is, where a job can start right now, why queued jobs wait,
+and how the cluster is used over time — in 日本語, English and 中文.
 
-- **Real-time** — pushed over Server-Sent Events (live, not just polling).
-- **Gentle on the login node** — compact `scontrol`/`squeue` queries (~210 KB,
-  not 17 MB), one reused SSH connection, read-only. See *Login-node load* below.
-- **Data retention & analytics** — every sample is stored in SQLite; the
-  *Usage patterns* view shows peak/trough by hour-of-day and weekday.
-- **Answers "can I run now, and where?"** — a **hardware-pool** view (free cores
-  per CPU pool, free GPUs per type), **who is currently using each resource**, and
-  when GPUs next free up. The resource filter re-scopes the entire page.
-- **All the raw data, too** — sortable, filterable tables of every node and every
-  job, not just the summary.
-- **Multilingual and theme-aware** — 日本語 / English / 中文; the theme follows
-  the browser unless a user chooses one manually.
-- **Zero-dependency backend** — Python 3 standard library only. The frontend is a
-  modern React app (Vite + Tailwind + shadcn/ui + lightweight SVG charts + Radix Colors) built to
-  static files the backend serves.
+It is read-only and gentle on the login node: one reused SSH connection, compact
+Slurm queries, and nothing is ever submitted or cancelled. The backend is pure
+Python (standard library only); the frontend is a React app the backend serves.
 
-## Architecture
+> Community tool, not an official JAIST service.
 
-```
- hakusan2 (login)        collector (this app)                       browser
- ┌───────────────┐  ssh  ┌──────────────────────────────────┐ HTTP ┌──────────┐
- │ scontrol -o   │◀──────│ sources.py  acquire (ssh/local/   │◀─────│ SPA      │
- │   show nodes  │ one   │             mock), compact format │ SSE  │ i18n     │
- │ squeue -o ... │ warm  │ normalize.py dedupe + roll up     │─────▶│ live     │
- │ (controller)  │ conn  │ store.py    SQLite TSDB (retain   │ REST │ analytics│
- └───────────────┘       │             + hourly rollup)      │      └──────────┘
-                         │ server.py   sampler thread ─┬─ SSE fan-out            
-                         │                             └─ /api + static          
-                         └──────────────────────────────────┘
-```
+## What you can see
 
-A background **sampler** thread polls on a fixed cadence and feeds three things
-from one result: the in-memory *latest* snapshot (real-time), the SQLite store
-(history), and the SSE subscribers (push). Collection is decoupled from requests.
+| Page | What it answers |
+|---|---|
+| **Overview** | How full is each hardware pool (A40, A100, H100, CPU, …)? Where can my job start now? Who is using what, and when do GPUs free up? |
+| **Partitions** | Per-partition load and queue, limits, and whether the default request starts now — with a copyable `salloc` / `sbatch` command. |
+| **Analytics** | From the job history: when people submit, when GPUs or whole nodes are free, queue wait per partition, how much of the requested time jobs use, job shapes, interactive sessions, weekly allocation, active users, outcomes. GPU and CPU views. |
+| **Login nodes** | Load, CPU / I/O wait, memory, disk pressure and top processes on hakusan1 / hakusan2. |
+| **Nodes**, **Jobs** | Every node and every job in sortable, filterable tables. |
+| **Slurm guide**, **Containers** | How to submit on Hakusan, and SingularityCE usage (SIF images, Docker conversion, `--nv`). |
 
-- `backend/sources.py` — acquire raw Slurm data (ssh / local / mock) as compact
-  text, parse to a JSON-shaped dict.
-- `backend/login_nodes.py` — optional Hakusan 1 / Hakusan 2 health sampler:
-  `/proc`, byte and inode `df`, `iostat` if available, compact `ps`, top processes,
-  top users.
-- `backend/normalize.py` — pure transform: dedupe overlapping partitions by node,
-  count GPUs (incl. ones offline for maintenance), per-partition pressure score.
-- `backend/store.py` — SQLite: raw `samples` (retention-pruned) + `samples_hourly`
-  rollup (kept) → history & peak/trough analytics.
-- `backend/server.py` — sampler thread + SSE + REST + static file serving.
-- `web/` — React + TypeScript SPA (Vite, Tailwind, shadcn/ui, local SVG charts, Radix
-  Colors), built to `web/dist` and served by `server.py`. See `web/README.md`.
+Hakusan's 25 partitions are overlapping views of about 7 physical pools (the 16
+CPU partitions all share the same 124 `lcpcc` nodes), so the dashboard leads with
+**pools** and reports free cores and free GPUs per pool. Every limit and default
+it shows is read from the cluster (QoS, partition config, `job_submit.lua`), not
+written into the code.
 
-## Pages
+## How it works
 
-- **Overview** — KPIs that adapt to the selected resource, physical **resource
-  pools** (free cores / free GPUs per hardware pool, expandable to show who's
-  using it + submission targets), "where can I run now?", upcoming releases,
-  queue insights, down nodes, top users.
-- **Partitions** — per-partition load and queue (per-node specs + node states)
-  and whether each default request can start. CPU `salloc` commands are copyable
-  only when backed by `sbatch --test-only`; GPU quick request and `--mem`
-  workarounds live in the resource pool cards.
-- **Analytics** — peak/trough usage (hour-of-day + weekday × hour heatmap) and 24 h trends.
-- **Login nodes** — Hakusan 1 / Hakusan 2 load, CPU/iowait, memory, `iostat`
-  disk pressure, top processes and top users. Disk space is shown only as a
-  reference.
-- **Nodes** / **Jobs** — full sortable, filterable tables of all raw node/job data.
-- **Containers** (Guide) — Hakusan-oriented SingularityCE notes: SIF-first
-  workflow, Docker/OCI image conversion, GPU `--nv`, bind mounts, clean
-  environments, and container services.
+![Architecture: the collector reads Slurm on the Hakusan login node over one SSH connection, stores samples and job history in SQLite, and serves the web app with a REST API and Server-Sent Events.](docs/architecture.svg)
 
-The topbar **resource filter** (All / A40 / A100 / H100-80 / H100-MIG / CPU /
-VM-CPU / Large-mem) **transforms the whole view** — KPIs, pools and lists all
-re-scope to the chosen hardware.
+- **Sampler thread** — every `HM_SAMPLE_INTERVAL` it reads nodes, queue and
+  policy in one SSH round trip (`sources.py`), turns them into pools, partitions
+  and verdicts (`normalize.py`), keeps the result in memory, saves it to SQLite
+  (`store.py`) and pushes it to every open page over Server-Sent Events.
+- **Job-history thread** — reads Slurm accounting with `sacct`
+  (`job_history.py`): the full history once, in 30-day chunks, then only the
+  latest window. `analytics.py` turns it into the Analytics page, weighting
+  every *user* equally so a few accounts with 100k+ jobs don't dominate.
+- **HTTP server** (`server.py`) — serves `/api/*` and the built frontend.
+  Requests never trigger collection, so pages stay fast even when the cluster
+  is slow.
+- **Frontend** (`web/`) — React + TypeScript (Vite, Tailwind, shadcn/ui, SVG
+  charts, Radix Colors). See [`web/README.md`](web/README.md).
 
-> **Pools, not partitions.** Hakusan's 25 partitions are overlapping *views* of
-> ~7 physical pools (the 16 CPU partitions are the same 124 `lcpcc` nodes). The
-> dashboard leads with pools and reports **free cores** for CPU (idle cores on
-> partially-used nodes), not just idle whole nodes. Aggregates are verified
-> against `sinfo` to the digit.
+## Load on the cluster
 
-## Login-node load (by design)
+Everything is read-only. One sample serves every viewer — 100 open browsers
+still cause one query stream.
 
-This was a hard requirement: **do not burden the Hakusan login node.**
-
-- The heavy lifting (querying every node/job) happens on the **controller**
-  (`lcpcc-adm1`), which is built for it — not on the login node. The login node
-  only runs the thin read-only `scontrol`/`squeue` clients for a moment.
-- We use **compact format strings**, not `--json`: `squeue` output drops from
-  **~16.8 MB → ~45 KB** (370×), `scontrol` nodes from 604 KB → 164 KB. Far less
-  to serialize and to push through the login node's sshd.
-- **One round trip per realtime sample** for nodes and queue, over a **reused SSH
-  connection** (`ControlMaster`/`ControlPersist`) — no repeated handshakes. The
-  same trip also reads pending jobs' true request totals (`sacct -aX
-  --state=PENDING -o JobID,ReqTRES`, ~0.7 s — `squeue %m` prints per-CPU memory
-  indistinguishably from totals) and the backfill scheduler's planned
-  placements (`SchedNodes` + start estimates), which power the queue-contention
-  and idle-gap verdicts. CPU start probes (`sbatch --test-only`, carrying the
-  same walltime the submit plugin forces onto CPU `salloc`, so "starts now"
-  describes the command users actually run) and Slurm policy reads (`sacctmgr` /
-  `scontrol show partition`) are cached on longer intervals. `singularity
-  --version` is cached after the first successful sample and retried after a
-  backend restart.
-- A **single TTL-paced sampler** (default **300 s**, configurable) serves all
-  viewers; 100 browsers still cause just one query stream. Updates are pushed to
-  clients over Server-Sent Events (SSE). Everything is non-mutating: CPU probes
-  use `sbatch --test-only`, and the app never submits real jobs, cancels jobs, or
-  installs software.
-
-The optional **Login nodes** page monitors Hakusan 1 / Hakusan 2 themselves. It
-uses one short read-only command per configured node per interval
-(`HM_LOGIN_INTERVAL`, default 300 s): `/proc/loadavg`, `/proc/stat`,
-`/proc/meminfo`, `df`, `iostat -x -y 1 1` when available, and compact
-`ps` summaries. It stores only summary metrics plus Top N process/user rows in
-SQLite. Disk space is displayed for reference; disk pressure uses `iostat` when
-available.
-
-### Sampling cadence & cost
-
-Everything below is read-only. The sampler ticks on a fixed cadence (a slow
-round doesn't delay the next one), and fresh cluster data is pushed to browsers
-*before* login-node collection runs, so a wedged login node can't hold it back.
-
-| What | Cadence | Cost on the login node |
+| What | How often | Cost |
 |---|---|---|
-| Cluster snapshot — `scontrol -o show nodes`, `squeue` (jobs), `squeue -O` (per-job tres/SchedNodes/container), `sacct` (pending jobs' true ReqTRES totals) | 300 s · `HM_SAMPLE_INTERVAL` | one SSH round trip, typically 2–5 s |
-| CPU queue prediction — `sbatch --test-only` × 9 CPU partitions (submits nothing) | 900 s · `HM_CPU_PROBE_INTERVAL` | piggybacks on the snapshot connection; up to +36 s (≤4 s/partition) |
-| Policy & quotas — `sacctmgr show qos`, `scontrol show partition` | 24 h · `HM_POLICY_INTERVAL` | +a few seconds, same connection |
-| Login-node health — loadavg/meminfo/df/iostat/ps | 300 s · `HM_LOGIN_INTERVAL` | one SSH per node, both nodes in parallel, 1–3 s (`iostat` holds a 1 s window) |
-| Container runtime — `singularity --version` | once, first successful sample | negligible |
-| Browser push — SSE | on every new sample | none; a 15 s heartbeat event lets clients detect silently dead connections and reconnect |
+| Nodes, queue, pending jobs' requested totals (`scontrol`, `squeue`, `sacct --state=PENDING`) | `HM_SAMPLE_INTERVAL` (default 300 s) | one SSH round trip, typically 2–5 s |
+| CPU start check (`sbatch --test-only`, submits nothing) | `HM_CPU_PROBE_INTERVAL` (900 s) | rides on the same connection |
+| Policy: QoS, partitions, `job_submit.lua` | `HM_POLICY_INTERVAL` (24 h) | a few seconds |
+| Job history (`sacct -aX`) | `HM_JOBS_INTERVAL` (600 s); first start reads the whole history in chunks, a few minutes | under a second per read |
+| Login-node health (`/proc`, `df`, `iostat`, `ps`) | `HM_LOGIN_INTERVAL` (300 s) | one SSH per node, 1–3 s |
 
-The dominant per-cycle cost is the SSH connection itself (0.3–1.2 s cold), so
-`ControlPersist` is set longer than the sample interval to keep one warm,
-reused connection per host.
+The SSH connection is kept warm (`ControlPersist` longer than the sample
+interval), and `HM_SSH_HOST` may list fallbacks (`you@hakusan2,you@hakusan1`).
 
-## Quick start (demo, no cluster)
+## Try it without a cluster
 
 ```bash
-# 1) build the web app once
-cd web && npm install && npm run build && cd ..
-# 2) optional: seed 14 days of fake history for the Analytics page
-python3 scripts/seed_demo.py
-# 3) run with demo data
-HM_SOURCE=mock python3 backend/server.py
-# open http://localhost:8787
+cd web && npm install && npm run build && cd ..   # build the web app once
+HM_SOURCE=mock python3 backend/server.py          # open http://localhost:8787
 ```
 
-`HM_SOURCE=mock` serves fixtures from `mock/` (`nodes.json`, `squeue.json`, `login_nodes.json` in the shapes `sources.py` / `login_nodes.py` read). They were captured from the live cluster, so they are not published in this repository — supply your own.
+Mock mode reads `mock/nodes.json`, `mock/squeue.json` and `mock/login_nodes.json`.
+They were captured from the live cluster, so they are not in this repository —
+supply your own. `python3 scripts/seed_demo.py` adds 14 days of fake history.
 
-## Live mode (against Hakusan)
+## Run it against Hakusan
 
-Run it from any host on the JAIST network that can `ssh` to the login node with a
-working key/agent (no password prompts). Put your own SSH target in a local
-`.env` (copy `.env.example`) so your ID never gets committed:
+Use a host on the JAIST network that can `ssh` to the login node without a
+password prompt. Keep your account out of git by putting it in `.env`:
 
 ```bash
-cp .env.example .env        # then edit HM_SSH_HOST=you@hakusan2
-# optional: edit HM_LOGIN_NODES=hakusan1=you@hakusan1,hakusan2=you@hakusan2
-# ensure your key is loaded, e.g.  ssh-add ~/.ssh/id_ed25519
-HM_SOURCE=ssh python3 backend/server.py      # reads HM_SSH_HOST from .env
+cp .env.example .env              # set HM_SSH_HOST=you@hakusan2 (and optionally HM_LOGIN_NODES)
+HM_SOURCE=ssh python3 backend/server.py
 ```
 
-Or run it **on** a node that has the Slurm CLIs locally:
+On a machine that has the Slurm commands itself, use `HM_SOURCE=local`.
+`scripts/run.sh ssh|local|mock` wraps both.
+
+For an always-on deployment (systemd user service, Docker Compose, a dedicated
+SSH key, serving under a path prefix such as `/hakusan/`, daily policy check),
+see [`docs/DEPLOY.md`](docs/DEPLOY.md).
+
+## Develop and test
 
 ```bash
-HM_SOURCE=local python3 backend/server.py
-```
-
-Helper script: `scripts/run.sh ssh` / `scripts/run.sh mock`.
-
-## Frontend development
-
-```bash
+python3 -m unittest discover -s tests   # backend
 cd web
-npm install
-npm run dev      # http://localhost:5173, proxies /api → :8787 (run the backend too)
-npm run build    # → web/dist (what the backend serves in production)
+npm run dev      # http://localhost:5173, proxies /api to :8787 (run the backend too)
+npm test         # Vitest
 npm run lint     # oxlint
-npm test         # Vitest domain/helper tests
+npm run build    # → web/dist, which the backend serves
 ```
 
-## Configuration (env vars)
+## Configuration
 
-| Var | Default | Meaning |
+Set these in the environment or in `.env`.
+
+| Variable | Default | Meaning |
 |---|---|---|
-| `HM_SOURCE` | `mock` | `ssh` \| `local` \| `mock` |
-| `HM_SSH_HOST` | _(unset — put `you@hakusan2` in `.env`)_ | SSH target for `ssh` mode |
-| `HM_SSH_OPTS` | sane defaults | ssh options (incl. ControlMaster reuse) |
+| `HM_SOURCE` | `mock` | `ssh`, `local` or `mock` |
+| `HM_SSH_HOST` | — | SSH target(s), e.g. `you@hakusan2,you@hakusan1` |
+| `HM_SSH_OPTS` | keep-alive defaults | extra `ssh` options (key, ControlMaster) |
 | `HM_PORT` | `8787` | listen port |
-| `HM_SOURCE_TIMEOUT` | `75` | Slurm collection timeout, seconds |
 | `HM_SAMPLE_INTERVAL` | `300` | seconds between cluster samples |
-| `HM_LOGIN_NODES` | _(unset)_ | optional comma list, e.g. `hakusan1=you@hakusan1,hakusan2=you@hakusan2` |
-| `HM_LOGIN_INTERVAL` | `HM_SAMPLE_INTERVAL` | seconds between login-node health samples |
-| `HM_LOGIN_TOP_N` | `12` | top process/user rows kept per login node |
-| `HM_LOGIN_SHOW_ARGS` | `0` | `1` shows truncated full command args; default shows command name only |
-| `HM_LOGIN_TIMEOUT` | `25` | per-node login health command timeout, seconds |
-| `HM_MASK_USERS` | `0` | `1` anonymizes usernames in the public view |
-| `HM_DB` | `data/hakusan.sqlite` | time-series database path |
-| `HM_RETAIN_DAYS` | `60` | cluster raw-sample retention in days (hourly rollup kept beyond) |
-| `HM_LOGIN_RETAIN_DAYS` | `HM_RETAIN_DAYS` | login-node sample retention in days |
-| `HM_VISIT_RETAIN_DAYS` | `365` | anonymous daily visit-counter retention in days |
-| `HM_JOBS_INTERVAL` | `600` | seconds between job-history reads (`sacct`) for the Analytics page |
-| `HM_JOBS_RETAIN_DAYS` | `400` | job-history retention in days (also how far back the first read goes) |
+| `HM_SOURCE_TIMEOUT` | `75` | seconds before a sample gives up |
+| `HM_CPU_PROBE_INTERVAL` | `900` | seconds between CPU start checks |
+| `HM_POLICY_INTERVAL` | `86400` | seconds between policy reads |
+| `HM_JOB_SUBMIT_LUA` | `/app/slurm/job_submit.lua` | where the submit plugin lives on the cluster |
+| `HM_LOGIN_NODES` | — | login nodes to watch, e.g. `hakusan1=you@hakusan1,hakusan2=you@hakusan2` |
+| `HM_LOGIN_INTERVAL` | `HM_SAMPLE_INTERVAL` | seconds between login-node samples |
+| `HM_LOGIN_TIMEOUT` | `25` | seconds per login-node read |
+| `HM_LOGIN_TOP_N` | `12` | top processes / users kept per node |
+| `HM_LOGIN_SHOW_ARGS` | `0` | `1` shows (truncated) command arguments |
+| `HM_JOBS_INTERVAL` | `600` | seconds between job-history reads |
+| `HM_JOBS_RETAIN_DAYS` | `400` | days of job history kept (and read on first start) |
 | `HM_ANALYTICS_INTERVAL` | `1800` | seconds between Analytics recomputations |
-| `HM_MAX_SSE` | `64` | maximum concurrent SSE clients |
-| `HM_TRUST_PROXY` | `0` | trust `X-Forwarded-For` only when set to `1` behind a trusted proxy |
-| `HM_ACCESS_LOG` | `0` | enable HTTP access logging when set to `1` |
-| `HM_FRONTEND` | `web/dist` | directory of the built web app to serve |
+| `HM_DB` | `data/hakusan.sqlite` | database file |
+| `HM_RETAIN_DAYS` | `60` | days of raw samples kept (hourly rollups are kept longer) |
+| `HM_LOGIN_RETAIN_DAYS` | `HM_RETAIN_DAYS` | days of login-node samples kept |
+| `HM_VISIT_RETAIN_DAYS` | `365` | days of anonymous visit counts kept |
+| `HM_CLUSTER_TZ` | `Asia/Tokyo` | time zone Slurm prints times in |
+| `HM_MASK_USERS` | `0` | `1` hides user names in the public view |
+| `HM_MAX_SSE` | `64` | maximum live connections |
+| `HM_PUBLIC_URL` | — | redirect page requests that reach the port directly to this URL |
+| `HM_TRUST_PROXY` | `0` | `1` trusts `X-Forwarded-For` (only behind your own proxy) |
+| `HM_ACCESS_LOG` | `0` | `1` logs every HTTP request |
+| `HM_FRONTEND` | `web/dist` | built web app to serve |
 
 ## API
 
-| Endpoint | Purpose |
+| Endpoint | Returns |
 |---|---|
-| `GET /api/snapshot` | current normalized, versioned snapshot (real-time) |
-| `GET /api/stream` | **SSE** — pushes the snapshot on every new sample |
-| `GET /api/history?hours=24` | down-sampled time-series for trend charts |
-| `GET /api/login-nodes` | current Hakusan login-node health: load, CPU, memory, disk pressure, processes, users |
-| `GET /api/login-nodes/history?hours=24` | down-sampled login-node health history |
-| `GET /api/usage?days=30` | peak/trough by hour-of-day & weekday (local time) |
+| `GET /api/snapshot` | the current cluster snapshot (versioned JSON) |
+| `GET /api/stream` | Server-Sent Events: a new snapshot after every sample |
 | `GET /api/analytics` | job-history aggregates for the Analytics page (GPU and CPU views) |
-| `GET /api/meta` | cluster, slurm version, container info, partitions |
-| `GET /api/health` | liveness + source + data age |
+| `GET /api/history?hours=24` | down-sampled cluster time series |
+| `GET /api/usage?days=30` | allocation by hour of day and weekday |
+| `GET /api/login-nodes` | current login-node health |
+| `GET /api/login-nodes/history?hours=24` | login-node history |
+| `GET /api/meta` | cluster name, Slurm version, partitions, container info |
+| `GET /api/health` | liveness, data source and data age |
 
-## Notes & limitations
+## Data and privacy
 
-- Usernames are already visible to any user via `squeue`; `HM_MASK_USERS=1`
-  anonymizes them in this public view anyway.
-- Analytics reads job accounting with `sacct -a`, so it needs a cluster whose
-  `PrivateData` lets users see everyone's jobs. Login names are stored only as
-  installation-keyed hashes, and submit lines are cut to their first word
-  (`sbatch` / `salloc` / `srun`) on the cluster.
-- Usage-pattern times are **server local time** — set `TZ=Asia/Tokyo` for the
-  process if the host clock isn't JST.
-- Read-only community tool; not an official JAIST service.
+- Any Hakusan user can already see everyone's jobs with `squeue` / `sacct`;
+  `HM_MASK_USERS=1` still hides user names on the public page.
+- The job history stores user names only as installation-keyed hashes, and a
+  job's submit line only as its first word (`sbatch`, `salloc`, `srun`) — script
+  names and paths never leave the cluster.
+- Analytics needs a cluster whose `PrivateData` setting lets users see all jobs
+  (`sacct -a`), as Hakusan's does.
 
-See [`docs/`](docs/README.md) for deployment, plan, and design notes.
+## Repository layout
+
+```
+backend/   server.py · sources.py · normalize.py · store.py · job_history.py ·
+           analytics.py · login_nodes.py · lua_policy.py
+web/       React frontend (see web/README.md)
+tests/     backend unit tests
+scripts/   run.sh, demo data, cluster policy check, GPU memory probe
+deploy/    systemd units
+docs/      deployment, design notes, architecture.svg
+```
