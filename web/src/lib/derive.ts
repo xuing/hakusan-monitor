@@ -99,6 +99,32 @@ export function poolCapacity(snap: Snapshot, poolId: string): PoolCapacity {
   return { freeCores, emptiestNodeFree, idleNodes };
 }
 
+export interface PoolNodeStates {
+  idle: number;     // in service, every core free
+  partial: number;  // in service, some cores free
+  held: number;     // idle cores held by the scheduler for a queued job (PLANNED…)
+  full: number;     // no free core
+  down: number;     // taken out by an operator (down, drain, reboot)
+}
+
+/** Each node of a pool by what it offers now — the one rule both the pool
+ *  card's bar and the Partitions bar draw, one cell per node: green idle,
+ *  amber partly free or held, red full, gray down. */
+export function poolNodeStates(snap: Snapshot, poolId: string): PoolNodeStates {
+  const s: PoolNodeStates = { idle: 0, partial: 0, held: 0, full: 0, down: 0 };
+  for (const n of nodesForPool(snap, poolId)) {
+    if (nodeNeedsAttention(n)) s.down += 1;
+    else if (nodeIsSchedulable(n)) {
+      const free = Math.max(0, n.cpus - n.alloc_cpus);
+      if (free <= 0) s.full += 1;
+      else if (free === n.cpus) s.idle += 1;
+      else s.partial += 1;
+    } else if (nodeIsSchedulerHeld(n)) s.held += 1;
+    else s.full += 1;
+  }
+  return s;
+}
+
 /** Running jobs occupying a pool, from raw jobs + the partition→pool map. */
 export function occupantsForPool(snap: Snapshot, poolId: string): Occupant[] {
   const pp = snap.part_pool;

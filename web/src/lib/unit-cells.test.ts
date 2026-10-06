@@ -14,11 +14,11 @@ describe("scaleCells", () => {
   });
 
   it("gives bigger pools more cells", () => {
-    expect([barCells(31_744, 124), barCells(1_408), barCells(96, 1)]).toEqual([96, 48, 24]);
+    expect([barCells(31_744), barCells(1_408), barCells(96)]).toEqual([96, 48, 24]);
   });
 
-  it("draws one cell per node for 12-96 nodes", () => {
-    expect(barCells(1_408, 44)).toBe(44);
+  it("draws one cell per node", () => {
+    expect([barCells(31_744, 124), barCells(1_408, 44), barCells(96, 1)]).toEqual([124, 44, 1]);
     expect(scaleCells([1_376, 0, 32, 0, 0], 1_408, 44)).toEqual([43, 0, 1, 0, 0]);
   });
 });

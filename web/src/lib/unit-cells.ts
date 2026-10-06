@@ -1,10 +1,9 @@
-/** How many cells a pool's bar gets. With 12-96 nodes, one cell per node,
- *  so a cell is one node's worth of cores (VM-CPU: 44 cells of 32 cores,
- *  the size of its default request). Otherwise by pool size, so a 96-core
- *  node isn't drawn as finely as a 31,744-core pool. Bars show shares
- *  either way, not node states. */
+/** How many cells a pool's bar gets: one per node, so a cell is one node's
+ *  worth of the pool (lcpcc 124 cells of 256 cores, VM-CPU 44 of 32, the
+ *  large-memory node one cell). Without a node count, by pool size. Bars
+ *  show shares, not node states: a cell is a node's worth, not a node. */
 export function barCells(total: number, nodes = 0): number {
-  if (nodes >= 12 && nodes <= 96) return nodes;
+  if (nodes > 0) return nodes;
   return total >= 10_000 ? 96 : total >= 1_000 ? 48 : 24;
 }
 

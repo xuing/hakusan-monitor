@@ -205,7 +205,6 @@ function PoolCard({ pool, snap, t }: { pool: Pool; snap: Snapshot; t: TFn }) {
     : t("pool.availableNodes", { n: availableNodes });
   const free = isGpu ? freeGpu : pool.cores.free;
   const total = isGpu && pool.gpu ? pool.gpu.total : pool.cores.total;
-  const used = isGpu && pool.gpu ? pool.gpu.used : pool.cores.alloc;
   const cpuHeld = isGpu ? { reserved: 0, down: 0 } : unschedulableCores(snap.nodes, pool.id);
   // the same verdict as the dot beside the title: green when a job can start
   // now, amber when what is idle can't take the default request, red when
@@ -300,12 +299,13 @@ function PoolCard({ pool, snap, t }: { pool: Pool; snap: Snapshot; t: TFn }) {
           <GpuBlocks t={t} gpu={pool.gpu} schedulableFree={readyGpu} className="mt-2" />
         ) : (
           <>
-            {/* cells by pool size (barCells); phones cap at 48 so cells stay ≥ 3 px */}
+            {/* core shares, one cell per node's worth of cores (barCells);
+                phones cap at 48 cells so cells stay ≥ 3 px */}
             {[barCells(total, pool.nodes), Math.min(48, barCells(total, pool.nodes))].map((cells, i) => (
               <UnitBlocks
                 key={i}
                 free={free}
-                used={used}
+                used={pool.cores.alloc}
                 reserved={cpuHeld.reserved}
                 down={cpuHeld.down}
                 total={total}

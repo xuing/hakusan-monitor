@@ -13,7 +13,7 @@ import { useLive } from "@/hooks/live-context";
 import { useResourceFilter } from "@/hooks/resource-filter-context";
 import { coresText, poolTitle, useT, type TFn } from "@/i18n";
 import type { TranslationKey } from "@/i18n/en";
-import { nodeIsSchedulerHeld, poolCapacity, type PoolCapacity } from "@/lib/derive";
+import { poolCapacity, poolNodeStates, type PoolCapacity, type PoolNodeStates } from "@/lib/derive";
 import { fmtMB, nf } from "@/lib/format";
 import { contendersForPool, fitHasClearSlot, partitionGpuAvailability, poolGpuAvailability } from "@/lib/gpu-fit";
 import { maxJobGpus } from "@/lib/gpu-layout";
@@ -179,7 +179,7 @@ export function PartitionPressure() {
                   isGpu={isGpu}
                   pc={pc}
                   gpuAvail={gpuAvail}
-                  heldNodes={snap.nodes.filter((n) => n.pool === group.poolKey && nodeIsSchedulerHeld(n)).length}
+                  nodeStates={poolNodeStates(snap, group.poolKey)}
                   generatedAt={snap.generated_at}
                   t={t}
                 />
@@ -297,7 +297,7 @@ function PoolHeader({
   isGpu,
   pc,
   gpuAvail,
-  heldNodes,
+  nodeStates,
   generatedAt,
   t,
 }: {
@@ -308,7 +308,7 @@ function PoolHeader({
   pc: PoolCapacity;
   gpuAvail?: GpuAvailability | null;
   /** Nodes the scheduler holds (PLANNED/RESERVED), from the raw node list. */
-  heldNodes: number;
+  nodeStates: PoolNodeStates;
   generatedAt: number;
   t: TFn;
 }) {
@@ -322,11 +322,8 @@ function PoolHeader({
   const util = total ? used / total : 0;
   const unit = isGpu ? t("unit.gpu") : t("unit.cores");
   const dim = isGpu ? t("dim.gpu") : t("dim.cpu");
-  const downNodes = pool?.down_nodes ?? ((pool?.nodes_state.down ?? 0) + (pool?.nodes_state.drain ?? 0));
-  const availableNodeCount = pool?.available_nodes ?? pool?.idle_nodes ?? 0;
-  // PLANNED/RESERVED nodes are held by the scheduler, not busy — paint them
-  // amber like the pool card instead of lumping them into "used".
-  const busyNodes = Math.max((pool?.nodes ?? 0) - availableNodeCount - downNodes - heldNodes, 0);
+  // one cell per node, by the shared rule (poolNodeStates) the pool card draws too
+  const ns = nodeStates;
   const blocks = isGpu
     ? {
         free: pool?.gpu?.free ?? 0,
@@ -337,10 +334,10 @@ function PoolHeader({
         unit: t("unit.gpu"),
       }
     : {
-        free: availableNodeCount,
-        used: busyNodes,
-        reserved: heldNodes,
-        down: downNodes,
+        free: ns.idle + ns.partial,
+        used: ns.full,
+        reserved: ns.held,
+        down: ns.down,
         total: pool?.nodes ?? 0,
         unit: t("spec.nodes"),
       };
@@ -362,7 +359,7 @@ function PoolHeader({
             cores is amber — green for "8 of 256 cores free" overstated it. */}
         <UnitBlocks
           {...blocks}
-          schedulable={isGpu ? gpuReady : pc.idleNodes}
+          schedulable={isGpu ? gpuReady : ns.idle}
           strandedLabel={isGpu ? undefined : t("blocks.partlyFree")}
         />
         {maint ? (
@@ -379,11 +376,11 @@ function PoolHeader({
                 <span className="font-mono">
                   {t("part.nodesPrefix")}{" "}
                   {([
-                    ["part.nodesIdle", pc.idleNodes, "text-ok-fg"],
-                    ["part.nodesPartial", Math.max(0, availableNodeCount - pc.idleNodes), "text-warn-fg"],
-                    ["part.nodesHeld", heldNodes, "text-warn-fg"],
-                    ["part.nodesFull", busyNodes, "text-bad-fg"],
-                    ["part.nodesDown", downNodes, "text-muted-foreground"],
+                    ["part.nodesIdle", ns.idle, "text-ok-fg"],
+                    ["part.nodesPartial", ns.partial, "text-warn-fg"],
+                    ["part.nodesHeld", ns.held, "text-warn-fg"],
+                    ["part.nodesFull", ns.full, "text-bad-fg"],
+                    ["part.nodesDown", ns.down, "text-muted-foreground"],
                   ] as const)
                     .filter(([, n]) => n > 0)
                     .map(([key, n, cls], i) => (
