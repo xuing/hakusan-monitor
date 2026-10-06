@@ -5,6 +5,7 @@ import { useLive } from "@/hooks/live-context";
 import { useResourceFilter } from "@/hooks/resource-filter-context";
 import { coresText, poolTitle, useT, type TFn } from "@/i18n";
 import { fmtMB, nf } from "@/lib/format";
+import { unschedulableCores } from "@/lib/derive";
 import { occupancyMode } from "@/lib/occupancy-mode";
 import { groupUsage, poolUsage, type PoolUsage } from "@/lib/user-usage";
 import { cn } from "@/lib/utils";
@@ -25,7 +26,7 @@ export function TopUsers() {
     .filter((u): u is PoolUsage => !!u && u.users.length > 0);
 
   return (
-    <SectionCard title={t("section.topusers")} extra={panels.length ? <Legend t={t} /> : undefined}>
+    <SectionCard title={t("section.topusers")} extra={panels.length ? <Legend t={t} reserved={panels.some((u) => usageTiles(u, snap, t).some((x) => x.kind === "reserved" && x.value > 0))} /> : undefined}>
       {panels.length === 0 ? (
         <Empty>{t("users.none")}</Empty>
       ) : (
@@ -42,7 +43,7 @@ export function TopUsers() {
   );
 }
 
-function Legend({ t }: { t: TFn }) {
+function Legend({ t, reserved }: { t: TFn; reserved: boolean }) {
   const item = (cls: string, label: string) => (
     <span className="flex items-center gap-1.5">
       <span className={cn("h-2.5 w-2.5 rounded-sm", cls)} />
@@ -53,6 +54,7 @@ function Legend({ t }: { t: TFn }) {
     <span className="flex flex-wrap items-center gap-x-3 gap-y-1 whitespace-nowrap">
       {item("bg-[var(--blue-4)] ring-1 ring-inset ring-[var(--blue-7)]", t("users.held"))}
       {item("bg-[var(--green-4)] ring-1 ring-inset ring-[var(--green-7)]", t("users.free"))}
+      {reserved && item("bg-[var(--amber-4)] ring-1 ring-inset ring-[var(--amber-7)]", t("users.reserved"))}
       {item("bg-[var(--gray-4)] ring-1 ring-inset ring-[var(--gray-7)]", t("users.offline"))}
       <span className="flex items-center gap-1.5">
         <span className="h-2 w-2 rounded-full bg-warn" />
@@ -81,7 +83,7 @@ function PoolPanel({ usage, snap, t }: { usage: PoolUsage; snap: Snapshot; t: TF
         )}
       </header>
       <OccupancyMap
-        tiles={usageTiles(usage, t)}
+        tiles={usageTiles(usage, snap, t)}
         ariaLabel={title}
         restLabel={(k, amount) => ({ label: t("users.others", { n: k }), amount: unitText(unit, amount, t) })}
         nodeWord={t("spec.nodes")}
@@ -97,7 +99,7 @@ const unitText = (unit: "gpus" | "cores", n: number, t: TFn) =>
   unit === "gpus" ? `${nf(n)} ${t("unit.gpu")}` : coresText(t, n);
 
 /** One tile per user, sized in the panel's unit, then free and offline. */
-function usageTiles(usage: PoolUsage, t: TFn): OccupancyTile[] {
+function usageTiles(usage: PoolUsage, snap: Snapshot, t: TFn): OccupancyTile[] {
   const { unit, pools } = usage;
   const users: OccupancyTile[] = usage.users
     .map((u) => {
@@ -125,19 +127,24 @@ function usageTiles(usage: PoolUsage, t: TFn): OccupancyTile[] {
     .filter((x) => x.value > 0)
     .sort((a, b) => b.value - a.value);
   let free = 0;
+  let reserved = 0;
   let off = 0;
   for (const p of pools) {
     if (unit === "gpus" && p.gpu) {
       free += p.gpu.free;
-      off += p.gpu.down + (p.gpu.reserved ?? 0);
+      reserved += p.gpu.reserved ?? 0;
+      off += p.gpu.down;
     } else {
+      const held = unschedulableCores(snap.nodes, p.id);
       free += p.cores.free;
-      off += p.cores.unavailable ?? 0;
+      reserved += held.reserved;
+      off += held.down;
     }
   }
   return [
     ...users,
     { key: "~free", value: free, kind: "free", amount: unitText(unit, free, t), sub: t("users.free"), details: [t("users.free")] },
+    { key: "~reserved", value: reserved, kind: "reserved", amount: unitText(unit, reserved, t), sub: t("users.reserved"), details: [t("users.reservedDetail")] },
     { key: "~off", value: off, kind: "off", amount: unitText(unit, off, t), sub: t("users.offline"), details: [t("users.offline")] },
   ];
 }

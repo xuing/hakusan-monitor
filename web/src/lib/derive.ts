@@ -54,6 +54,22 @@ export function nodeIsSchedulerHeld(n: RawNode): boolean {
   return n.state.some((s) => BLOCKING_STATES.has(String(s).toUpperCase()));
 }
 
+/** Unallocated cores the pool's free count leaves out, split by why: on
+ *  nodes an operator took out (down/drain) vs nodes the scheduler is holding
+ *  for queued jobs (PLANNED…). Painting both as "down" called 366 healthy
+ *  cores broken; the held ones can turn free at the next scheduling pass. */
+export function unschedulableCores(nodes: RawNode[], poolId: string) {
+  let reserved = 0;
+  let down = 0;
+  for (const n of nodes) {
+    if (n.pool !== poolId || nodeIsSchedulable(n)) continue;
+    const idle = Math.max(0, n.cpus - n.alloc_cpus);
+    if (nodeNeedsAttention(n)) down += idle;
+    else if (nodeIsSchedulerHeld(n)) reserved += idle;
+  }
+  return { reserved, down };
+}
+
 /** Backend-owned scheduling verdict, with a strict fallback for older snapshots. */
 export function nodeIsSchedulable(n: RawNode): boolean {
   if (typeof n.schedulable === "boolean") return n.schedulable;

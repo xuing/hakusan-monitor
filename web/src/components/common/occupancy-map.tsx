@@ -7,7 +7,7 @@ export interface OccupancyTile {
   key: string;
   /** GPUs or cores: the tile's area */
   value: number;
-  kind: "user" | "free" | "off";
+  kind: "user" | "free" | "reserved" | "off";
   /** the user name; free / off tiles have none */
   label?: string;
   /** "7 GPU", "6,913 核" */
@@ -198,22 +198,26 @@ function TipCard({ tip }: { tip: { tile: OccupancyTile; x: number; y: number } }
 }
 
 // soft tints with dark text: large areas stay calm; the hue keeps its
-// meaning (blue held, green free, gray offline) and Radix flips it in dark mode
+// meaning (blue held, green free, amber held by the scheduler, gray offline)
+// and Radix flips it in dark mode
 const TONE = {
   user: "bg-[var(--blue-4)] text-[var(--blue-12)]",
   free: "bg-[var(--green-4)] text-[var(--green-12)]",
+  reserved: "bg-[var(--amber-4)] text-[var(--amber-12)]",
   off: "bg-[var(--gray-4)] text-[var(--gray-11)]",
 } as const;
 const HOVER = {
   user: "hover:bg-[var(--blue-5)]",
   free: "hover:bg-[var(--green-5)]",
+  reserved: "hover:bg-[var(--amber-5)]",
   off: "hover:bg-[var(--gray-5)]",
 } as const;
-const HUE = { user: "blue", free: "green", off: "gray" } as const;
+const HUE = { user: "blue", free: "green", reserved: "amber", off: "gray" } as const;
 // faint lines between one owner's cells, in its own hue
 const CELL_LINE = {
   user: "shadow-[inset_1px_1px_0_var(--blue-6)]",
   free: "shadow-[inset_1px_1px_0_var(--green-6)]",
+  reserved: "shadow-[inset_1px_1px_0_var(--amber-6)]",
   off: "shadow-[inset_1px_1px_0_var(--gray-6)]",
 } as const;
 
@@ -221,6 +225,7 @@ const CELL_LINE = {
 const CELL_DASH = {
   user: "border-b border-r border-dashed border-[var(--blue-7)]",
   free: "border-b border-r border-dashed border-[var(--green-7)]",
+  reserved: "border-b border-r border-dashed border-[var(--amber-7)]",
   off: "border-b border-r border-dashed border-[var(--gray-7)]",
 } as const;
 

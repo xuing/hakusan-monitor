@@ -16,7 +16,7 @@ import { useResourceFilter } from "@/hooks/resource-filter-context";
 import { coresText, durText, poolTitle, reasonLabel, useT, wallText, type TFn, type TranslationKey } from "@/i18n";
 import { nextUpOrder } from "@/lib/pending-order";
 import { occupancyMode } from "@/lib/occupancy-mode";
-import { nodeIsSchedulable, nodeIsSchedulerHeld, nodeNeedsAttention, occupantsForPool, poolCapacity } from "@/lib/derive";
+import { nodeIsSchedulable, occupantsForPool, poolCapacity, unschedulableCores } from "@/lib/derive";
 import { fmtCountdown, fmtDur, fmtMB, nf, parseDur } from "@/lib/format";
 import type { GpuAvailabilitySegment } from "@/lib/gpu-availability";
 import { gpuSegmentLabel, gpuSegmentTextClass } from "@/components/common/gpu-status";
@@ -205,7 +205,7 @@ function PoolCard({ pool, snap, t }: { pool: Pool; snap: Snapshot; t: TFn }) {
   const total = isGpu && pool.gpu ? pool.gpu.total : pool.cores.total;
   const used = isGpu && pool.gpu ? pool.gpu.used : pool.cores.alloc;
   const freeRatio = total ? free / total : 0;
-  const cpuHeld = isGpu ? { reserved: 0, down: 0 } : unschedulableCores(snap, pool.id);
+  const cpuHeld = isGpu ? { reserved: 0, down: 0 } : unschedulableCores(snap.nodes, pool.id);
   // colour by how much is free: none = red, scarce (<10%) = amber, plenty = green
   const freeColor = maint
     ? "text-muted-foreground"
@@ -281,6 +281,11 @@ function PoolCard({ pool, snap, t }: { pool: Pool; snap: Snapshot; t: TFn }) {
                   </span>
                 </div>
                 <div className="text-xs text-muted-foreground">{availableNodesLabel}</div>
+                {/* held cores are idle and may turn free at the next scheduling
+                    pass — say so, or the free count seems to jump at random */}
+                {cpuHeld.reserved > 0 && (
+                  <div className="text-xs text-warn-fg">{t("pool.coresReserved", { n: nf(cpuHeld.reserved) })}</div>
+                )}
               </>
             )}
           </div>
@@ -2126,21 +2131,6 @@ function GpuBlocks({ gpu, schedulableFree, className, t }: { gpu: PoolGpu; sched
   );
 }
 
-/** Unallocated cores the pool's free count leaves out, split by why: on
- *  nodes an operator took out (down/drain) vs nodes the scheduler is holding
- *  (PLANNED…). Painting both as "down" called 366 healthy cores broken. */
-function unschedulableCores(snap: Snapshot, poolId: string) {
-  let reserved = 0;
-  let down = 0;
-  for (const n of snap.nodes) {
-    if (n.pool !== poolId || nodeIsSchedulable(n)) continue;
-    const idle = Math.max(0, n.cpus - n.alloc_cpus);
-    if (nodeNeedsAttention(n)) down += idle;
-    else if (nodeIsSchedulerHeld(n)) reserved += idle;
-  }
-  return { reserved, down };
-}
-
 function isMaintPool(pool: Pool) {
   return pool.kind === "gpu" && !!pool.gpu?.maint;
 }
@@ -2318,11 +2308,12 @@ function poolOccupancyTiles(pool: Pool, snap: Snapshot, groups: OccupantUserGrou
     })
     .sort((a, b) => b.value - a.value);
   const free = isGpu ? pool.gpu!.free : pool.cores.free;
-  const off = isGpu ? pool.gpu!.down + (pool.gpu!.reserved ?? 0) : pool.cores.unavailable ?? 0;
+  const held = isGpu ? { reserved: pool.gpu!.reserved ?? 0, down: pool.gpu!.down } : unschedulableCores(snap.nodes, pool.id);
   return [
     ...users,
     { key: "~free", value: free, kind: "free", amount: unit(free), sub: t("users.free"), details: [t("users.free")] },
-    { key: "~off", value: off, kind: "off", amount: unit(off), sub: t("users.offline"), details: [t("users.offline")] },
+    { key: "~reserved", value: held.reserved, kind: "reserved", amount: unit(held.reserved), sub: t("users.reserved"), details: [t("users.reservedDetail")] },
+    { key: "~off", value: held.down, kind: "off", amount: unit(held.down), sub: t("users.offline"), details: [t("users.offline")] },
   ];
 }
 
