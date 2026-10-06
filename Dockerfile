@@ -2,7 +2,7 @@
 FROM node:26-slim@sha256:45d1ae4f51c594ba87fdcf59370135c53a3845d96eb6009c2e36268c9b411644 AS web
 WORKDIR /web
 COPY web/package.json web/package-lock.json ./
-RUN npm install --global npm@12.0.1 \
+RUN npm install --global npm@12.2.0 \
  && npm ci
 COPY web/ ./
 RUN npm run build
