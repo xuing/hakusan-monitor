@@ -1,4 +1,5 @@
 import { Fragment, useMemo, useState } from "react";
+import { Cpu, Gpu } from "lucide-react";
 import { useSearchParams } from "react-router";
 import "@/components/analytics/analytics.css";
 import { AnalyticsKpis } from "@/components/analytics/kpis";
@@ -105,22 +106,36 @@ export default function AnalyticsPage() {
 
   return (
     <div className="analytics-root grid gap-4">
-      <div className="flex flex-wrap items-center justify-between gap-2">
+      {/* the switch changes every card on a long page: it stays under the top
+          bar while scrolling, so the other view is one click from anywhere */}
+      <div
+        className="sticky z-10 -mx-4 -mt-2 flex flex-wrap items-center justify-between gap-2 border-b border-border/60 bg-background/95 px-4 py-2 backdrop-blur supports-[backdrop-filter]:bg-background/85"
+        style={{ top: "var(--topbar-h, 0px)" }}
+      >
         <Segmented
+          size="lg"
           ariaLabel={t("an.view.label")}
           value={kind}
+          // the scroll position stays: both views have the same cards in the
+          // same order, so a switch compares the card you are looking at
           onChange={(next) => setParams(next === "gpu" ? {} : { view: next }, { replace: true })}
           options={[
-            { value: "gpu", label: t("an.unit.gpu") },
-            { value: "cpu", label: t("an.unit.cpu") },
+            { value: "gpu", label: <><Gpu aria-hidden className="h-4 w-4" />{t("an.unit.gpu")}</> },
+            { value: "cpu", label: <><Cpu aria-hidden className="h-4 w-4" />{t("an.unit.cpu")}</> },
           ]}
         />
         {meta?.historySince && (
-          <span className="text-xs text-muted-foreground">
+          <span className="hidden text-xs text-muted-foreground sm:inline">
             {t("an.source", { since: dayLabel(meta.historySince, true) })}
           </span>
         )}
       </div>
+      {/* phones: the source line below the pinned bar, which stays one row */}
+      {meta?.historySince && (
+        <span className="-mt-2 text-xs text-muted-foreground sm:hidden">
+          {t("an.source", { since: dayLabel(meta.historySince, true) })}
+        </span>
+      )}
       {body}
     </div>
   );
