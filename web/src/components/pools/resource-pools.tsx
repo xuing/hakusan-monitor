@@ -36,7 +36,6 @@ export function ResourcePools() {
         {groups.map((g) => (
           <PoolGroup
             key={g.key}
-            groupKey={g.key}
             label={g.label}
             pools={g.pools}
             snap={snap}
@@ -49,8 +48,7 @@ export function ResourcePools() {
   );
 }
 
-function PoolGroup({ groupKey, label, pools, snap, t, outside = [] }: {
-  groupKey: string;
+function PoolGroup({ label, pools, snap, t, outside = [] }: {
   label: string;
   pools: Pool[];
   snap: Snapshot;
@@ -61,23 +59,9 @@ function PoolGroup({ groupKey, label, pools, snap, t, outside = [] }: {
   const tones = pools.map((p) => poolTone(snap, p));
   const available = tones.filter((tone) => tone === "ok").length;
   const groupTone: PoolTone = tones.every((tone) => tone === "off") ? "off" : available > 0 ? "ok" : "bad";
-  // collapsed groups stay collapsed for this viewer
-  const storeKey = `hm_pool_group_${groupKey}`;
-  const [open, setOpen] = useState(() => {
-    try {
-      return localStorage.getItem(storeKey) !== "closed";
-    } catch {
-      return true;
-    }
-  });
-  const toggle = () => {
-    setOpen(!open);
-    try {
-      localStorage.setItem(storeKey, open ? "closed" : "open");
-    } catch {
-      /* storage unavailable: the choice lasts this visit */
-    }
-  };
+  // every load starts expanded; a fold lasts until the page reloads
+  const [open, setOpen] = useState(true);
+  const toggle = () => setOpen(!open);
   return (
     <section className="space-y-2">
       <button
