@@ -110,10 +110,10 @@ export function fmtGpuLimit(cap: PartitionCap, shape?: GpuNodeShape) {
 }
 
 export function cpuProbeLabel(state: CpuProbeState, t: TFn) {
-  if (state === "now") return t("pool.cpuProbeNow");
-  if (state === "queued") return t("pool.cpuProbeQueued");
-  if (state === "unknown") return t("pool.cpuProbeNoData");
-  return t("pool.cpuProbeFailed");
+  if (state === "now") return t("verdict.now");
+  if (state === "queued") return t("verdict.queue");
+  if (state === "unknown") return t("verdict.noData");
+  return t("verdict.failed");
 }
 
 export function cpuProbeTone(state: CpuProbeState): Tone {
@@ -125,7 +125,7 @@ export function cpuProbeTone(state: CpuProbeState): Tone {
 
 export function cpuProbeDetail(row: CpuProbeRow, state: CpuProbeState | null, t: TFn) {
   const probe = row.probe;
-  if (!probe) return t("pool.cpuProbeNoData");
+  if (!probe) return t("verdict.noData");
   if (state === "now") return "";
   // the test-only start time plans behind limit-capped jobs too — not quoted
   if (state === "queued") return "";

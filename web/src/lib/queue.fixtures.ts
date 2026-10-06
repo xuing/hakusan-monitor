@@ -14,13 +14,327 @@
  *  - GPU-S waiters behind a full GrpJobs cap, GPU-1A waiters behind their
  *    owners' MaxJobsPerUser, dependencies, holds, a DependencyNeverSatisfied.
  */
-import type { PolicySnapshot, Pool, RawJob, RawNode } from "@/types/snapshot";
+import type { Partition, PolicySnapshot, Pool, RawJob, RawNode, Snapshot } from "@/types/snapshot";
 
 export const GENERATED_AT = 1791294279;
 
 export const PART_POOL: Record<string, string> = {"GPU-1": "a40", "GPU-1A": "a100", "GPU-L": "a40", "GPU-LA": "a100", "GPU-S": "a40", "VM-GPU-L": "h100-80"};
 
-export const POOLS = [{"id": "a40", "kind": "gpu", "gpu": {"type": "nvidia_a40"}}, {"id": "a100", "kind": "gpu", "gpu": {"type": "nvidia_a100"}}, {"id": "h100-80", "kind": "gpu", "gpu": {"type": "h100-80c"}}] as Pool[];
+export const POOLS = [
+  {
+    "id": "a40",
+    "kind": "gpu",
+    "nodes": 20,
+    "mem_per_node": 515306,
+    "down_nodes": 0,
+    "available_nodes": 0,
+    "idle_nodes": 0,
+    "cores": {
+      "total": 1040,
+      "alloc": 856,
+      "free": 112,
+      "unavailable": 72,
+      "util": 0.823
+    },
+    "gpu": {
+      "type": "nvidia_a40",
+      "label": "A40",
+      "mem_gb": 48,
+      "total": 40,
+      "used": 40,
+      "down": 0,
+      "reserved": 0,
+      "free": 0,
+      "maint": false,
+      "util": 1.0,
+      "next_free": {
+        "at": "2026-10-06T23:35:44",
+        "left": "51:05",
+        "gpus": 1
+      }
+    },
+    "partitions": [
+      "GPU-1",
+      "GPU-L",
+      "GPU-S"
+    ],
+    "queue": {
+      "running": 39,
+      "pending": 41,
+      "releasing": {
+        "jobs": 2,
+        "nodes": 2
+      }
+    }
+  },
+  {
+    "id": "a100",
+    "kind": "gpu",
+    "nodes": 10,
+    "mem_per_node": 515306,
+    "down_nodes": 0,
+    "available_nodes": 0,
+    "idle_nodes": 0,
+    "cores": {
+      "total": 520,
+      "alloc": 439,
+      "free": 14,
+      "unavailable": 67,
+      "util": 0.844
+    },
+    "gpu": {
+      "type": "nvidia_a100",
+      "label": "A100",
+      "mem_gb": 40,
+      "total": 20,
+      "used": 20,
+      "down": 0,
+      "reserved": 0,
+      "free": 0,
+      "maint": false,
+      "util": 1.0,
+      "next_free": {
+        "at": "2026-10-07T09:21:19",
+        "left": "10:36:40",
+        "gpus": 1
+      }
+    },
+    "partitions": [
+      "GPU-1A",
+      "GPU-LA"
+    ],
+    "queue": {
+      "running": 20,
+      "pending": 48,
+      "releasing": {
+        "jobs": 0,
+        "nodes": 0
+      }
+    }
+  },
+  {
+    "id": "h100-80",
+    "kind": "gpu",
+    "nodes": 4,
+    "mem_per_node": 469070,
+    "down_nodes": 1,
+    "available_nodes": 0,
+    "idle_nodes": 0,
+    "cores": {
+      "total": 128,
+      "alloc": 88,
+      "free": 8,
+      "unavailable": 32,
+      "util": 0.688
+    },
+    "gpu": {
+      "type": "h100-80c",
+      "label": "H100 80GB",
+      "mem_gb": 80,
+      "total": 4,
+      "used": 3,
+      "down": 1,
+      "reserved": 0,
+      "free": 0,
+      "maint": false,
+      "util": 0.75,
+      "next_free": {
+        "at": "2026-10-07T04:17:09",
+        "left": "5:32:30",
+        "gpus": 1
+      }
+    },
+    "partitions": [
+      "VM-GPU-L"
+    ],
+    "queue": {
+      "running": 3,
+      "pending": 5,
+      "releasing": {
+        "jobs": 0,
+        "nodes": 0
+      }
+    }
+  }
+] as unknown as Pool[];
+
+export const PARTITIONS = [
+  {
+    "name": "GPU-1A",
+    "kind": "gpu",
+    "nodes": 10,
+    "pool": "a100",
+    "gpu": {
+      "total": 20,
+      "used": 20,
+      "down": 0,
+      "reserved": 0,
+      "free": 0,
+      "util": 1.0
+    },
+    "jobs": {
+      "running": 18,
+      "pending": 42
+    },
+    "spec": {
+      "cores_per_node": 52,
+      "mem_per_node": 515306,
+      "gpu_per_node": 2
+    },
+    "nodes_state": {
+      "allocated": 4,
+      "mixed": 6
+    },
+    "free_nodes": 0,
+    "available_nodes": 0
+  },
+  {
+    "name": "GPU-1",
+    "kind": "gpu",
+    "nodes": 20,
+    "pool": "a40",
+    "gpu": {
+      "total": 40,
+      "used": 40,
+      "down": 0,
+      "reserved": 0,
+      "free": 0,
+      "util": 1.0
+    },
+    "jobs": {
+      "running": 26,
+      "pending": 27
+    },
+    "spec": {
+      "cores_per_node": 52,
+      "mem_per_node": 515306,
+      "gpu_per_node": 2
+    },
+    "nodes_state": {
+      "mixed": 9,
+      "allocated": 11
+    },
+    "free_nodes": 0,
+    "available_nodes": 0
+  },
+  {
+    "name": "GPU-S",
+    "kind": "gpu",
+    "nodes": 20,
+    "pool": "a40",
+    "gpu": {
+      "total": 40,
+      "used": 40,
+      "down": 0,
+      "reserved": 0,
+      "free": 0,
+      "util": 1.0
+    },
+    "jobs": {
+      "running": 10,
+      "pending": 18
+    },
+    "spec": {
+      "cores_per_node": 52,
+      "mem_per_node": 515306,
+      "gpu_per_node": 2
+    },
+    "nodes_state": {
+      "mixed": 9,
+      "allocated": 11
+    },
+    "free_nodes": 0,
+    "available_nodes": 0
+  },
+  {
+    "name": "GPU-LA",
+    "kind": "gpu",
+    "nodes": 10,
+    "pool": "a100",
+    "gpu": {
+      "total": 20,
+      "used": 20,
+      "down": 0,
+      "reserved": 0,
+      "free": 0,
+      "util": 1.0
+    },
+    "jobs": {
+      "running": 2,
+      "pending": 6
+    },
+    "spec": {
+      "cores_per_node": 52,
+      "mem_per_node": 515306,
+      "gpu_per_node": 2
+    },
+    "nodes_state": {
+      "allocated": 4,
+      "mixed": 6
+    },
+    "free_nodes": 0,
+    "available_nodes": 0
+  },
+  {
+    "name": "GPU-L",
+    "kind": "gpu",
+    "nodes": 20,
+    "pool": "a40",
+    "gpu": {
+      "total": 40,
+      "used": 40,
+      "down": 0,
+      "reserved": 0,
+      "free": 0,
+      "util": 1.0
+    },
+    "jobs": {
+      "running": 3,
+      "pending": 5
+    },
+    "spec": {
+      "cores_per_node": 52,
+      "mem_per_node": 515306,
+      "gpu_per_node": 2
+    },
+    "nodes_state": {
+      "mixed": 9,
+      "allocated": 11
+    },
+    "free_nodes": 0,
+    "available_nodes": 0
+  },
+  {
+    "name": "VM-GPU-L",
+    "kind": "gpu",
+    "nodes": 4,
+    "pool": "h100-80",
+    "gpu": {
+      "total": 4,
+      "used": 3,
+      "down": 1,
+      "reserved": 0,
+      "free": 0,
+      "util": 0.75
+    },
+    "jobs": {
+      "running": 3,
+      "pending": 5
+    },
+    "spec": {
+      "cores_per_node": 32,
+      "mem_per_node": 469070,
+      "gpu_per_node": 1
+    },
+    "nodes_state": {
+      "allocated": 2,
+      "drain": 1,
+      "mixed": 1
+    },
+    "free_nodes": 0,
+    "available_nodes": 0
+  }
+] as unknown as Partition[];
 
 export const POLICY = {
   "partition_caps": {
@@ -357,3 +671,9 @@ export const JOBS: RawJob[] = JOB_ROWS.map(([job_id, user_name, partition, job_s
   sched_nodes, priority, time_limit, nodelist, end_time, account: "", tres_req_str: "", container: "", time_left: "",
   name: "", qos: "", time_used: "",
 }));
+
+/** The capture as a snapshot (the fields the verdicts read). */
+export const SNAPSHOT = {
+  jobs: JOBS, nodes: NODES, pools: POOLS, partitions: PARTITIONS, policy: POLICY, part_pool: PART_POOL,
+  generated_at: GENERATED_AT, licenses: [], cpu_submit_probes: [],
+} as unknown as Snapshot;

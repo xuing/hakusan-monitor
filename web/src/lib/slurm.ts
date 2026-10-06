@@ -110,6 +110,12 @@ export function allowsMultiNode(cap: PartitionCap, coresPerNode?: number): boole
   return cap.maxCores > coresPerNode;
 }
 
+/** Every node of the partition is down or drained: it is in maintenance. */
+export function partitionDown(p: Partition): boolean {
+  const down = (p.nodes_state.down ?? 0) + (p.nodes_state.drain ?? 0);
+  return p.nodes > 0 && down >= p.nodes;
+}
+
 /** Display order of partitions: the site's order, else slurm.conf's. */
 export const partitionDisplayRank = partitionOrderRank;
 

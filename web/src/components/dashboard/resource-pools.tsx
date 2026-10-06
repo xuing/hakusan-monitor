@@ -6,6 +6,18 @@ import { OccupancyMap, type OccupancyTile } from "@/components/common/occupancy-
 import { dayClockLabel, GpuReleaseHint } from "@/components/common/gpu-release-hint";
 import { FieldLabel, FieldNote, RangeSlider, SliderValueFixed, SliderValueInput, type SliderTick } from "@/components/common/range-slider";
 import { Segmented } from "@/components/common/segmented";
+import { POOL_BORDER, POOL_DOT, POOL_RING, POOL_TEXT } from "@/components/common/pool-tone";
+import {
+  aheadText,
+  fmtMemRaw,
+  gpuReasonText,
+  gpuVerdictTag,
+  jobSizeText,
+  missingText,
+  nodeFreeText,
+  resourceParts,
+  resourceText,
+} from "@/components/common/verdict-text";
 import { Tag } from "@/components/common/tag";
 import { UnitBlocks } from "@/components/common/unit-blocks";
 import { barCells } from "@/lib/unit-cells";
@@ -15,47 +27,56 @@ import { PartitionTable, type PartitionAxis, type PartitionTableRow } from "@/co
 import { useLive } from "@/hooks/live-context";
 import { useResourceFilter } from "@/hooks/resource-filter-context";
 import { coresText, durText, poolTitle, reasonLabel, useT, wallText, type TFn, type TranslationKey } from "@/i18n";
-import { poolContenders, poolWaiters, queueModel, turnOrder, type QueueModel, type Waiter } from "@/lib/queue";
-import { occupancyMode } from "@/lib/occupancy-mode";
-import { nodeIsSchedulable, occupantsForPool, parseGpuCount, poolCapacity, unschedulableCores } from "@/lib/derive";
+import { cpuPartitionStatus, cpuPartitionVerdict } from "@/lib/cpu-partition";
+import {
+  cpuDefaultSpreads,
+  cpuProbeRows,
+  cpuStartLimits,
+  cpuStartMemMb,
+  liveCpuStart,
+  type CpuProbeState,
+} from "@/lib/cpu-probes";
+import { defaultRequestFit, singleNodeCoreFlag } from "@/lib/default-request";
+import { occupantsForPool, poolCapacity, unschedulableCores } from "@/lib/derive";
 import { fmtCountdown, fmtDur, fmtMB, nf, parseDur } from "@/lib/format";
 import type { GpuAvailabilitySegment } from "@/lib/gpu-availability";
-import { gpuSegmentLabel, gpuSegmentTextClass } from "@/components/common/gpu-status";
 import {
-  cpuProbeDetail,
-  cpuProbeLabel,
-  cpuProbeTone,
-  policyLimitRows,
-} from "@/lib/policy-hints";
-import {
-  fitHasClearSlot,
-  gpuBackfillTipCommand,
   gpuFitSnapshot,
-  gpuFitTipCommand,
-  gpuFitWithMemOverride,
   parseWalltimeSec,
   poolGpuAvailability,
   slotContenders,
-  withinBackfillWindow,
   type GpuBackfillTipData,
   type GpuFitInfo,
-  type GpuFitNeed,
   type GpuFitNode,
-  type GpuFitTipData,
 } from "@/lib/gpu-fit";
-import { allowsMultiNode, wallLabelSec, defaultRequestSec, interactiveForcedLabel, interactiveForcedSec, isLicensePartition, matchPool, minutesToSlurmTime, partitionCap, partitionDefaultRequest, partitionDefaults, partitionPolicy, type PartitionPolicy, type Tone } from "@/lib/slurm";
-import { cn } from "@/lib/utils";
-import { cpuDefaultSpreads, cpuProbeRows, cpuStartLimits, cpuStartMemMb, liveCpuStart, type CpuProbeRow } from "@/lib/cpu-probes";
-import { buildRequestCommand, shouldShowGapShell } from "@/lib/request-command";
 import { gpuLayouts, type GpuLayout, type GpuNodeShape } from "@/lib/gpu-layout";
-import { requestLimits, type PoolShape } from "@/lib/request-limits";
+import { gpuStartCount, gpuStatus, layoutFit } from "@/lib/gpu-partition";
 import { licenseBusy, licensePlan } from "@/lib/licenses";
-import { defaultRequestFit, singleNodeCoreFlag } from "@/lib/default-request";
-import { gpuPartitionAdvice } from "@/lib/gpu-advice";
+import { occupancyMode } from "@/lib/occupancy-mode";
+import { cpuProbeDetail, cpuProbeLabel, cpuProbeTone, policyLimitRows } from "@/lib/policy-hints";
+import { poolPick, poolTone, type PoolTone } from "@/lib/pool-status";
+import { poolContenders, poolWaiters, queueModel, turnOrder, type Waiter } from "@/lib/queue";
+import { buildRequestCommand, shouldShowGapShell } from "@/lib/request-command";
+import { requestLimits, type PoolShape } from "@/lib/request-limits";
 import { getSite } from "@/lib/site";
-import { cpuPartitionStatus, cpuPartitionVerdict } from "@/lib/cpu-partition";
+import {
+  allowsMultiNode,
+  interactiveForcedLabel,
+  interactiveForcedSec,
+  isLicensePartition,
+  matchPool,
+  minutesToSlurmTime,
+  partitionCap,
+  partitionDefaultRequest,
+  partitionDefaults,
+  partitionDown,
+  partitionPolicy,
+  wallLabelSec,
+  type Tone,
+} from "@/lib/slurm";
+import { cn } from "@/lib/utils";
 import type { Occupant, Partition, Pool, PoolGpu, RawJob, Snapshot } from "@/types/snapshot";
-
+import { gpuSegmentLabel, gpuSegmentTextClass } from "@/components/common/gpu-status";
 
 export function ResourcePools() {
   const { snap } = useLive();
@@ -100,8 +121,9 @@ function PoolGroup({ groupKey, label, pools, snap, t, outside = [] }: {
   /** hardware of this kind no partition reaches: a gray card, not counted */
   outside?: NonNullable<Snapshot["outside_nodes"]>;
 }) {
-  const available = pools.filter((p) => hasAvailableNodes(p, snap)).length;
-  const maint = pools.every(isMaintPool);
+  const tones = pools.map((p) => poolTone(snap, p));
+  const available = tones.filter((tone) => tone === "ok").length;
+  const groupTone: PoolTone = tones.every((tone) => tone === "off") ? "off" : available > 0 ? "ok" : "bad";
   // collapsed groups stay collapsed for this viewer
   const storeKey = `hm_pool_group_${groupKey}`;
   const [open, setOpen] = useState(() => {
@@ -128,7 +150,7 @@ function PoolGroup({ groupKey, label, pools, snap, t, outside = [] }: {
         className="flex w-full flex-wrap items-center gap-2 border-b border-border pb-1.5 text-left hover:text-foreground"
       >
         <ChevronRight className={cn("h-3.5 w-3.5 text-muted-foreground transition-transform", open && "rotate-90")} />
-        <span className={cn("h-2.5 w-2.5 rounded-full", maint ? "bg-muted-foreground/45" : available > 0 ? "bg-ok" : "bg-bad")} />
+        <span className={cn("h-2.5 w-2.5 rounded-full", POOL_DOT[groupTone])} />
         <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{label}</span>
         <span className="font-mono text-xs text-muted-foreground">
           {available}/{pools.length} {t("part.available")}
@@ -179,7 +201,10 @@ function PoolCard({ pool, snap, t }: { pool: Pool; snap: Snapshot; t: TFn }) {
   const [open, setOpen] = useState(false);
   const [queueOpen, setQueueOpen] = useState(false);
   const isGpu = pool.kind === "gpu";
-  const maint = isMaintPool(pool);
+  // one verdict for the dot, the border and the free count — the same the
+  // filter chip, the group header and the collapsed quick request read
+  const tone = poolTone(snap, pool);
+  const maint = tone === "off";
   const availableNodes = pool.available_nodes ?? pool.idle_nodes ?? 0;
   // One classifier decides every GPU number on this card — the same verdict
   // the filter chips, group header, KPIs and Partitions page read.
@@ -189,28 +214,12 @@ function PoolCard({ pool, snap, t }: { pool: Pool; snap: Snapshot; t: TFn }) {
   // gpu.free). Never physicalIdle — that also counts drained and
   // scheduler-held cards, which the body lists as their own segments.
   const freeGpu = avail?.free ?? 0;
-  const hasAvailable = (isGpu ? readyGpu > 0 : availableNodes > 0) && !maint;
-  // Idle but not directly takeable (queue-claimed, short, or held for a
-  // backfill window) reads amber; only broken or busy hardware is red.
-  const hasStrandedGpu = isGpu && !maint && readyGpu <= 0
-    && (avail?.segments ?? []).some((s) => s.kind !== "ready" && s.kind !== "down" && s.kind !== "full");
   const availableNodesLabel = isGpu
     ? t("pool.gpuFreePhysical", { n: freeGpu })
     : t("pool.availableNodes", { n: availableNodes });
   const free = isGpu ? freeGpu : pool.cores.free;
   const total = isGpu && pool.gpu ? pool.gpu.total : pool.cores.total;
   const cpuHeld = isGpu ? { reserved: 0, down: 0 } : unschedulableCores(snap.nodes, pool.id);
-  // the same verdict as the dot beside the title: green when a job can start
-  // now, amber when what is idle can't take the default request, red when
-  // nothing is free. A share rule (<10% = amber) painted 75 free cores of
-  // 31,744 amber on a card whose dot said a job starts now.
-  const freeColor = maint
-    ? "text-muted-foreground"
-    : hasAvailable
-      ? "text-ok-fg"
-      : hasStrandedGpu || free > 0
-        ? "text-warn-fg"
-        : "text-bad-fg";
 
   return (
     <Card
@@ -219,29 +228,14 @@ function PoolCard({ pool, snap, t }: { pool: Pool; snap: Snapshot; t: TFn }) {
         // it; the collapsed-row summary and the per-GPU block strip would
         // widen the card past a phone screen
         "min-w-0 transition-colors",
-        maint
-          ? "border-dashed border-muted-foreground/30 bg-muted/10"
-          : hasAvailable
-            ? "border-ok/40"
-            : hasStrandedGpu
-              ? "border-warn/40"
-              : "border-bad/40",
+        POOL_BORDER[tone],
       )}
     >
       <CardContent className="p-4">
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-2">
             <span
-              className={cn(
-                "h-2.5 w-2.5 rounded-full ring-2",
-                maint
-                  ? "bg-muted-foreground/45 ring-muted-foreground/10"
-                  : hasAvailable
-                    ? "bg-ok ring-ok/20"
-                    : hasStrandedGpu
-                      ? "bg-warn ring-warn/20"
-                      : "bg-bad ring-bad/20",
-              )}
+              className={cn("h-2.5 w-2.5 rounded-full ring-2", POOL_DOT[tone], POOL_RING[tone])}
             />
             <span className="font-semibold">{poolTitle(t, pool)}</span>
             {/* GPU pools carry more cards than nodes (A100: 10 nodes x 2), and
@@ -269,7 +263,7 @@ function PoolCard({ pool, snap, t }: { pool: Pool; snap: Snapshot; t: TFn }) {
             ) : (
               <>
                 <div className="flex flex-wrap items-baseline gap-x-3">
-                  <div className={cn("tnum text-2xl font-bold", freeColor)}>
+                  <div className={cn("tnum text-2xl font-bold", POOL_TEXT[tone])}>
                     {nf(free)}
                     <span className="text-sm font-normal text-muted-foreground">
                       {" / "}
@@ -502,9 +496,7 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
       ? t("pool.memTooHigh", { max: `${effMemGb}G` })
       : "";
   const memOverrideMb = memValue ? parsedMemMb : 0;
-  const effectiveGpuFit = gpuFit && memOverrideMb > 0 ? gpuFitWithMemOverride(gpuFit, memOverrideMb) : gpuFit;
   const contenders = snap && isGpu ? poolContenders(snap, pool.id) : [];
-  const queueFact = snap ? poolQueueFact(snap, pool, effectiveGpuFit?.schedulable ?? 0) : null;
   const limits = policyLimitRows(policy, groupRunning, t);
   const groupLimitReached = Boolean(q?.groupFull(partition));
   // Values outside the partition's bounds count as unset: LARGE-class QOS
@@ -541,16 +533,15 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
   // (none pinned -> leave -t to Slurm) — pick a shorter -t to slip into a gap
   const ptyTime = timeSel || (pinnedSec ? minutesToSlurmTime(pinnedSec / 60) : "");
   const nowMs = Date.now();
-  // A full group cap blocks every new job in the partition — no --mem value
-  // bypasses QOSGrpJobsLimit, so the tip would be a false promise there.
-  const gpuTip = isGpu && gpuFit && gpuFit.schedulable <= 0 && !groupLimitReached
-    ? gpuFitTipCommand(gpuFit, pool, contenders)
-    : null;
-  // When the queue owns the slot (no --mem bypass possible), a reservation's
-  // start time still bounds a backfill gap a short-walltime job can use.
-  const bfTip = isGpu && gpuFit && q && !gpuTip && !groupLimitReached
-    ? gpuBackfillTipCommand(gpuFit, pool, q, nowMs)
-    : null;
+  // ---- the verdict: the same functions the partition table and the
+  // Partitions page read (lib/gpu-partition, lib/cpu-partition) ----
+  // the walltime the verdict judges (the pinned one for salloc)
+  const verdictSec = forcedSec ?? parseWalltimeSec(ptyActive ? ptyTime : timeSel);
+  const gpu = snap && isGpu ? gpuStatus(snap, pool, partition, { memMb: memOverrideMb, timeSec: verdictSec }, nowMs) : null;
+  // the --mem bypass and the backfill gap name a value for the DEFAULT
+  // request; a full group cap blocks every request, so neither exists there
+  const gpuTip = gpu?.memTip ?? null;
+  const bfTip = gpu?.gapTip ?? null;
   // Interactive mode: the tip must either say "switch to script mode" or,
   // when the gap already holds the pinned walltime, reduce to the --mem part.
   // mem-less + gap ≥ pinned needs no tip — the verdict flips to "can start".
@@ -567,43 +558,35 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
   // in interactive mode each partition is judged with its own plugin-forced walltime
   const optionVerdictSec = mode === "interactive" && !ptyActive
     ? undefined
-    : (parseWalltimeSec(ptyActive ? ptyTime : timeSel) || Number.POSITIVE_INFINITY);
-  const baseQueueHint = selectedCpuRow
-    ? null
-    : requestQueueHint({
-        part: selectedPart,
-        policy,
-        groupRunning,
-        nodeCount,
-        coreCount,
-        multiNode: multiNodePolicy,
-        isGpu,
-        poolFree: snap ? poolCapacity(snap, pool.id) : null,
-        queueFact,
-        gpuFit: effectiveGpuFit,
-        q,
-        contenders,
-        // the plugin-forced walltime, not the -t field, is what Slurm sees
-        userTimeSec: forcedSec ?? parseWalltimeSec(ptyActive ? ptyTime : timeSel),
-        t,
-      });
-  // CPU: the live judgement of the request the command actually carries
-  // (fields, a pinned -n, an -L the command adds). The sbatch --test-only
-  // probe only speaks for the bare default command, below.
-  const cpuOverrideState = !isGpu && snap
-    ? liveCpuStart(snap, partition, { cores: coreCount || defCores, nodes: nodeCount, memMb: memOverrideMb })
+    : parseWalltimeSec(ptyActive ? ptyTime : timeSel);
+  // CPU: the default request reads the partition's status, as its table row
+  // does; set fields or a pinned -n are judged live as the command carries them
+  const cpuState: CpuProbeState | null = !isGpu && snap
+    ? hasAdvancedOverrides || overflowPinned
+      ? liveCpuStart(snap, partition, { cores: coreCount || defCores, nodes: nodeCount, memMb: memOverrideMb })
+      : cpuPartitionStatus(snap, partition).state
     : null;
-  const queueHint = cpuOverrideState === "now"
-    ? { tone: "ok" as const, label: t("pool.queueHintCanStart"), detail: "" }
-    : cpuOverrideState === "queued"
-      ? (baseQueueHint?.tone === "warn" ? baseQueueHint : { tone: "warn" as const, label: t("pool.queueHintWillQueue"), detail: "" })
-      : baseQueueHint;
   // A multi-GPU layout needs whole idle nodes (packed) or nodes with a free
   // GPU and a GPU's share of cores (spread) — judge exactly that.
-  const layoutHint = multiGpu && layout && snap && !groupLimitReached
-    ? multiGpuQueueHint(layout, snap, pool, gpuShape, memPerCore, t)
-    : null;
-  const shownHint = layoutHint ?? queueHint;
+  const layoutCheck = multiGpu && layout && snap && !groupLimitReached ? layoutFit(snap, pool, partition, layout) : null;
+  const startsLabel = (starts: boolean) => t(starts ? "verdict.now" : "verdict.queue");
+  const shown: { tone: Tone; label: string; detail: string } | null = layoutCheck && layout
+    ? {
+        tone: layoutCheck.starts ? "ok" : "warn",
+        label: startsLabel(layoutCheck.starts),
+        detail: t(layout.packed
+          ? (layoutCheck.starts ? "pool.gpuLayoutIdleOk" : "pool.gpuLayoutIdleShort")
+          : (layoutCheck.starts ? "pool.gpuLayoutSpreadOk" : "pool.gpuLayoutSpreadShort"), { n: layout.nodes, m: layoutCheck.fits }),
+      }
+    : gpu
+      ? { tone: gpu.now ? "ok" : "warn", label: startsLabel(Boolean(gpu.now)), detail: gpuReasonText(gpu, t) }
+      : cpuState === "now" || cpuState === "queued"
+        ? {
+            tone: cpuState === "now" ? "ok" : "warn",
+            label: startsLabel(cpuState === "now"),
+            detail: cpuState === "queued" && snap ? cpuQueueDetail(snap, pool, selectedPart, { nodeCount, coreCount, multiNode: multiNodePolicy }, t) : "",
+          }
+        : null;
   const script = scriptFile.trim() || "job.sh";
   // pty recipe (verified live): the wait loop redraws one status line while
   // the placeholder queues — srun errors with "Job is pending execution" if
@@ -669,20 +652,10 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
   // value creates is said under that slider, with the value that fixes it.
   const judged = Boolean(snap) && !licenseRejected && !probeRejected;
   const blockedAll = groupLimitReached || licenseQueued;
-  // the walltime the verdict judges (the pinned one for salloc)
-  const verdictSec = forcedSec ?? parseWalltimeSec(ptyActive ? ptyTime : timeSel);
   // GPU: the request's own verdict at another --mem or walltime, so a zone
   // ends exactly where the verdict pill flips
-  const gpuToneAt = (memMb: number, timeSec: number) => {
-    if (!snap || !gpuFit) return null;
-    const fit = memMb > 0 ? gpuFitWithMemOverride(gpuFit, memMb) : gpuFit;
-    return requestQueueHint({
-      part: selectedPart, policy, groupRunning, nodeCount, coreCount, multiNode: multiNodePolicy, isGpu,
-      poolFree: poolCapacity(snap, pool.id),
-      queueFact: poolQueueFact(snap, pool, fit.schedulable),
-      gpuFit: fit, q, contenders, userTimeSec: timeSec, t,
-    })?.tone ?? null;
-  };
+  const gpuStartsAt = (memMb: number, timeSec: number) =>
+    Boolean(snap) && gpuStatus(snap!, pool, partition, { memMb, timeSec }, nowMs).now !== null;
 
   // cores: the most that start now for the -N and --mem as set
   const cpuLimits = judged && !isGpu ? cpuStartLimits(snap!, partition, { nodes: nodeCount, memMb: memOverrideMb }) : null;
@@ -706,9 +679,9 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
   const gpuCount = layout?.gpus ?? 1;
   const showGpuSlider = isGpu && gpuCounts.length > 1;
   const gpuGreen = isGpu && judged
-    ? blockedAll ? 0 : gpuStartCount(layouts, snap!, pool, gpuShape, memPerCore, queueHint?.tone === "ok", t)
+    ? blockedAll ? 0 : gpuStartCount(snap!, pool, partition, { memMb: memOverrideMb, timeSec: verdictSec })
     : undefined;
-  const layoutStarts = (l: GpuLayout) => Boolean(snap) && multiGpuQueueHint(l, snap!, pool, gpuShape, memPerCore, t).tone === "ok";
+  const layoutStarts = (l: GpuLayout) => Boolean(snap) && layoutFit(snap!, pool, partition, l).starts;
   const setGpuCount = (n: number) => {
     const target = gpuCounts.reduce((best, c) => (Math.abs(c - n) < Math.abs(best - n) ? c : best), gpuCounts[0] ?? 1);
     if (target <= 1) {
@@ -760,12 +733,12 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
     : blockedAll
       ? 0
       : isGpu
-        ? largestPassing(1, effMemGb, (gb) => gpuToneAt(gb * 1024, verdictSec) === "ok") * 1024
+        ? largestPassing(1, effMemGb, (gb) => gpuStartsAt(gb * 1024, verdictSec)) * 1024
         : cpuStartMemMb(snap!, partition, coresNow, nodeCount);
   // the default point agrees with the verdict pill (GPU's own default
   // memory can sit between two whole GiB)
   const memGreenMb = isGpu && memSearchMb !== undefined && !blockedAll && !memValue
-    ? queueHint?.tone === "ok" ? Math.max(memSearchMb, defMemMb) : Math.min(memSearchMb, Math.max(0, defMemMb - 1))
+    ? gpu?.now ? Math.max(memSearchMb, defMemMb) : Math.min(memSearchMb, Math.max(0, defMemMb - 1))
     : memSearchMb;
   // the stranded node the --mem bypass names, when it is that node's memory
   const memNode = gpuTip && memGreenMb !== undefined
@@ -812,8 +785,8 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
     : blockedAll
       ? 0
       : isGpu && !multiGpu
-        ? largestPassing(Math.ceil(timeMin / 60), Math.floor(timeMax / 60), (m) => gpuToneAt(memOverrideMb, m * 60) === "ok") * 60
-        : (isGpu ? layoutHint?.tone : cpuOverrideState === "now" ? "ok" : null) === "ok" ? timeMax : 0;
+        ? largestPassing(Math.ceil(timeMin / 60), Math.floor(timeMax / 60), (m) => gpuStartsAt(memOverrideMb, m * 60)) * 60
+        : (isGpu ? layoutCheck?.starts : cpuState === "now") ? timeMax : 0;
   const setTimeSec = (sec: number) => {
     setTimeText("");
     // only the default point itself means "no -t"
@@ -849,13 +822,13 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
 
   const baseVerdict = probeRejected
     ? { tone: cpuProbeTone("failed"), label: cpuProbeLabel("failed", t) }
-    : shownHint
-      ? { tone: shownHint.tone, label: shownHint.label }
+    : shown
+      ? { tone: shown.tone, label: shown.label }
       : null;
   const verdict = licenseRejected
-    ? { tone: "bad" as const, label: t("pool.verdictRejected") }
+    ? { tone: "bad" as const, label: t("verdict.rejected") }
     : licenseQueued && baseVerdict?.tone === "ok"
-      ? { tone: "warn" as const, label: t("pool.queueHintWillQueue") }
+      ? { tone: "warn" as const, label: t("verdict.queue") }
       : baseVerdict;
   const sliderHintShown = Boolean(coreHint || memHint || timeHint || startingAlt || gpuHint);
   // the backfill box below the command carries its own reason and fix
@@ -871,7 +844,7 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
           ? t("pool.groupFullReason", { p: partition, n: groupRunning, max: policy.grpJobs })
           : verdict?.tone !== "warn" || sliderHintShown || bfTipShown
             ? null
-            : gpuNoneReason ?? coreNoneReason ?? (shownHint?.detail && !showGpuFitDetails ? shownHint.detail : null);
+            : gpuNoneReason ?? coreNoneReason ?? (shown?.detail && !showGpuFitDetails ? shown.detail : null);
   const probeFailed = probeRejected && selectedCpuRow ? cpuProbeDetail(selectedCpuRow, "failed", t) : "";
 
   // ---- the partition table -------------------------------------------------
@@ -885,15 +858,12 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
     const wall = capP.wall ? wallText(t, capP.wall) : "—";
     const desc = trMaybe(t, `policy.${p}.desc`, "") || undefined;
     if (isGpu) {
-      const summary = snap ? partitionRequestSummary(pool, snap, p, true, nowMs, t, optionVerdictSec) : null;
-      const pLayouts = layoutFor(p).layouts;
-      const hi = Math.max(1, ...pLayouts.map((l) => l.gpus));
-      const now = snap && !fullP
-        ? gpuStartCount(pLayouts, snap, pool, gpuShape, partitionDefaults(p, snap.policy).def_mem_per_cpu_mb ?? 0, summary?.hint?.tone === "ok", t)
-        : 0;
+      const req = { timeSec: optionVerdictSec };
+      const status = snap ? gpuStatus(snap, pool, p, req, nowMs) : null;
+      const hi = Math.max(1, ...layoutFor(p).layouts.map((l) => l.gpus));
       return {
-        name: p, title: desc, lo: 1, hi, now, wall, perUser: perUserText(policyP.maxJobsPerUser),
-        verdict: partitionOptionVerdict(summary, t), judged: Boolean(snap),
+        name: p, title: desc, lo: 1, hi, now: snap && !fullP ? gpuStartCount(snap, pool, p, req) : 0, wall,
+        perUser: perUserText(policyP.maxJobsPerUser), verdict: status ? gpuVerdictTag(status, t) : null, judged: Boolean(snap),
         selected: p === partition, marker: p === partition ? gpuCount : undefined,
       };
     }
@@ -936,12 +906,11 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
     ? { scale: "linear", min: 1, max: Math.max(2, axisMax), ticks: Array.from({ length: Math.max(2, axisMax) }, (_, i) => ({ value: i + 1, label: String(i + 1) })) }
     : { scale: "log", min: 1, max: Math.max(2, axisMax), ticks: logTicks(Math.max(2, axisMax)) };
 
-  // Collapsed one-glance verdict for the row. Scan every partition and lead
-  // with the most startable one — the default partition's "will queue · group
-  // full" must not hide that a sibling policy can start (possibly via a tip).
-  const collapsedPick = !open && snap
-    ? bestPartitionPick(pool, snap, isGpu, cpuRows, t)
-    : null;
+  // Collapsed one-glance verdict for the row: the pool's most startable
+  // partition (lib/pool-status poolPick) — the default partition's "will
+  // queue · group full" must not hide that a sibling policy can start. The
+  // pool's dot reads the same pick.
+  const collapsedPick = !open && snap ? pickSummary(snap, pool, t) : null;
   const rowSummary = collapsedPick ? (
     <>
       <Tag tone={collapsedPick.tone}>{collapsedPick.label}</Tag>
@@ -1459,18 +1428,6 @@ function CommandVerdict({ tone, label }: { tone: Tone; label: string }) {
   );
 }
 
-/** Most GPUs one job in this partition starts with now: one when the
- *  single-GPU request starts as it stands (a --mem bypass is not applied
- *  until someone applies it), more when a multi-GPU layout finds its nodes. */
-function gpuStartCount(layouts: GpuLayout[], snap: Snapshot, pool: Pool, shape: GpuNodeShape, memPerCore: number,
-                       singleStarts: boolean, t: TFn) {
-  const single = singleStarts ? 1 : 0;
-  const multi = layouts
-    .filter((l) => l.gpus > 1 && multiGpuQueueHint(l, snap, pool, shape, memPerCore, t).tone === "ok")
-    .map((l) => l.gpus);
-  return Math.max(single, ...multi);
-}
-
 function layoutPlacementLabel(l: GpuLayout, t: TFn) {
   if (l.nodes === 1) return t("pool.layoutOneNode", { n: l.gpus });
   return l.packed
@@ -1564,35 +1521,6 @@ function parseHumanTime(text: string) {
   return parseWalltimeSec(s);
 }
 
-/** Can this layout start now? Packed layouts need nodes with all GPUs free
- *  plus their cores; spread ones need nodes with a free
- *  GPU plus a GPU's share of cores and memory. Counted from the raw nodes. */
-function multiGpuQueueHint(layout: GpuLayout, snap: Snapshot, pool: Pool, shape: GpuNodeShape,
-                           memPerCpuMb: number, t: TFn) {
-  const type = pool.gpu?.type ?? "";
-  const coresPerGpu = layout.coresPerGpu;
-  let fits = 0;
-  for (const n of snap.nodes) {
-    if (n.pool !== pool.id || !nodeIsSchedulable(n)) continue;
-    const freeGpu = parseGpuCount(n.gres, type) - parseGpuCount(n.gres_used, type);
-    const freeCores = n.cpus - n.alloc_cpus;
-    const freeMem = n.real_memory - n.alloc_memory;
-    const ok = layout.packed
-      ? freeGpu >= shape.gpus && freeCores >= coresPerGpu * shape.gpus && freeMem >= coresPerGpu * shape.gpus * memPerCpuMb
-      : freeGpu >= 1 && freeCores >= coresPerGpu && freeMem >= coresPerGpu * memPerCpuMb;
-    if (ok) fits += 1;
-  }
-  const enough = fits >= layout.nodes;
-  const key = layout.packed
-    ? (enough ? "pool.gpuLayoutIdleOk" : "pool.gpuLayoutIdleShort")
-    : (enough ? "pool.gpuLayoutSpreadOk" : "pool.gpuLayoutSpreadShort");
-  return {
-    tone: enough ? ("ok" as const) : ("warn" as const),
-    label: t(enough ? "pool.queueHintCanStart" : "pool.queueHintWillQueue"),
-    detail: t(key, { n: layout.nodes, m: fits }),
-  };
-}
-
 /** A stored selection outside the (new) partition's bounds counts as "no
  *  selection" — clamping it silently would emit a flag the UI no longer
  *  shows. Bounds are two-sided: QOS MinTRES rejects too-small requests. */
@@ -1643,236 +1571,36 @@ function parseWallMinutes(wall: string | undefined) {
   return n * 24 * 60;
 }
 
-function requestQueueHint({
-  part,
-  policy,
-  groupRunning,
-  nodeCount,
-  coreCount,
-  multiNode,
-  isGpu,
-  poolFree,
-  queueFact,
-  gpuFit,
-  q,
-  contenders,
-  userTimeSec,
-  t,
-}: {
-  part?: Partition;
-  policy: PartitionPolicy;
-  groupRunning: number;
-  nodeCount: number;
-  coreCount: number;
-  multiNode: boolean;
-  isGpu: boolean;
-  poolFree: ReturnType<typeof poolCapacity> | null;
-  queueFact: QueueFact | null;
-  gpuFit: GpuFitInfo | null;
-  q: QueueModel | null;
-  contenders: Waiter[];
-  userTimeSec: number;
-  t: TFn;
-}) {
-  if (!part) return null;
-  const warn = (detail: string) => ({ tone: "warn" as const, label: t("pool.queueHintWillQueue"), detail });
-  const down = (part.nodes_state.down ?? 0) + (part.nodes_state.drain ?? 0);
-  if (down >= part.nodes && part.nodes > 0) return warn(t("pool.queueReasonMaint"));
-  if (policy.grpJobs && groupRunning >= policy.grpJobs) return warn(t("pool.queueReasonGroup"));
-  if ((part.available_nodes ?? 0) <= 0) return warn(t("pool.queueReasonNoNode"));
-  if (nodeCount > 0 && nodeCount > (part.available_nodes ?? 0)) return warn(t("pool.queueReasonNodes"));
-  if (isGpu && (part.gpu?.free ?? 0) <= 0) return warn(t("pool.queueReasonNoGpu"));
-  if (isGpu && gpuFit && gpuFit.rawFree > 0 && gpuFit.schedulable <= 0) {
-    // Report the queue as the blocker when waiters can claim the free slot —
-    // a memory-shortage message there would suggest a bypass that cannot work.
-    const best = gpuFit.stranded.find((row) => row.freeGpu >= 1) ?? gpuFit.stranded[0];
-    const n = best ? slotContenders(best, contenders) : 0;
-    if (n > 0) return warn(t("pool.queueReasonContested", { n }));
-    return warn(gpuFitShortText(gpuFit, t));
-  }
-  if (isGpu && queueFact && queueFact.free <= 0 && (part.gpu?.free ?? 0) > 0) return warn(t("pool.queueReasonGpuFit"));
-  // one task's CPUs must sit on one node; N tasks may scatter across nodes
-  if (!isGpu && coreCount > 0 && poolFree
-      && coreCount > (multiNode ? poolFree.freeCores : poolFree.emptiestNodeFree)) return warn(t("pool.queueReasonCores"));
-
-  // CPU: a queue made only of limit-capped / dependency-held jobs takes no
-  // free core — VM-CPU read "will queue" on 42 idle nodes behind one
-  // Dependency job (2026-10-05)
-  if (!isGpu && queueFact && queueFact.pending > 0 && queueFact.ahead === 0) {
-    return { tone: "ok" as const, label: t("pool.queueHintCanStart"), detail: t("pool.queueContentionClear", { n: queueFact.pending }) };
-  }
-  if (queueFact && queueFact.pending > 0) {
-    // The request fits a free slot AND no queued job can take that slot first
-    // (too big for it, group-capped, or fenced out by a reservation) —
-    // backfill starts it despite the queue.
-    if (isGpu && gpuFit && q && gpuFit.schedulable > 0 && fitHasClearSlot(gpuFit, q.claims)) {
-      return {
-        tone: "ok" as const,
-        label: t("pool.queueHintCanStart"),
-        detail: t("pool.queueContentionClear", { n: queueFact.pending }),
-      };
-    }
-    // Slot reserved for a queued job at a future start, but the user's -t
-    // guarantees this request ends before then — backfill takes it now.
-    if (isGpu && gpuFit && q && gpuFit.schedulable > 0
-        && withinBackfillWindow(gpuFit, q.bookings, Date.now(), userTimeSec)) {
-      return {
-        tone: "ok" as const,
-        label: t("pool.queueHintCanStart"),
-        detail: t("pool.queueBfOk"),
-      };
-    }
-    return {
-      tone: "warn" as const,
-      label: t("pool.queueHintQueued"),
-      detail: queueFactText(queueFact, t),
-    };
-  }
-  return { tone: "ok" as const, label: t("pool.queueHintCanStart"), detail: "" };
+/** The collapsed quick-request row: the pool's most startable partition
+ *  (poolPick), worded as its table row and the Partitions page word it. */
+function pickSummary(snap: Snapshot, pool: Pool, t: TFn): { tone: Tone; label: string; text: string } | null {
+  const pick = poolPick(snap, pool);
+  if (!pick) return null;
+  const prefix = (text: string) => (pool.partitions.length > 1 ? (text ? `${pick.partition} · ${text}` : pick.partition) : text);
+  if (pick.kind === "cpu") return { ...cpuPartitionVerdict(pick.status, t), text: `-p ${pick.partition}` };
+  const s = pick.status;
+  const waiting = poolWaiters(snap, pool.id).length;
+  const text = s.now === "clear"
+    ? waiting > 0 ? t("pool.queueContentionClear", { n: waiting }) : ""
+    : !s.now && s.memTip
+      ? t("pool.quickGpuMemHint", { mem: s.memTip.mem })
+      : !s.now && s.gapTip
+        ? t("pool.quickGpuBfHint", { t: s.gapTip.t })
+        : gpuReasonText(s, t);
+  return { ...gpuVerdictTag(s, t), text: prefix(text) };
 }
 
-interface CollapsedPick {
-  tone: Tone;
-  label: string;
-  text: string;
-}
-
-interface PartitionRequestSummary {
-  partition: string;
-  hint: { tone: Tone; label: string; detail: string } | null;
-  gpuTip: GpuFitTipData | null;
-  bfTip: GpuBackfillTipData | null;
-}
-
-interface PartitionOptionVerdict {
-  tone: Tone;
-  label: string;
-}
-
-function partitionOptionVerdict(
-  summary: PartitionRequestSummary | null,
-  t: TFn,
-): PartitionOptionVerdict | null {
-  if (!summary) return null;
-  if (summary.hint?.tone === "ok") return { tone: "ok", label: t("pool.queueHintCanStart") };
-  if (summary.gpuTip) return { tone: "warn", label: t("pool.optBypass") };
-  if (summary.bfTip) return { tone: "info", label: t("pool.optGap") };
-  if (summary.hint) return { tone: "warn", label: t("pool.queueHintWillQueue") };
-  return null;
-}
-
-/** Collapsed quick-request row: lead with the pool's most startable partition.
- *  The default partition saying "will queue · group full" must not bury a
- *  sibling policy that can start — outright, via the --mem tip, or via the
- *  backfill window. */
-function bestPartitionPick(
-  pool: Pool,
-  snap: Snapshot,
-  isGpu: boolean,
-  cpuRows: CpuProbeRow[],
-  t: TFn,
-): CollapsedPick | null {
-  const multi = pool.partitions.length > 1;
-  const prefix = (p: string, text: string) => (multi ? (text ? `${p} · ${text}` : p) : text);
-  // CPU pool: sbatch --test-only probes already hold a per-partition verdict.
-  // License-only partitions (Materials Studio) are no pick for an ordinary
-  // job, the same exclusion the summaries below make.
-  const generalRows = cpuRows.filter((row) => !isLicensePartition(row.partition, snap.policy));
-  if (!isGpu && generalRows.length > 0) {
-    const rank = (row: CpuProbeRow) => (row.state === "now" ? 0 : row.state === "queued" ? 2 : 3);
-    const best = [...generalRows].sort((a, b) => rank(a) - rank(b))[0];
-    const state = best.state;
-    return { tone: cpuProbeTone(state), label: cpuProbeLabel(state, t), text: `-p ${best.partition}` };
-  }
-  const nowMs = Date.now();
-  const summaries = pool.partitions
-    .filter((p) => !isLicensePartition(p, snap.policy))
-    .map((p) => partitionRequestSummary(pool, snap, p, isGpu, nowMs, t))
-    .filter((s): s is PartitionRequestSummary => s !== null);
-  if (summaries.length === 0) return null;
-  const rank = (s: PartitionRequestSummary) =>
-    s.hint?.tone === "ok" ? 0 : s.gpuTip ? 1 : s.bfTip ? 2 : 3;
-  const best = [...summaries].sort((a, b) => rank(a) - rank(b))[0];
-  if (rank(best) === 1 && best.gpuTip) {
-    return { tone: "warn", label: t("pool.fitTip"), text: prefix(best.partition, t("pool.quickGpuMemHint", { mem: best.gpuTip.mem })) };
-  }
-  if (rank(best) === 2 && best.bfTip) {
-    return { tone: "info", label: t("pool.bfTip"), text: prefix(best.partition, t("pool.quickGpuBfHint", { t: best.bfTip.t })) };
-  }
-  if (best.hint) {
-    return { tone: best.hint.tone, label: best.hint.label, text: prefix(best.partition, best.hint.detail) };
-  }
-  return null;
-}
-
-/** The quick-request verdict for one partition with no user overrides — the
- *  same pipeline the expanded panel runs for the selected partition. */
-function partitionRequestSummary(
-  pool: Pool,
-  snap: Snapshot,
-  partition: string,
-  isGpu: boolean,
-  nowMs: number,
-  t: TFn,
-  requestSecOverride?: number,
-): PartitionRequestSummary | null {
-  const part = snap.partitions.find((x) => x.name === partition);
-  if (!part) return null;
-  const policy = partitionPolicy(partition, snap.policy);
-  // default: preview the interactive command with its plugin-forced walltime
-  const requestSec = requestSecOverride ?? defaultRequestSec(partition, snap.policy);
-  const advice = isGpu ? gpuPartitionAdvice(snap, pool, partition, nowMs) : null;
-  const q = queueModel(snap);
-  const groupRunning = q.running(partition);
-  const gpuFit = advice?.fit ?? null;
-  const gpuTip = advice?.gpuTip ?? null;
-  const bfTip = advice?.backfillTip ?? null;
-  const queueFact = poolQueueFact(snap, pool, gpuFit?.schedulable ?? 0);
-  const hint = requestQueueHint({
-    part,
-    policy,
-    groupRunning,
-    nodeCount: 0,
-    coreCount: 0,
-    multiNode: false,
-    isGpu,
-    poolFree: poolCapacity(snap, pool.id),
-    queueFact,
-    gpuFit,
-    q,
-    contenders: isGpu ? poolContenders(snap, pool.id) : [],
-    userTimeSec: Number.isFinite(requestSec) ? requestSec : 0,
-    t,
-  });
-  return { partition, hint, gpuTip, bfTip };
-}
-
-interface QueueFact {
-  /** every pending job listing a partition of the pool */
-  pending: number;
-  /** the ones Slurm starts before a new job (queue.ts kind "next") */
-  ahead: number;
-  free: number;
-  isGpu: boolean;
-}
-
-function poolQueueFact(snap: Snapshot, pool: Pool, schedulableGpuFree = 0): QueueFact {
-  const isGpu = pool.kind === "gpu";
-  return {
-    pending: poolWaiters(snap, pool.id).length,
-    ahead: poolContenders(snap, pool.id).length,
-    free: isGpu ? schedulableGpuFree : pool.cores.free,
-    isGpu,
-  };
-}
-
-/** Why a request queues while something is free: the jobs the scheduler
- *  places first take it. One fact, not the queue's whole census. */
-function queueFactText(fact: QueueFact, t: TFn) {
-  const ahead = fact.ahead;
-  if (fact.free <= 0 || ahead === 0) return t("pool.queueFactBusy");
-  const free = fact.isGpu ? `${nf(fact.free)} ${t("unit.gpu")}` : coresText(t, fact.free);
-  return t("pool.queueFactAhead", { free, n: ahead });
+/** Why a CPU request queues, when no slider owns the reason. */
+function cpuQueueDetail(snap: Snapshot, pool: Pool, part: Partition | undefined,
+                        req: { nodeCount: number; coreCount: number; multiNode: boolean }, t: TFn): string {
+  if (!part) return "";
+  if (partitionDown(part)) return t("pool.queueReasonMaint");
+  if ((part.available_nodes ?? 0) <= 0) return t("pool.queueReasonNoNode");
+  if (req.nodeCount > (part.available_nodes ?? 0)) return t("pool.queueReasonNodes");
+  const free = poolCapacity(snap, pool.id);
+  if (req.coreCount > 0 && req.coreCount > (req.multiNode ? free.freeCores : free.emptiestNodeFree)) return t("pool.queueReasonCores");
+  const ahead = poolContenders(snap, pool.id).length;
+  return ahead > 0 ? aheadText(ahead, pool.cores.free > 0 ? coresText(t, pool.cores.free) : null, t) : "";
 }
 
 function GpuBackfillQuickTip({
@@ -2041,48 +1769,12 @@ function allocatedResourceText(row: GpuFitNode, t: TFn) {
   return resourceParts(row.usedGpu, row.node.alloc_cpus, row.node.alloc_memory, t);
 }
 
-function gpuFitShortText(fit: GpuFitInfo, t: TFn) {
-  const best = fit.stranded[0];
-  if (!best) return t("pool.queueReasonGpuFit");
-  return t("pool.fitShort", {
-    partition: fit.need.partition,
-    need: resourceText(fit.need, t),
-    node: best.node.name,
-    free: nodeFreeText(best, t),
-    missing: missingText(best, t),
-  });
-}
-
-function resourceText(need: GpuFitNeed, t: TFn) {
-  return resourceParts(need.gpus, need.cores, need.memMb, t);
-}
-
-function nodeFreeText(row: GpuFitNode, t: TFn) {
-  return resourceParts(row.freeGpu, row.freeCores, row.freeMemMb, t);
-}
-
-function resourceParts(gpus: number, cores: number, memMb: number, t: TFn) {
-  return `${nf(gpus)} ${t("unit.gpu")} / ${nf(cores)} ${t("unit.cores")} / ${fmtMemRaw(memMb)}`;
-}
-
 function jobResourceText(job: RawJob, t: TFn) {
   const parts = [];
   if (job.gpus) parts.push(`${nf(job.gpus)} ${t("unit.gpu")}`);
   if (job.cpus) parts.push(coresText(t, job.cpus));
   if (job.min_memory) parts.push(job.min_memory);
   return parts.length ? `(${parts.join(" / ")})` : "";
-}
-
-function missingText(row: GpuFitNode, t: TFn) {
-  const parts = [];
-  if (row.missingGpu > 0) parts.push(`${nf(row.missingGpu)} ${t("unit.gpu")}`);
-  if (row.missingCores > 0) parts.push(coresText(t, row.missingCores));
-  if (row.missingMemMb > 0) parts.push(`${fmtMemRaw(row.missingMemMb)} ${t("kpi.memory")}`);
-  return parts.length ? parts.join(" / ") : "0";
-}
-
-function fmtMemRaw(mb: number) {
-  return `${nf(Math.max(0, Math.round(mb)))}M`;
 }
 
 /** One block per physical GPU — ready (green), unavailable idle capacity
@@ -2113,16 +1805,6 @@ function GpuBlocks({ gpu, schedulableFree, className, t }: { gpu: PoolGpu; sched
   );
 }
 
-function isMaintPool(pool: Pool) {
-  return pool.kind === "gpu" && !!pool.gpu?.maint;
-}
-
-function hasAvailableNodes(pool: Pool, snap: Snapshot) {
-  if (isMaintPool(pool)) return false;
-  if (pool.kind === "gpu") return poolGpuAvailability(snap, pool).ready > 0;
-  return (pool.available_nodes ?? pool.idle_nodes ?? 0) > 0;
-}
-
 function PendingJobs({ pool, t }: { pool: Pool; t: TFn }) {
   const { snap } = useLive();
   if (!snap) return null;
@@ -2146,7 +1828,7 @@ function PendingJobRow({ job, t }: { job: RawJob; t: TFn }) {
         <span className="font-mono text-info-fg">{job.user_name}</span>
         <div className="flex items-center gap-2 font-mono text-muted-foreground">
           <span>{job.partition}</span>
-          <span className="text-foreground">{pendingJobResources(job, t)}</span>
+          <span className="text-foreground">{jobSizeText(job, t, true)}</span>
         </div>
       </div>
       <div className="mt-1 truncate text-xs text-muted-foreground">
@@ -2157,15 +1839,6 @@ function PendingJobRow({ job, t }: { job: RawJob; t: TFn }) {
       </div>
     </div>
   );
-}
-
-function pendingJobResources(job: RawJob, t: TFn) {
-  const parts = [];
-  if (job.gpus > 0) parts.push(`${job.gpus} ${t("unit.gpu")}`);
-  if (job.cpus > 0) parts.push(coresText(t, job.cpus));
-  if ((job.min_memory_mb ?? 0) > 0) parts.push(fmtMB(job.min_memory_mb));
-  if (job.node_count > 0) parts.push(`${job.node_count} ${t("spec.nodes")}`);
-  return parts.join(" · ") || "—";
 }
 
 function Occupants({ pool, t }: { pool: Pool; t: TFn }) {
@@ -2365,7 +2038,7 @@ function OccupantRow({
       <div className="flex items-center justify-between gap-2">
         <span className="font-mono text-info-fg">{o.user}</span>
         <div className="flex items-center gap-2 font-mono text-muted-foreground">
-          <span className="text-foreground">{occupantResources(o, t)}</span>
+          <span className="text-foreground">{jobSizeText(o, t)}</span>
           <span className="max-w-[8rem] truncate">{o.nodelist}</span>
         </div>
       </div>
@@ -2432,10 +2105,3 @@ function partitionWallSeconds(partition: string, policy?: Snapshot["policy"]) {
   return parseWallMinutes(wall) * 60;
 }
 
-function occupantResources(o: Occupant, t: TFn) {
-  const parts = [];
-  if (o.gpus > 0) parts.push(`${o.gpus} ${t("unit.gpu")}`);
-  if (o.cpus > 0) parts.push(coresText(t, o.cpus));
-  if (o.mem_mb > 0) parts.push(fmtMB(o.mem_mb));
-  return parts.join(" · ") || "—";
-}

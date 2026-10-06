@@ -1,12 +1,10 @@
 import type { ReactNode } from "react";
 import { useLive } from "@/hooks/live-context";
 import { useResourceFilter } from "@/hooks/resource-filter-context";
+import { POOL_DOT } from "@/components/common/pool-tone";
 import { poolTitle, useT } from "@/i18n";
-import { poolCapacity } from "@/lib/derive";
-import { poolGpuAvailability } from "@/lib/gpu-fit";
-import type { GpuAvailability } from "@/lib/gpu-availability";
+import { poolTone, type PoolTone } from "@/lib/pool-status";
 import { cn } from "@/lib/utils";
-import type { Pool } from "@/types/snapshot";
 
 /** "All / GPU group / CPU group" — one chip per hardware pool. The caption
  *  rides inside the same wrapping row so it stays level with the first line
@@ -18,8 +16,8 @@ export function ResourceFilterChips({ label }: { label?: string }) {
   if (!snap) return null;
 
   const options = snap.pools
-    .map((p, i) => ({ pool: p, i, gpuAvail: p.kind === "gpu" ? poolGpuAvailability(snap, p) : undefined }))
-    .sort((a, b) => Number(!hasAvailable(a)) - Number(!hasAvailable(b)) || a.i - b.i);
+    .map((p, i) => ({ pool: p, i, tone: poolTone(snap, p) }))
+    .sort((a, b) => Number(a.tone !== "ok") - Number(b.tone !== "ok") || a.i - b.i);
   const gpu = options.filter(({ pool }) => pool.kind === "gpu");
   const cpu = options.filter(({ pool }) => pool.kind === "cpu");
 
@@ -42,27 +40,13 @@ export function ResourceFilterChips({ label }: { label?: string }) {
         {t("filter.all")}
       </button>
       <FilterGroup label={t("kpi.gpu")}>
-        {gpu.map(({ pool, gpuAvail }) => (
-          <FilterButton
-            key={pool.id}
-            pool={pool}
-            active={filter === pool.id}
-            label={poolTitle(t, pool)}
-            onClick={() => setFilter(pool.id)}
-            gpuAvail={gpuAvail}
-          />
+        {gpu.map(({ pool, tone }) => (
+          <FilterButton key={pool.id} tone={tone} active={filter === pool.id} label={poolTitle(t, pool)} onClick={() => setFilter(pool.id)} />
         ))}
       </FilterGroup>
       <FilterGroup label={t("kpi.cpu")}>
-        {cpu.map(({ pool }) => (
-          <FilterButton
-            key={pool.id}
-            pool={pool}
-            active={filter === pool.id}
-            label={poolTitle(t, pool)}
-            onClick={() => setFilter(pool.id)}
-            cpuFreeCores={poolCapacity(snap, pool.id).freeCores}
-          />
+        {cpu.map(({ pool, tone }) => (
+          <FilterButton key={pool.id} tone={tone} active={filter === pool.id} label={poolTitle(t, pool)} onClick={() => setFilter(pool.id)} />
         ))}
       </FilterGroup>
     </div>
@@ -79,44 +63,18 @@ function FilterGroup({ label, children }: { label: string; children: ReactNode }
 }
 
 function FilterButton({
-  pool,
+  tone,
   active,
   label,
   onClick,
-  gpuAvail,
-  cpuFreeCores,
 }: {
-  pool: Pool;
+  /** the pool's verdict (lib/pool-status) — the same its card and group header show */
+  tone: PoolTone;
   active: boolean;
   label: string;
   onClick: () => void;
-  /** GPU pools only: the shared pool verdict (poolGpuAvailability) — the
-   *  same one the pool card and Partitions page colour themselves by. */
-  gpuAvail?: GpuAvailability;
-  /** CPU pools only: idle cores scattered on non-fully-idle nodes. */
-  cpuFreeCores?: number;
 }) {
-  const maint = !!pool.gpu?.maint;
-  // GPU: green only if some partition can actually hand out a card now;
-  // physically-idle-but-stranded (every policy blocked) reads amber, not
-  // green — matches the hero number / pool bar on the Partitions page.
-  // CPU: unchanged, plain idle-node availability.
-  const dot = maint
-    ? "bg-muted-foreground/45"
-    : pool.kind === "gpu"
-      ? (gpuAvail?.ready ?? 0) > 0
-        ? "bg-ok"
-        : (gpuAvail?.segments ?? []).some((s) => s.kind !== "down" && s.kind !== "full")
-          // scheduler-reserved idle cards are still reachable via the
-          // backfill window — "nothing here" (red) would contradict the
-          // gap-shell tip shown two clicks away
-          ? "bg-warn"
-          : "bg-bad"
-      : (pool.idle_nodes ?? 0) > 0
-        ? "bg-ok" // a WHOLE idle node — any policy can start now
-        : (cpuFreeCores ?? 0) > 0
-          ? "bg-warn" // cores free, but scattered — some requests fit, most queue
-          : "bg-bad"; // literally nothing free — every request queues
+  const maint = tone === "off";
   return (
     <button
       type="button"
@@ -132,14 +90,8 @@ function FilterButton({
             : "border-border bg-background text-muted-foreground hover:border-primary/60 hover:bg-accent hover:text-foreground",
       )}
     >
-      <span className={cn("h-2 w-2 rounded-full", dot)} aria-hidden />
+      <span className={cn("h-2 w-2 rounded-full", POOL_DOT[tone])} aria-hidden />
       {label}
     </button>
   );
 }
-
-function hasAvailable({ pool, gpuAvail }: { pool: Pool; gpuAvail?: GpuAvailability }) {
-  if (gpuAvail) return gpuAvail.ready > 0;
-  return (pool.available_nodes ?? pool.idle_nodes ?? 0) > 0;
-}
-

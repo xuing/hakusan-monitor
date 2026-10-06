@@ -62,10 +62,18 @@ export function cpuPartitionStatus(snap: Snapshot, partition: string): CpuPartit
   };
 }
 
+/** The tone of a CPU partition's verdict: ok only when its default request
+ *  starts now and is accepted as it stands. */
+export function cpuPartitionTone(s: CpuPartitionStatus): Tone {
+  if (s.license.kind === "required" || s.license.kind === "missing") return "bad";
+  if (licenseBusy(s.license) && s.state === "now") return "warn";
+  return cpuProbeTone(s.state);
+}
+
 /** The status tag for a CPU partition, the same on every page. */
 export function cpuPartitionVerdict(s: CpuPartitionStatus, t: TFn): { tone: Tone; label: string } {
-  if (s.license.kind === "required") return { tone: "bad", label: t("pool.needsL") };
-  if (s.license.kind === "missing") return { tone: "bad", label: t("pool.verdictRejected") };
-  if (licenseBusy(s.license) && s.state === "now") return { tone: "warn", label: t("pool.queueHintWillQueue") };
-  return { tone: cpuProbeTone(s.state), label: cpuProbeLabel(s.state, t) };
+  if (s.license.kind === "required") return { tone: "bad", label: t("verdict.needsL") };
+  if (s.license.kind === "missing") return { tone: "bad", label: t("verdict.rejected") };
+  if (licenseBusy(s.license) && s.state === "now") return { tone: "warn", label: t("verdict.queue") };
+  return { tone: cpuPartitionTone(s), label: cpuProbeLabel(s.state, t) };
 }

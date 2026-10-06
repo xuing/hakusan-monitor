@@ -33,7 +33,7 @@ describe("cpuPartitionStatus", () => {
   });
 
   it("says -L is needed for a license-only partition", () => {
-    expect(cpuPartitionVerdict(cpuPartitionStatus(snapOf(0, 1_000, 1_100), "MS"), t)).toEqual({ tone: "bad", label: "pool.needsL" });
+    expect(cpuPartitionVerdict(cpuPartitionStatus(snapOf(0, 1_000, 1_100), "MS"), t)).toEqual({ tone: "bad", label: "verdict.needsL" });
   });
 
   it("takes the count from the live slots when they hold more than the default", () => {
