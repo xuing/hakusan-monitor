@@ -1,14 +1,18 @@
 # Hakusan Monitor
 
-A status dashboard for JAIST's **Hakusan** HPC cluster. One web page shows how
-busy the cluster is, where a job can start right now, why queued jobs wait,
-and how the cluster is used over time — in 日本語, English and 中文.
+A status dashboard for Slurm clusters, built for JAIST's **Hakusan** HPC
+cluster. One web page shows how busy the cluster is, where a job can start
+right now, why queued jobs wait, and how the cluster is used over time — in
+日本語, English and 中文. It runs on any Slurm cluster; see
+[Use it on another Slurm cluster](#use-it-on-another-slurm-cluster).
 
 It is read-only and gentle on the login node: one reused SSH connection, compact
 Slurm queries, and nothing is ever submitted or cancelled. The backend is pure
 Python (standard library only); the frontend is a React app the backend serves.
 
 > Community tool, not an official JAIST service.
+
+![Overview: per-pool GPU and CPU availability on Hakusan, with when the next GPU frees up and a quick-request verdict per pool.](docs/screenshots/overview.png)
 
 ## What you can see
 
@@ -26,6 +30,14 @@ CPU partitions all share the same 124 `lcpcc` nodes), so the dashboard leads wit
 **pools** and reports free cores and free GPUs per pool. Every limit and default
 it shows is read from the cluster (QoS, partition config, `job_submit.lua`), not
 written into the code.
+
+| Partitions | Analytics |
+|---|---|
+| ![Partitions page: A40 and A100 partitions with their limits, group and per-user caps, and whether the default request starts now.](docs/screenshots/partitions.png) | ![Analytics page, GPU view: allocation over 13 weeks, when people submit, when GPUs are free, queue wait per partition.](docs/screenshots/analytics-gpu.png) |
+
+The CPU view of Analytics asks the same questions of whole nodes:
+[screenshot](docs/screenshots/analytics-cpu.png). User names are masked in all
+screenshots (`HM_MASK_USERS=1`).
 
 ## How it works
 
@@ -85,9 +97,66 @@ HM_SOURCE=ssh python3 backend/server.py
 On a machine that has the Slurm commands itself, use `HM_SOURCE=local`.
 `scripts/run.sh ssh|local|mock` wraps both.
 
+Set `HM_SITE=sites/hakusan.json` for Hakusan's pool names, GPU memory,
+partition order and guide pages.
+
 For an always-on deployment (systemd user service, Docker Compose, a dedicated
 SSH key, serving under a path prefix such as `/hakusan/`, daily policy check),
 see [`docs/DEPLOY.md`](docs/DEPLOY.md).
+
+## Use it on another Slurm cluster
+
+Point `HM_SSH_HOST` at a login node of your cluster (or use `HM_SOURCE=local` on
+a host with the Slurm commands) and leave `HM_SITE` unset. Without a site file:
+
+| What | Where it comes from |
+|---|---|
+| Cluster name | Slurm's `ClusterName` |
+| Hardware pools | GPU nodes grouped by GPU model (gres type); CPU nodes by core count and memory — one shape is just "CPU" |
+| GPU names | the gres type, e.g. `nvidia_a100` → A100; memory is not shown |
+| Partition order | the order `scontrol show partition` lists them |
+| Starter command per pool | Slurm's default partition if it is in the pool, else the pool's first partition |
+| Limits | QoS (`sacctmgr`) and partition config (`scontrol`) |
+| Containers page | shown when `singularity --version` answers on the login node |
+| Slurm guide page | off (it is written for Hakusan) |
+
+It uses only the standard client commands (`scontrol`, `squeue`, `sacct`,
+`sacctmgr`) and has been run on Slurm 25.05. Analytics needs `sacct` with a
+`PrivateData` setting that lets users see all jobs.
+
+### Site file
+
+A JSON file named by `HM_SITE` overrides any of these. Every key is optional;
+[`sites/hakusan.json`](sites/hakusan.json) is a complete example.
+
+```json
+{
+  "name": "Mycluster",
+  "org": "Example University",
+  "links": { "home": "https://hpc.example.edu/" },
+  "job_submit_lua": "/etc/slurm/job_submit.lua",
+  "pools": [
+    { "id": "a100", "nodes": "^gpu-a", "label": "A100", "sample_partition": "gpu" },
+    { "id": "cpu", "nodes": "^cn", "label": { "en": "CPU", "ja": "CPU", "zh": "CPU" } }
+  ],
+  "gpus": { "nvidia_a100": { "label": "A100", "mem_gb": 80 } },
+  "partition_order": ["gpu", "short", "long"],
+  "strings": { "en": { "app.subtitle": "Example University HPC" } }
+}
+```
+
+| Key | Meaning |
+|---|---|
+| `name`, `cluster`, `org` | display name, cluster name, and the organisation named in the footer note |
+| `links.home`, `links.outside_hardware` | footer link; link on hardware that no partition schedules |
+| `job_submit_lua` | path of the submit plugin on the cluster, for its defaults (`HM_JOB_SUBMIT_LUA` wins) |
+| `pools` | in display order; `nodes` is a regular expression on the node name, the first match wins; nodes no rule matches are grouped automatically |
+| `gpus` | label and memory per gres type, in display order |
+| `partition_order`, `cpu_probe_order` | partition display order; order of the CPU start checks |
+| `pages.slurm_guide` | show the Slurm guide page |
+| `strings` | any UI string, per language (`en`, `zh`, `ja`); keys are in `web/src/i18n/en.ts`. Partition titles are `policy.<name>` and `policy.<name>.desc`, pool descriptions `pooldesc.<pool id>` |
+
+Pool ids are stored with the history, so pick them once and keep them.
 
 ## Develop and test
 
@@ -114,7 +183,8 @@ Set these in the environment or in `.env`.
 | `HM_SOURCE_TIMEOUT` | `75` | seconds before a sample gives up |
 | `HM_CPU_PROBE_INTERVAL` | `900` | seconds between CPU start checks |
 | `HM_POLICY_INTERVAL` | `86400` | seconds between policy reads |
-| `HM_JOB_SUBMIT_LUA` | `/app/slurm/job_submit.lua` | where the submit plugin lives on the cluster |
+| `HM_SITE` | — | site file, e.g. `sites/hakusan.json` (relative to the repository) |
+| `HM_JOB_SUBMIT_LUA` | the site file's `job_submit_lua` | where the submit plugin lives on the cluster; empty = not read |
 | `HM_LOGIN_NODES` | — | login nodes to watch, e.g. `hakusan1=you@hakusan1,hakusan2=you@hakusan2` |
 | `HM_LOGIN_INTERVAL` | `HM_SAMPLE_INTERVAL` | seconds between login-node samples |
 | `HM_LOGIN_TIMEOUT` | `25` | seconds per login-node read |
@@ -147,6 +217,7 @@ Set these in the environment or in `.env`.
 | `GET /api/login-nodes` | current login-node health |
 | `GET /api/login-nodes/history?hours=24` | login-node history |
 | `GET /api/meta` | cluster name, Slurm version, partitions, container info |
+| `GET /api/site` | site name, links, page switches, partition order and site strings |
 | `GET /api/health` | liveness, data source and data age |
 
 ## Data and privacy
@@ -158,15 +229,18 @@ Set these in the environment or in `.env`.
   names and paths never leave the cluster.
 - Analytics needs a cluster whose `PrivateData` setting lets users see all jobs
   (`sacct -a`), as Hakusan's does.
+- `HM_MASK_USERS=1` shortens names to their first two letters (`ab***`); the
+  screenshots above were taken that way.
 
 ## Repository layout
 
 ```
-backend/   server.py · sources.py · normalize.py · store.py · job_history.py ·
-           analytics.py · login_nodes.py · lua_policy.py
+backend/   server.py · sources.py · normalize.py · site_config.py · store.py ·
+           job_history.py · analytics.py · login_nodes.py · lua_policy.py
+sites/     site files (hakusan.json)
 web/       React frontend (see web/README.md)
 tests/     backend unit tests
 scripts/   run.sh, demo data, cluster policy check, GPU memory probe
 deploy/    systemd units
-docs/      deployment, design notes, architecture.svg
+docs/      deployment, design notes, architecture.svg, screenshots/
 ```

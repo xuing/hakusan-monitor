@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react
 import { en, type TranslationKey } from "./en";
 import { DICTS, isLang, type Lang, type TFn } from "./core";
 import { I18nContext } from "./context";
+import { SITE_LOADED_EVENT } from "@/lib/site";
 
 function detectLang(): Lang {
   const saved = localStorage.getItem("hm_lang");
@@ -16,6 +17,14 @@ function detectLang(): Lang {
 
 export function I18nProvider({ children }: { children: ReactNode }) {
   const [lang, setLangState] = useState<Lang>(detectLang);
+  // bumped when the site's text lands after the first render (lib/site.ts)
+  const [siteVersion, setSiteVersion] = useState(0);
+
+  useEffect(() => {
+    const bump = () => setSiteVersion((n) => n + 1);
+    window.addEventListener(SITE_LOADED_EVENT, bump);
+    return () => window.removeEventListener(SITE_LOADED_EVENT, bump);
+  }, []);
 
   useEffect(() => {
     // BCP 47 tag: zh-CN so the browser picks Simplified Han glyph forms
@@ -35,7 +44,8 @@ export function I18nProvider({ children }: { children: ReactNode }) {
     return value;
   }, [lang]);
 
-  const value = useMemo(() => ({ lang, setLang, t }), [lang, setLang, t]);
+  // a new siteVersion re-renders every consumer: the site's text changed DICTS in place
+  const value = useMemo(() => ({ lang, setLang, t, siteVersion }), [lang, setLang, t, siteVersion]);
   return <I18nContext.Provider value={value}>{children}</I18nContext.Provider>;
 }
 

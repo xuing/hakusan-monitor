@@ -35,23 +35,38 @@ SQUEUE_FMT = SEP.join(SQUEUE_FIELDS)
 # JobArrayID, not JobID: -O JobID prints an array's BASE id ("759320") for
 # every task, so no task ever joined its row; JobArrayID matches %i exactly.
 CONTAINER_FMT = "JobArrayID:64,tres-alloc:256,SchedNodes:128,Container:512"
-# Probed before the first policy read lands; afterwards every CPU partition the
-# Lua defines (no GPU default, no license) is probed — see cpu_test_partitions().
-CPU_TEST_PARTITIONS = ["TINY", "DEF", "SINGLE", "SMALL", "LARGE", "XLARGE", "X2LARGE", "LONG", "LONG-L"]
-
-
-def cpu_test_partitions(policy, node_partitions=None, gpu_partitions=()):
-    """CPU partitions to `sbatch --test-only`: every Lua partition that sets no
-    GPU default, needs no license, has nodes and no GPU node (scontrol). The
-    UI takes only rejections from these probes; whether a request starts now
-    is judged from the live snapshot (see web/src/lib/cpu-probes.ts)."""
-    defaults = (policy or {}).get("partition_defaults") or {}
-    found = [p for p, d in defaults.items()
-             if not d.get("gpus_per_node") and not d.get("requires_license") and p not in gpu_partitions
+def cpu_test_partitions(policy, node_partitions=None, gpu_partitions=(), order=()):
+    """CPU partitions to `sbatch --test-only`: every partition with nodes, no
+    GPU node (scontrol), no GPU default and no license requirement. When the
+    submit plugin was read, only the partitions it defines are probed (the
+    rest are usually not meant for ordinary jobs). `order` (the site's probe
+    order, else slurm.conf order) comes first; the UI breaks verdict ties by
+    it. The UI takes only rejections from these probes; whether a request
+    starts now is judged from the live snapshot (see web/src/lib/cpu-probes.ts)."""
+    policy = policy or {}
+    defaults = policy.get("partition_defaults") or {}
+    if (policy.get("lua") or {}).get("parsed"):
+        candidates = list(defaults)
+    else:
+        candidates = sorted(node_partitions or ())
+    found = [p for p in candidates
+             if not (defaults.get(p) or {}).get("gpus_per_node")
+             and not (defaults.get(p) or {}).get("requires_license")
+             and p not in gpu_partitions
              and (node_partitions is None or p in node_partitions)]
-    # the familiar order first (the UI breaks verdict ties by it), then the rest
-    order = {p: i for i, p in enumerate(CPU_TEST_PARTITIONS)}
-    return sorted(found, key=lambda p: (order.get(p, len(order)), p)) or CPU_TEST_PARTITIONS
+    rank = {p: i for i, p in enumerate(order)}
+    return sorted(found, key=lambda p: (rank.get(p, len(rank)), p))
+
+
+def parse_singularity_version(text):
+    """`singularity --version` -> {runtime, version}: "singularity-ce version
+    4.3.7-noble" is SingularityCE, "apptainer version 1.3.4" is Apptainer
+    (which installs `singularity` as an alias)."""
+    head, _, version = text.strip().partition("version")
+    head = head.strip().lower()
+    runtime = ("SingularityCE" if head.endswith("-ce") else
+               "Apptainer" if head.startswith("apptainer") else "Singularity")
+    return {"runtime": runtime, "version": version.strip()}
 
 
 def _kv(line, key):
@@ -370,6 +385,7 @@ def build_policy_snapshot(qos_text, partition_text, now, interval, lua_text="", 
     """
     qos = parse_qos_policies(qos_text)
     partitions = parse_partition_policies(partition_text)
+    cluster = re.search(r"^ClusterName\s*=\s*(\S+)", partition_text, re.M)
     lua = parse_job_submit_lua(lua_text)
     caps, policies, origins = {}, {}, {}
     for name, part in partitions.items():
@@ -383,6 +399,7 @@ def build_policy_snapshot(qos_text, partition_text, now, interval, lua_text="", 
         "generated_at": int(now),
         "interval": int(interval),
         "qos": qos,
+        "cluster_name": cluster.group(1) if cluster else "",
         "partitions": partitions,
         "partition_caps": caps,
         "partition_policies": policies,
@@ -586,7 +603,7 @@ class Source:
     def __init__(self, mode="mock", ssh_host="", ssh_opts="",
                  mock_dir="mock", timeout=25, cpu_probe_interval=900,
                  policy_interval=86400, policy_cache="", policy_check="",
-                 lua_path="/app/slurm/job_submit.lua"):
+                 lua_path="", probe_order=None):
         self.mode = mode
         self.ssh_host = ssh_host
         # HM_SSH_HOST accepts a comma-separated preference list
@@ -599,7 +616,8 @@ class Source:
         self.timeout = timeout
         self.cpu_probe_interval = cpu_probe_interval
         self.policy_interval = policy_interval
-        self.singularity = None
+        self.singularity = None          # {runtime, version}; cached across restarts
+        self._singularity_read = False   # read once per process
         self.cpu_probes = []
         self.cpu_probe_at = 0
         self.gpu_partitions = set()   # partitions with a GPU node, from the last scontrol read
@@ -610,6 +628,8 @@ class Source:
         self.policy_cache = policy_cache
         self.policy_check = policy_check
         self.lua_path = lua_path
+        # policy -> partition order for CPU probes (the site decides)
+        self.probe_order = probe_order or (lambda policy: list((policy or {}).get("partitions") or {}))
         self.policy_sources = {}
         self.policy_snapshot = None
         self.policy_at = 0
@@ -673,7 +693,7 @@ class Source:
         probe_due = not self.cpu_probes or now - self.cpu_probe_at >= self.cpu_probe_interval
         policy_due = self.policy_snapshot is None or now - self.policy_at >= self.policy_interval
         singularity_cmd = ("singularity --version 2>/dev/null || true"
-                           if self.singularity is None else "true")
+                           if not self._singularity_read else "true")
         sep_q = shlex.quote(SEP)
         # The probe's verdict is displayed next to a `salloc -p X` command, and
         # job_submit.lua pins the walltime of interactive jobs per partition
@@ -684,15 +704,17 @@ class Source:
             "out=$(timeout 4s sbatch --test-only -p {p}{t} --wrap=hostname 2>&1); rc=$?; "
             "printf '%s%s%s%s%s\\n' {p} \"$SEP\" \"$rc\" \"$SEP\" \"$out\"".format(
                 p=shlex.quote(p), t=self._interactive_t_flag(p))
-            for p in cpu_test_partitions(self.policy_snapshot, self.node_partitions, self.gpu_partitions))
-        cpu_probe_cmd = f"SEP={sep_q}; {cpu_probes}" if probe_due else "true"
+            for p in cpu_test_partitions(self.policy_snapshot, self.node_partitions, self.gpu_partitions,
+                                         self.probe_order(self.policy_snapshot)))
+        cpu_probe_cmd = f"SEP={sep_q}; {cpu_probes}" if probe_due and cpu_probes else "true"
         qos_cmd = (
             "timeout 8s sacctmgr -n -P show qos "
             "format=Name,MaxTRES%200,MaxWall,GrpJobs,MaxJobsPU,MaxSubmitPU,MinTRES%200,Flags%100 "
             "2>/dev/null || true"
         ) if policy_due else "true"
         partition_cmd = (
-            "timeout 8s scontrol -o show partition 2>/dev/null || true"
+            "timeout 8s scontrol -o show partition 2>/dev/null || true; "
+            "timeout 8s scontrol show config 2>/dev/null | grep -m1 '^ClusterName' || true"
         ) if policy_due else "true"
         # job_submit.lua and its admin backups (job_submit.lua_YYMMDD): the
         # rules the submit plugin applies, plus when they last changed.
@@ -700,7 +722,7 @@ class Source:
         lua_cmd = (
             f"(stat -c '%Y|%s|%n' {lua_q} {lua_q}_* 2>/dev/null || true); echo {LUA_MARK}; "
             f"(cat {lua_q} 2>/dev/null || true)"
-        ) if policy_due else "true"
+        ) if policy_due and self.lua_path else "true"
         # Core reads must succeed: a later optional command must never turn a
         # controller failure into a healthy-looking empty cluster/queue.
         out = self._exec(f"scontrol -o show nodes || exit $?; echo {MARK}; "
@@ -726,8 +748,10 @@ class Source:
         sections = (out.split(MARK) + [""] * 10)[:10]
         (nodes_txt, queue_txt, containers_txt, reqtres_txt, sing_txt, cpu_probe_txt,
          license_txt, qos_txt, partition_txt, lua_section) = sections
-        if self.singularity is None and "version" in sing_txt:
-            self.singularity = sing_txt.split("version", 1)[-1].strip()
+        if not self._singularity_read and "version" in sing_txt:
+            self._singularity_read = True
+            self.singularity = parse_singularity_version(sing_txt)
+            self._save_policy_cache()
         if probe_due:
             self.cpu_probes = parse_cpu_submit_probes(cpu_probe_txt)
             self.cpu_probe_at = now
@@ -796,13 +820,13 @@ class Source:
             return None
 
     def _save_policy_cache(self):
-        if not self.policy_cache:
+        if not self.policy_cache or self.policy_snapshot is None:
             return
         try:
             os.makedirs(os.path.dirname(self.policy_cache) or ".", exist_ok=True)
             tmp = self.policy_cache + ".tmp"
             with open(tmp, "w") as f:
-                json.dump({"sources": self.policy_sources,
+                json.dump({"sources": self.policy_sources, "singularity": self.singularity,
                            "lua_meta": {k: v for k, v in self.policy_snapshot["lua"].items()
                                         if k not in ("partitions", "parsed")}}, f)
             os.replace(tmp, self.policy_cache)
@@ -817,6 +841,10 @@ class Source:
                 cached = json.load(f)
         except (OSError, ValueError):
             return
+        # the container runtime is read once per process; the cache keeps the
+        # Containers page up across restarts until the first sample re-reads it
+        if isinstance(cached.get("singularity"), dict):
+            self.singularity = cached["singularity"]
         src = cached.get("sources") or {}
         if not (src.get("qos") or src.get("partitions")):
             return

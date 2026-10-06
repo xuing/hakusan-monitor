@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { useApi } from "@/hooks/use-api";
 import { useT, type TranslationKey } from "@/i18n";
 import { api } from "@/lib/api";
+import { getSite } from "@/lib/site";
 
 const DOCS_URL = "https://docs.sylabs.io/guides/4.3/user-guide/";
 
@@ -55,7 +56,7 @@ const COMMANDS: { title: TranslationKey; detail: TranslationKey; command: string
   {
     title: "container.cmd.shell.title",
     detail: "container.cmd.shell.detail",
-    command: "salloc -p TINY\nsingularity shell image.sif",
+    command: "salloc{p}\nsingularity shell image.sif",
   },
   {
     title: "container.cmd.bind.title",
@@ -78,6 +79,7 @@ export function ContainersPanel() {
   const { data } = useApi(api.meta, null, 60_000);
   const t = useT();
   const c = data?.container;
+  const shellPartition = getSite().container_shell_partition ? ` -p ${getSite().container_shell_partition}` : "";
 
   return (
     <SectionCard
@@ -121,7 +123,7 @@ export function ContainersPanel() {
       <div className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">{t("container.examples")}</div>
       <div className="grid items-start gap-2 sm:grid-cols-2 lg:grid-cols-3">
         {COMMANDS.map((item) => (
-          <CommandCard key={item.title} title={t(item.title)} detail={t(item.detail)} command={item.command} />
+          <CommandCard key={item.title} title={t(item.title)} detail={t(item.detail)} command={item.command.replace("{p}", shellPartition)} />
         ))}
       </div>
 

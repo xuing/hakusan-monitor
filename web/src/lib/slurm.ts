@@ -1,5 +1,6 @@
 // Slurm-domain helpers: load tones, chart color mapping, resource filtering.
 import type { GpuDefaultRequest } from "@/lib/gpu-availability";
+import { partitionOrderRank } from "@/lib/site";
 import type { Partition, PartitionDefaults, PolicySnapshot, Pool, Release } from "@/types/snapshot";
 
 export type Tone = "ok" | "warn" | "bad" | "info" | "neutral";
@@ -109,52 +110,16 @@ export function allowsMultiNode(cap: PartitionCap, coresPerNode?: number): boole
   return cap.maxCores > coresPerNode;
 }
 
-export const PARTITION_DISPLAY_ORDER = [
-  "GPU-1",
-  "GPU-S",
-  "GPU-L",
-  "GPU-1A",
-  "GPU-LA",
-  "VM-GPU-L",
-  "DEF",
-  "TINY",
-  "SINGLE",
-  "LONG",
-  "SMALL",
-  "LARGE",
-  "XLARGE",
-  "X2LARGE",
-  "LONG-L",
-  "MS_Castep",
-  "MS_Dmol3",
-  "MS_Forcite",
-  "MS_Compass",
-  "MS_Dftbplus",
-  "MS_Amorphous",
-  "MatStudio",
-  "VM-CPU",
-  "VM-LM",
-  "i112",
-];
+/** Display order of partitions: the site's order, else slurm.conf's. */
+export const partitionDisplayRank = partitionOrderRank;
 
-const PARTITION_DISPLAY_RANK = new Map(PARTITION_DISPLAY_ORDER.map((name, i) => [name, i]));
-
-export function partitionDisplayRank(name: string | null | undefined) {
-  const rank = PARTITION_DISPLAY_RANK.get(String(name || "").split(",")[0]);
-  return rank ?? PARTITION_DISPLAY_ORDER.length;
+/** Partitions that take only license jobs (`-L`): the submit plugin rejects a
+ *  job without one, or fills in a default license. On Hakusan these are the
+ *  Materials Studio partitions. */
+export function isLicensePartition(name: string, policy?: PolicySnapshot | null): boolean {
+  const d = policy?.partition_defaults?.[name];
+  return Boolean(d?.requires_license || d?.default_license);
 }
-
-export const MATERIALS_STUDIO_PARTITIONS = [
-  "MS_Castep",
-  "MS_Dmol3",
-  "MS_Forcite",
-  "MS_Compass",
-  "MS_Dftbplus",
-  "MS_Amorphous",
-  "MatStudio",
-];
-
-export const isMaterialsStudioPartition = (name: string) => MATERIALS_STUDIO_PARTITIONS.includes(name);
 
 export const partitionCap = (name: string, policy?: PolicySnapshot): PartitionCap => {
   const cap = policy?.partition_caps?.[name] ?? {};

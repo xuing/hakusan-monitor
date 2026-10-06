@@ -15,7 +15,7 @@ export interface CpuProbeRow {
 }
 
 /** Probe rows for the partitions of one pool, in the backend's test order.
- * The backend (sources.CPU_TEST_PARTITIONS) decides which partitions get
+ * The backend (sources.cpu_test_partitions) decides which partitions get
  * probed — no second copy of that list lives here. */
 export function cpuProbeRows(pool: Pool, snap: Snapshot): CpuProbeRow[] {
   return (snap.cpu_submit_probes ?? [])

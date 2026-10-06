@@ -1,7 +1,7 @@
 #!/bin/bash
 # Runs on hakusan as the last job of probe_gpu_memory.sh: reads what
 # nvidia-smi reported in each GPU partition and writes conclusion.md next to
-# it, comparing against the memory backend/normalize.py's GPU_CATALOG shows.
+# it, comparing against the memory sites/hakusan.json's "gpus" table states.
 #
 # Usage (by the probe, not by hand): gpu_memory_conclude.sh DIR "PART:LABEL:GB:JOBID" ...
 set -u
@@ -10,7 +10,7 @@ out="$dir/conclusion.md"
 {
   echo "# GPU memory probe — $(date '+%Y-%m-%d %H:%M %Z')"
   echo
-  echo "nvidia-smi \`memory.total\` inside one job per partition, against GPU_CATALOG in backend/normalize.py."
+  echo "nvidia-smi \`memory.total\` inside one job per partition, against the gpus table in sites/hakusan.json."
   echo "A card reports a little less than its nominal size (ECC / driver reserve): A40 48 GB shows 46068 MiB."
   echo
   echo "| partition | model in catalog | catalog GB | nvidia-smi name | memory.total | job state | verdict |"
@@ -29,7 +29,7 @@ out="$dir/conclusion.md"
       # a reading between 90% and 100% of the nominal size is that size
       lo=$((gb * 1024 * 90 / 100)); hi=$((gb * 1024))
       if [ "$mib" -ge "$lo" ] && [ "$mib" -le "$hi" ]; then verdict="matches ${gb} GB"
-      else verdict="MISMATCH: ${mib} MiB is not ${gb} GB — fix GPU_CATALOG"; fi
+      else verdict="MISMATCH: ${mib} MiB is not ${gb} GB — fix sites/hakusan.json"; fi
     fi
     echo "| $part | $label | $gb | ${name:-—} | ${mib:+$mib MiB} | ${state:-unknown} | $verdict |"
   done

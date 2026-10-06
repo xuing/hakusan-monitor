@@ -7,15 +7,6 @@ from __future__ import annotations
 import re
 from collections import defaultdict, Counter
 
-# ---- GPU type catalog (label + approx per-GPU memory, GB) --------------------
-GPU_CATALOG = {
-    "nvidia_a40":  {"label": "A40",       "mem_gb": 48},
-    "nvidia_a100": {"label": "A100",      "mem_gb": 40},  # A100-PCIE-40GB: 40960 MiB (probe 2026-10-05)
-    "h100-80c":    {"label": "H100 80GB", "mem_gb": 80},
-    "h100-20c":    {"label": "H100 MIG 20GB", "mem_gb": 20},
-}
-GPU_ORDER = ["nvidia_a40", "nvidia_a100", "h100-80c", "h100-20c"]
-
 # GPU model names may contain dots (QoS seminar: gres/gpu:nvidia_rtx_pro_6000_
 # blackwell_server_edition_1g.24gb) — a class without "." parsed them as 0.
 _GRES_RE = re.compile(r"gpu:([A-Za-z0-9_.\-]+):(\d+)")
@@ -123,28 +114,6 @@ def needs_attention(states):
     })
 
 
-def node_pool(name):
-    if name.startswith("lcpcc-"):
-        return "cpu"
-    if name.startswith("spcc-a40g"):
-        return "a40"
-    if name.startswith("spcc-a100g"):
-        return "a100"
-    if name.startswith("spcc-cld-gl"):
-        return "h100-80"
-    if name.startswith("spcc-cld-lm"):
-        return "lm"
-    if name.startswith("spcc-cld-g"):
-        return "h100-20c"
-    if name.startswith("spcc-cld-"):
-        return "vm-cpu"
-    return "other"
-
-
-POOL_KIND = {"cpu": "cpu", "vm-cpu": "cpu", "lm": "cpu",
-             "a40": "gpu", "a100": "gpu", "h100-80": "gpu", "h100-20c": "gpu"}
-
-
 def mask_user(u, mask):
     if not mask or not u:
         return u
@@ -220,31 +189,36 @@ def parse_duration(s):
 
 def cluster_nodes(nodes_json):
     """Only nodes some Slurm partition reaches: hardware scontrol lists but no
-    partition schedules (the H100 MIG VM hosts, handed to JAIST's VM service)
-    is not part of this cluster for anyone submitting here."""
+    partition schedules (on Hakusan, the H100 MIG VM hosts) is not part of
+    this cluster for anyone submitting here."""
     nodes = (nodes_json or {}).get("nodes", []) or []
     return {**(nodes_json or {}), "nodes": [nd for nd in nodes if nd.get("partitions")]}
 
 
-def outside_nodes(nodes_json):
+def outside_nodes(nodes_json, pool_of, site):
     """What cluster_nodes() leaves out, per hardware pool: {pool, label,
-    nodes, gpus}. The page names it so the hardware is not simply missing."""
+    nodes, gpus}. The page names it so the hardware is not simply missing.
+    pool_of maps every node name to its pool (Site.assign_pools)."""
     groups = {}
     for nd in (nodes_json or {}).get("nodes", []) or []:
         if nd.get("partitions"):
             continue
-        pool = node_pool(nd.get("name", ""))
+        pool = pool_of.get(nd.get("name", ""), "other")
         g = groups.setdefault(pool, {"pool": pool, "label": "", "nodes": 0, "gpus": 0})
         g["nodes"] += 1
         for gtype, n in parse_gres(nd.get("gres")).items():
             g["gpus"] += n
-            g["label"] = GPU_CATALOG.get(gtype, {}).get("label", gtype)
+            g["label"] = site.gpu_info(gtype)["label"]
     return sorted(groups.values(), key=lambda g: g["pool"])
 
 
-def normalize(nodes_json, squeue_json, *, cluster="hakusan", slurm_version="",
-              mask_users=False):
+def normalize(nodes_json, squeue_json, *, site, pool_of=None, cluster="slurm",
+              slurm_version="", mask_users=False):
+    """site: site_config.Site (pool rules, GPU labels, orders). pool_of:
+    {node name: pool id}, computed from the nodes when not given."""
     nodes = (nodes_json or {}).get("nodes", []) or []
+    if pool_of is None:
+        pool_of = site.assign_pools(nodes)
     jobs = (squeue_json or {}).get("jobs", []) or []
 
     # The compact scontrol source normally emits one row per node, but name is
@@ -314,8 +288,8 @@ def normalize(nodes_json, squeue_json, *, cluster="hakusan", slurm_version="",
             if node_up and (cpus - acpu) > 0:
                 cpu_nodes_free += 1
 
-        pid = node_pool(name)
-        pa = pools.setdefault(pid, dict(id=pid, kind=POOL_KIND.get(pid, "cpu"),
+        pid = pool_of.get(name, "other")
+        pa = pools.setdefault(pid, dict(id=pid, kind="cpu",
                                         nodes=0, cpus_total=0, cpus_alloc=0, other_cores=0,
                                         mem_per_node=0, states=Counter(),
                                         gpu_total=Counter(), gpu_used=Counter(),
@@ -330,6 +304,8 @@ def normalize(nodes_json, squeue_json, *, cluster="hakusan", slurm_version="",
         pa["states"][b] += 1
         pa["gpu_total"] += g_tot
         pa["gpu_used"] += g_use
+        if g_tot:
+            pa["kind"] = "gpu"
         if node_up:
             if g_tot and (sum(g_tot.values()) - sum(g_use.values())) > 0:
                 pa["available_nodes"] += 1
@@ -370,7 +346,7 @@ def normalize(nodes_json, squeue_json, *, cluster="hakusan", slurm_version="",
         poolc = Counter()
         for m in members:
             c.update(m[4])
-            poolc[node_pool(m[0].get("name", ""))] += 1
+            poolc[pool_of.get(m[0].get("name", ""), "other")] += 1
         if c:
             part_gpu_type[p] = c.most_common(1)[0][0]
         if poolc:
@@ -394,7 +370,7 @@ def normalize(nodes_json, squeue_json, *, cluster="hakusan", slurm_version="",
     pool_releasing = defaultdict(lambda: {"jobs": 0, "nodes": set()})
 
     def gpu_label(gtype, n):
-        lbl = GPU_CATALOG.get(gtype, {}).get("label", gtype or "GPU")
+        lbl = site.gpu_info(gtype)["label"] if gtype else "GPU"
         return f"{lbl}×{n}"
 
     for j in jobs:
@@ -537,8 +513,6 @@ def normalize(nodes_json, squeue_json, *, cluster="hakusan", slurm_version="",
     partitions.sort(key=lambda x: (-x["pressure"], -x["jobs"]["pending"], x["name"]))
 
     # ---- pools (the primary resource view) -----------------------------------
-    POOL_ORDER = {"a40": 0, "a100": 1, "h100-80": 2, "h100-20c": 3,
-                  "cpu": 4, "vm-cpu": 5, "lm": 6}
     pool_out = []
     for pid, pa in pools.items():
         gt = sum(pa["gpu_total"].values())
@@ -551,7 +525,7 @@ def normalize(nodes_json, squeue_json, *, cluster="hakusan", slurm_version="",
         gpu = None
         if gt:
             gtype = pa["gpu_total"].most_common(1)[0][0]
-            cat = GPU_CATALOG.get(gtype, {"label": gtype, "mem_gb": None})
+            cat = site.gpu_info(gtype)
             free_g = max(gt - gu - gd - gr, 0)
             gpu = {"type": gtype, "label": cat["label"], "mem_gb": cat["mem_gb"],
                    "total": gt, "used": gu, "down": gd, "reserved": gr,
@@ -580,13 +554,13 @@ def normalize(nodes_json, squeue_json, *, cluster="hakusan", slurm_version="",
             "avail": {"units": avail, "unit": "gpu" if is_gpu else "cores",
                       "can_now": avail > 0, "idle_nodes": st.get("idle", 0)},
         })
-    pool_out.sort(key=lambda x: POOL_ORDER.get(x["id"], 99))
+    pool_out.sort(key=site.pool_rank)
 
     # ---- gpu board -----------------------------------------------------------
     gpus = []
-    for t in GPU_ORDER + [k for k in gpu_total if k not in GPU_ORDER]:
+    for t in sorted(gpu_total, key=site.gpu_rank):
         if gpu_total.get(t):
-            cat = GPU_CATALOG.get(t, {"label": t, "mem_gb": None})
+            cat = site.gpu_info(t)
             tt, uu, dd = gpu_total[t], gpu_used.get(t, 0), gpu_down.get(t, 0)
             rr = gpu_reserved.get(t, 0)
             gpus.append({"type": t, "label": cat["label"], "mem_gb": cat["mem_gb"],

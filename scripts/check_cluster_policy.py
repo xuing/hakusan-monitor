@@ -202,6 +202,10 @@ def run(dry_run: bool) -> int:
     if src.mode != "ssh":
         print("HM_SOURCE is not ssh — nothing to verify against.", file=sys.stderr)
         return 2
+    if not src.lua_path:
+        print("No job_submit.lua configured (HM_JOB_SUBMIT_LUA or the site file) — nothing to verify.",
+              file=sys.stderr)
+        return 2
     # round 1: read sources to decide what to probe
     first = src._exec(f"cat {shlex.quote(src.lua_path)}; echo {MARK}; scontrol -o show partition")
     lua_text, _, part_text = first.partition(MARK)

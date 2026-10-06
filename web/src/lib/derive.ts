@@ -1,6 +1,6 @@
 // Client-side derivations from the raw data shipped in the snapshot.
 // Keeps "raw" (server) and "derived" (here) cleanly separated — one pull feeds all.
-// The backend tags each raw node with its `pool` (see normalize.node_pool), so the
+// The backend tags each raw node with its `pool` (see site_config.Site.assign_pools), so the
 // client never re-derives the name→pool mapping.
 import type { Occupant, RawJob, RawNode, Snapshot } from "@/types/snapshot";
 

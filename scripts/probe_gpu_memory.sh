@@ -1,6 +1,6 @@
 #!/bin/bash
-# Confirms the GPU memory sizes the dashboard shows (GPU_CATALOG in
-# backend/normalize.py) on the real cards: one 5-minute job per GPU partition
+# Confirms the GPU memory sizes the dashboard shows (the "gpus" table in
+# sites/hakusan.json) on the real cards: one 5-minute job per GPU partition
 # runs nvidia-smi, then a TINY job — after all of them, whatever their outcome —
 # writes ~/hm-gpu-mem/conclusion.md on hakusan. The GPU jobs wait in the queue
 # until a card is free; nothing needs to stay connected.
@@ -17,7 +17,7 @@ if [ "${1:-}" = "--result" ]; then
   exit 0
 fi
 
-# partition : model : GB the catalog states (keep in step with GPU_CATALOG)
+# partition : model : GB the catalog states (keep in step with the site file's "gpus")
 PROBES=("GPU-1:A40:48" "GPU-1A:A100:40")
 
 "${SSH[@]}" "mkdir -p ~/$DIR"

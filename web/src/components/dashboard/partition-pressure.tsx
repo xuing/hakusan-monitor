@@ -31,7 +31,7 @@ import {
   allowsMultiNode,
   defaultRequestSec,
   effectiveGpuLimit,
-  isMaterialsStudioPartition,
+  isLicensePartition,
   matchPartition,
   partitionCap,
   partitionPolicy as slurmPartitionPolicy,
@@ -40,36 +40,15 @@ import {
 import { cn } from "@/lib/utils";
 import type { Partition, PolicySnapshot, Pool } from "@/types/snapshot";
 
-const POLICY_I18N_KEYS: Record<string, { title: TranslationKey; desc: TranslationKey }> = {
-  DEF: { title: "policy.DEF", desc: "policy.DEF.desc" },
-  TINY: { title: "policy.TINY", desc: "policy.TINY.desc" },
-  SINGLE: { title: "policy.SINGLE", desc: "policy.SINGLE.desc" },
-  LONG: { title: "policy.LONG", desc: "policy.LONG.desc" },
-  SMALL: { title: "policy.SMALL", desc: "policy.SMALL.desc" },
-  LARGE: { title: "policy.LARGE", desc: "policy.LARGE.desc" },
-  XLARGE: { title: "policy.XLARGE", desc: "policy.XLARGE.desc" },
-  X2LARGE: { title: "policy.X2LARGE", desc: "policy.X2LARGE.desc" },
-  "LONG-L": { title: "policy.LONG-L", desc: "policy.LONG-L.desc" },
-  MS_Castep: { title: "policy.MS_Castep", desc: "policy.MS_Castep.desc" },
-  MS_Dmol3: { title: "policy.MS_Dmol3", desc: "policy.MS_Dmol3.desc" },
-  MS_Forcite: { title: "policy.MS_Forcite", desc: "policy.MS_Forcite.desc" },
-  MS_Compass: { title: "policy.MS_Compass", desc: "policy.MS_Compass.desc" },
-  MS_Dftbplus: { title: "policy.MS_Dftbplus", desc: "policy.MS_Dftbplus.desc" },
-  MS_Amorphous: { title: "policy.MS_Amorphous", desc: "policy.MS_Amorphous.desc" },
-  MatStudio: { title: "policy.MatStudio", desc: "policy.MatStudio.desc" },
-  "GPU-1": { title: "policy.GPU-1", desc: "policy.GPU-1.desc" },
-  "GPU-S": { title: "policy.GPU-S", desc: "policy.GPU-S.desc" },
-  "GPU-L": { title: "policy.GPU-L", desc: "policy.GPU-L.desc" },
-  "GPU-1A": { title: "policy.GPU-1A", desc: "policy.GPU-1A.desc" },
-  "GPU-LA": { title: "policy.GPU-LA", desc: "policy.GPU-LA.desc" },
-  "VM-CPU": { title: "policy.VM-CPU", desc: "policy.VM-CPU.desc" },
-  "VM-GPU-L": { title: "policy.VM-GPU-L", desc: "policy.VM-GPU-L.desc" },
-  "VM-LM": { title: "policy.VM-LM", desc: "policy.VM-LM.desc" },
-  i112: { title: "policy.i112", desc: "policy.i112.desc" },
-};
-
-function partitionLabelPolicy(name: string): { title: TranslationKey; desc: TranslationKey } {
-  return POLICY_I18N_KEYS[name] ?? { title: "policy.other", desc: "policy.other.desc" };
+/** A partition's title and description from the site's text
+ *  (`policy.<name>` / `policy.<name>.desc`), else the generic pair. */
+function partitionLabelPolicy(name: string, t: TFn): { title: TranslationKey; desc: TranslationKey } {
+  const title = `policy.${name}` as TranslationKey;
+  const desc = `policy.${name}.desc` as TranslationKey;
+  return {
+    title: t(title) !== title ? title : "policy.other",
+    desc: t(desc) !== desc ? desc : "policy.other.desc",
+  };
 }
 
 function isMaintPartition(p: Partition) {
@@ -182,8 +161,8 @@ export function PartitionPressure() {
                 || availableNodes(b) - availableNodes(a)
                 || b.pressure - a.pressure,
             );
-            const generalParts = parts.filter((p) => !isMaterialsStudioPartition(p.name));
-            const materialsParts = parts.filter((p) => isMaterialsStudioPartition(p.name));
+            const generalParts = parts.filter((p) => !isLicensePartition(p.name, snap.policy));
+            const materialsParts = parts.filter((p) => isLicensePartition(p.name, snap.policy));
             const spec = parts[0].spec;
             const isGpu = parts[0].kind === "gpu";
             const pool = poolById.get(group.poolKey);
@@ -499,7 +478,7 @@ function PartitionRow({
     const parts = String(j.partition || "").split(",");
     return parts.length > 1 && parts.includes(p.name);
   }).length;
-  const labelPolicy = partitionLabelPolicy(p.name);
+  const labelPolicy = partitionLabelPolicy(p.name, t);
   const runtimePolicy = slurmPartitionPolicy(p.name, policy);
   const groupRunning = p.jobs.running;
   const limitRows = policyLimitRows(runtimePolicy, groupRunning, t);

@@ -15,6 +15,7 @@ RUN apt-get update \
 
 WORKDIR /app
 COPY backend/ backend/
+COPY sites/ sites/
 COPY --from=web /web/dist web/dist
 
 EXPOSE 8787

@@ -1,21 +1,24 @@
 import { useT } from "@/i18n";
+import { getSite } from "@/lib/site";
 
 const GITHUB_URL = "https://github.com/xuing/hakusan-monitor";
-const HAKUSAN_URL = "https://www.jaist.ac.jp/iscenter/en/mpc/hakusan/";
 
 export function AppFooter() {
   const t = useT();
+  const site = getSite();
 
   return (
     <footer className="mx-auto flex w-full max-w-[1920px] flex-wrap items-center justify-between gap-3 border-t border-border px-4 py-4 text-xs text-muted-foreground">
-      <span>{t("footer.disclaimer")}</span>
+      <span>{site.org ? t("footer.disclaimer") : ""}</span>
       <span className="flex items-center gap-3">
         <a className="text-foreground/70 hover:underline" href={GITHUB_URL} target="_blank" rel="noreferrer">
           GitHub
         </a>
-        <a className="text-foreground/70 hover:underline" href={HAKUSAN_URL} target="_blank" rel="noreferrer">
-          Hakusan
-        </a>
+        {site.links.home && (
+          <a className="text-foreground/70 hover:underline" href={site.links.home} target="_blank" rel="noreferrer">
+            {site.name}
+          </a>
+        )}
       </span>
     </footer>
   );

@@ -1,6 +1,14 @@
+import os
 import unittest
 
-from backend.normalize import is_schedulable, normalize
+from backend import site_config
+from backend.normalize import is_schedulable, normalize as _normalize
+
+HAKUSAN = site_config.load(os.path.join(os.path.dirname(__file__), "..", "sites", "hakusan.json"))
+
+
+def normalize(*args, **kwargs):
+    return _normalize(*args, site=HAKUSAN, **kwargs)
 
 
 class QueueSummaryTests(unittest.TestCase):
@@ -253,22 +261,6 @@ def raw_node(*, name="spcc-a40g01", state, cpus, alloc, gres, gres_used):
     }
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
-class ClusterNodesTests(unittest.TestCase):
-    def test_drops_hardware_no_partition_schedules(self):
-        # scontrol lists the H100 MIG VM hosts with no partition (2026-10-05)
-        from backend.normalize import cluster_nodes
-        raw = {"nodes": [{"name": "spcc-cld-g01", "partitions": []},
-                         {"name": "spcc-cld-gl01", "partitions": ["VM-GPU-L"]}],
-               "meta": 1}
-        out = cluster_nodes(raw)
-        self.assertEqual([n["name"] for n in out["nodes"]], ["spcc-cld-gl01"])
-        self.assertEqual(out["meta"], 1)
-
-
 class ClusterNodesTests(unittest.TestCase):
     def test_drops_hardware_no_partition_schedules(self):
         # scontrol lists the H100 MIG VM hosts with no partition (2026-10-05)
@@ -285,8 +277,12 @@ class ClusterNodesTests(unittest.TestCase):
         raw = {"nodes": [{"name": "spcc-cld-g01", "partitions": [], "gres": "gpu:h100-20c:1"},
                          {"name": "spcc-cld-g02", "partitions": [], "gres": "gpu:h100-20c:1"},
                          {"name": "spcc-cld-gl01", "partitions": ["VM-GPU-L"], "gres": "gpu:h100-80c:1"}]}
-        out = outside_nodes(raw)
+        out = outside_nodes(raw, HAKUSAN.assign_pools(raw["nodes"]), HAKUSAN)
         self.assertEqual(len(out), 1)
         self.assertEqual(out[0]["nodes"], 2)
         self.assertEqual(out[0]["gpus"], 2)
         self.assertEqual(out[0]["label"], "H100 MIG 20GB")
+
+
+if __name__ == "__main__":
+    unittest.main()

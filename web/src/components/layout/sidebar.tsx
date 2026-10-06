@@ -1,6 +1,6 @@
 import { Mountain } from "lucide-react";
 import { NavLink } from "react-router";
-import { NAV } from "@/lib/nav";
+import { visibleNav } from "@/lib/nav";
 import { useT } from "@/i18n";
 import type { TranslationKey } from "@/i18n/en";
 import { cn } from "@/lib/utils";
@@ -39,7 +39,7 @@ export function SidebarNav({ onNavigate, compact = false }: { onNavigate?: () =>
             </div>
           )}
           <ul className="space-y-1">
-            {NAV.filter((n) => n.section === section).map((item) => {
+            {visibleNav().filter((n) => n.section === section).map((item) => {
               const Icon = item.icon;
               return (
                 <li key={item.path}>

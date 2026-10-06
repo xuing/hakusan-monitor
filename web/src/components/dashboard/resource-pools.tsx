@@ -47,7 +47,7 @@ import {
   type GpuFitNode,
   type GpuFitTipData,
 } from "@/lib/gpu-fit";
-import { allowsMultiNode, wallLabelSec, defaultRequestSec, interactiveForcedLabel, interactiveForcedSec, isMaterialsStudioPartition, matchPool, minutesToSlurmTime, partitionCap, partitionDefaultRequest, partitionDefaults, partitionPolicy, type PartitionPolicy, type Tone } from "@/lib/slurm";
+import { allowsMultiNode, wallLabelSec, defaultRequestSec, interactiveForcedLabel, interactiveForcedSec, isLicensePartition, matchPool, minutesToSlurmTime, partitionCap, partitionDefaultRequest, partitionDefaults, partitionPolicy, type PartitionPolicy, type Tone } from "@/lib/slurm";
 import { cn } from "@/lib/utils";
 import { cpuDefaultSpreads, cpuProbeRows, cpuStartLimits, cpuStartMemMb, liveCpuStart, type CpuProbeRow } from "@/lib/cpu-probes";
 import { buildRequestCommand, shouldShowGapShell } from "@/lib/request-command";
@@ -56,22 +56,9 @@ import { requestLimits, type PoolShape } from "@/lib/request-limits";
 import { licenseBusy, licensePlan } from "@/lib/licenses";
 import { defaultRequestFit, singleNodeCoreFlag } from "@/lib/default-request";
 import { gpuPartitionAdvice, partitionRunningJobs } from "@/lib/gpu-advice";
+import { getSite } from "@/lib/site";
 import type { Occupant, Partition, Pool, PoolGpu, RawJob, Snapshot } from "@/types/snapshot";
 
-
-// Minimal starter per pool. Hakusan's submit plugin applies the partition
-// defaults, including the GPU partition's default one GPU per node.
-// No pool hardcodes a resource flag: where the plugin's default overflows a
-// node (VM-CPU / VM-GPU-L / VM-LM), `defaultRequestFit` derives the `-n` that
-// pins it back to one node, so a config change is picked up on its own.
-const SAMPLE: Record<string, { partition: string; requiredFlags?: string[] }> = {
-  "vm-cpu": { partition: "VM-CPU" },
-  cpu: { partition: "DEF" },
-  lm: { partition: "VM-LM" },
-  a40: { partition: "GPU-1" },
-  a100: { partition: "GPU-1A" },
-  "h100-80": { partition: "VM-GPU-L" },
-};
 
 export function ResourcePools() {
   const { snap } = useLive();
@@ -163,6 +150,7 @@ function PoolGroup({ groupKey, label, pools, snap, t, outside = [] }: {
 /** Hardware scontrol lists but no partition schedules: where it would sit,
  *  grayed, saying why it cannot be used from here. */
 function OutsideCard({ o, t }: { o: NonNullable<Snapshot["outside_nodes"]>[number]; t: TFn }) {
+  const outsideUrl = getSite().links.outside_hardware;
   return (
     <Card className="border-dashed bg-muted/30">
       <CardContent className="space-y-2 p-4">
@@ -174,15 +162,17 @@ function OutsideCard({ o, t }: { o: NonNullable<Snapshot["outside_nodes"]>[numbe
           </span>
         </div>
         <p className="text-sm text-muted-foreground">{t("pool.outsideCard")}</p>
-        <a
-          href="https://www.jaist.ac.jp/iscenter/jaist-cloud/vm/"
-          target="_blank"
-          rel="noreferrer"
-          className="inline-flex items-center gap-1 text-xs text-info-fg hover:underline"
-        >
-          {t("pool.outsideLink")}
-          <ExternalLink aria-hidden className="h-3 w-3" />
-        </a>
+        {outsideUrl && (
+          <a
+            href={outsideUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex items-center gap-1 text-xs text-info-fg hover:underline"
+          >
+            {t("pool.outsideLink")}
+            <ExternalLink aria-hidden className="h-3 w-3" />
+          </a>
+        )}
       </CardContent>
     </Card>
   );
@@ -404,7 +394,11 @@ function DisclosureRow({
  *  every field to that partition's defaults. */
 function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
   const { snap } = useLive();
-  const base = SAMPLE[pool.id];
+  // Minimal starter: the pool's sample partition (site file, else Slurm's
+  // default partition) with no resource flags — the submit plugin and the
+  // partition supply the defaults. Where they overflow a node,
+  // `defaultRequestFit` derives the `-n` that pins the job to one node.
+  const base = pool.sample_partition ? { partition: pool.sample_partition } : null;
   const [open, setOpen] = useState(false);
   const [partChoice, setPartChoice] = useState("");
   const [mode, setMode] = useState<"interactive" | "script">("interactive");
@@ -608,12 +602,21 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
   const clusterLicenses = snap?.licenses ?? [];
   const licPlan = licensePlan(partDefaults, clusterLicenses, license, t("pool.licensePlaceholder"));
   const licFlag = licPlan.flag ? [licPlan.flag] : [];
+  // A partition whose submit plugin sets no GPU default hands out none: name
+  // the model and count. (Hakusan's plugin gives one GPU per node, so its
+  // commands carry no --gres for a single GPU.)
+  const gpuType = isGpu && !partDefaults.gpus_per_node ? pool.gpu?.type : undefined;
+  const withGpuType = (flags: string[]) => !gpuType
+    ? flags
+    : flags.some((f) => f.startsWith("--gres=gpu:"))
+      ? flags.map((f) => f.replace(/^--gres=gpu:(\d+)$/, `--gres=gpu:${gpuType}:$1`))
+      : [...flags, `--gres=gpu:${gpuType}:1`];
   const cmd = buildRequestCommand({
     partition,
     // a GPU layout fixes nodes/cores/memory itself
-    requiredFlags: multiGpu && layout
-      ? [...(base.requiredFlags ?? []), ...licFlag, ...layout.flags]
-      : [...(base.requiredFlags ?? []), ...licFlag, ...(singleNodeFlag ? [singleNodeFlag] : [])],
+    requiredFlags: withGpuType(multiGpu && layout
+      ? [...licFlag, ...layout.flags]
+      : [...licFlag, ...(singleNodeFlag ? [singleNodeFlag] : [])]),
     nodeCount: multiGpu ? undefined : nodeCount,
     coreCount: multiGpu ? undefined : coreCount,
     multiNode: multiNodePolicy,
@@ -862,8 +865,8 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
   const probeFailed = probeRejected && selectedCpuRow ? cpuProbeDetail(selectedCpuRow, "failed", t) : "";
 
   // ---- the partition table -------------------------------------------------
-  const mainParts = pool.partitions.filter((p) => !isMaterialsStudioPartition(p));
-  const msParts = pool.partitions.filter(isMaterialsStudioPartition);
+  const mainParts = pool.partitions.filter((p) => !isLicensePartition(p, snap?.policy));
+  const msParts = pool.partitions.filter((p) => isLicensePartition(p, snap?.policy));
   const showTable = Boolean(snap) && (mainParts.length > 1 || msParts.length > 0);
   const rowFor = (p: string): PartitionTableRow => {
     const capP = partitionCap(p, snap?.policy);
@@ -1341,9 +1344,11 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
                     >
                       {t("pool.ptyBack")}
                     </button>
-                    <Link to="/slurm#pty" className="whitespace-nowrap text-info-fg hover:underline">
-                      {t("pool.scriptPtyMore")}
-                    </Link>
+                    {getSite().pages.slurm_guide && (
+                      <Link to="/slurm#pty" className="whitespace-nowrap text-info-fg hover:underline">
+                        {t("pool.scriptPtyMore")}
+                      </Link>
+                    )}
                   </div>
                 </div>
               )}
@@ -1380,7 +1385,9 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
                 {isGpu && mode === "script" && (
                   <p>
                     {t("pool.scriptPtyHint")}{" "}
-                    <Link to="/slurm#pty" className="whitespace-nowrap text-info-fg hover:underline">{t("pool.scriptPtyMore")}</Link>
+                    {getSite().pages.slurm_guide && (
+                      <Link to="/slurm#pty" className="whitespace-nowrap text-info-fg hover:underline">{t("pool.scriptPtyMore")}</Link>
+                    )}
                   </p>
                 )}
                 {limits.length > 0 && (
@@ -1780,7 +1787,7 @@ function bestPartitionPick(
   }
   const nowMs = Date.now();
   const summaries = pool.partitions
-    .filter((p) => !isMaterialsStudioPartition(p))
+    .filter((p) => !isLicensePartition(p, snap.policy))
     .map((p) => partitionRequestSummary(pool, snap, p, isGpu, pendingActive, nowMs, t))
     .filter((s): s is PartitionRequestSummary => s !== null);
   if (summaries.length === 0) return null;

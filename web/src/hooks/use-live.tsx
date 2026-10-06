@@ -1,5 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { connectLive, type LiveStatus } from "@/lib/live";
+import { registerPoolLabels, setPartitionOrder } from "@/lib/site";
 import type { Snapshot } from "@/types/snapshot";
 import { LiveContext } from "./live-context";
 
@@ -11,7 +12,16 @@ export function LiveProvider({ children }: { children: ReactNode }) {
   const [attempt, setAttempt] = useState(0);
 
   useEffect(
-    () => connectLive({ onSnapshot: setSnap, onStatus: setStatus, onError: setError }),
+    () => connectLive({
+      onSnapshot: (next) => {
+        // labels for pools the site file doesn't name, before anything reads them
+        registerPoolLabels(next.pools);
+        setPartitionOrder(next.partition_order);
+        setSnap(next);
+      },
+      onStatus: setStatus,
+      onError: setError,
+    }),
     [attempt],
   );
 

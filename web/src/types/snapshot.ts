@@ -58,6 +58,8 @@ export interface PoolGpu {
 export interface Pool {
   id: string;
   kind: ResourceKind;
+  /** partition the starter command uses (site file, else Slurm's default) */
+  sample_partition?: string | null;
   nodes: number;
   mem_per_node: number;
   nodes_state: Record<string, number>;
@@ -324,6 +326,8 @@ export interface Snapshot {
   licenses?: ClusterLicense[];
   /** hardware scontrol lists but no partition schedules, per pool */
   outside_nodes?: { pool: string; label: string; nodes: number; gpus: number }[];
+  /** the site's partition order, else slurm.conf's */
+  partition_order?: string[];
   cpu_submit_probes?: CpuSubmitProbe[];
   cpu_submit_probes_generated_at?: number;
   cpu_submit_probe_interval?: number;
@@ -347,11 +351,7 @@ export interface Snapshot {
 export interface ContainerInfo {
   runtime: string;
   version: string;
-  has_docker: boolean;
-  login_module: string | null;
-  compute_module: string | null;
   command?: string;
-  examples: string[];
 }
 
 export interface Meta {
@@ -365,9 +365,9 @@ export interface Meta {
     top_n: number;
     show_args: boolean;
   };
-  container: ContainerInfo;
+  /** null until `singularity --version` answered on the cluster */
+  container: ContainerInfo | null;
   policy?: PolicySnapshot | null;
-  docs: Record<string, string>;
   partitions: { name: string; kind: string }[];
   store: {
     samples: number;
@@ -383,7 +383,7 @@ export interface Meta {
 
 export interface RawNode {
   name: string;
-  pool: string; // hardware pool id, tagged by the backend (see normalize.node_pool)
+  pool: string; // hardware pool id, tagged by the backend (see site_config.Site.assign_pools)
   state_bucket: string;
   schedulable: boolean;
   state: string[];

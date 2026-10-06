@@ -5,6 +5,8 @@ export interface I18nValue {
   lang: Lang;
   setLang: (lang: Lang) => void;
   t: TFn;
+  /** bumped when the site's text arrives after the first render */
+  siteVersion: number;
 }
 
 export const I18nContext = createContext<I18nValue | null>(null);

@@ -7,7 +7,7 @@ Architecture:
                                               ├─ Store (SQLite TSDB: retention + rollup)
                                               └─ fan-out to SSE subscribers
     HTTP: /api/snapshot /api/stream(SSE) /api/history /api/usage /api/analytics
-          /api/visits /api/meta /api/health
+          /api/visits /api/meta /api/site /api/health
           + static SPA.
 
 A background Sampler thread polls on a fixed cadence, so data collection is
@@ -24,6 +24,7 @@ from urllib.parse import urlparse, parse_qs
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import analytics               # noqa: E402
 import normalize as nz          # noqa: E402
+import site_config              # noqa: E402
 from job_history import JobHistoryCollector  # noqa: E402
 from login_nodes import LoginNodeCollector, public_nodes, summarize_users  # noqa: E402
 from sources import CLUSTER_TZ, Source  # noqa: E402
@@ -99,7 +100,9 @@ CFG = {
     # written by scripts/check_cluster_policy.py
     "policy_cache": env("HM_POLICY_CACHE", os.path.join(ROOT, "data", "cluster_policy.json")),
     "policy_check": env("HM_POLICY_CHECK", os.path.join(ROOT, "data", "policy_check.json")),
-    "job_submit_lua": env("HM_JOB_SUBMIT_LUA", "/app/slurm/job_submit.lua"),
+    # optional site file (sites/hakusan.json): pool names, GPU labels, order, copy
+    "site": env("HM_SITE", ""),
+    "job_submit_lua": env("HM_JOB_SUBMIT_LUA", ""),
     "mask_users": env("HM_MASK_USERS", "0") in ("1", "true", "yes"),
     "mock_dir":   env("HM_MOCK_DIR", os.path.join(ROOT, "mock")),
     "db":         env("HM_DB", os.path.join(ROOT, "data", "hakusan.sqlite")),
@@ -123,16 +126,10 @@ CFG = {
     "login_timeout": float(env("HM_LOGIN_TIMEOUT", "25")),
 }
 
-CONTAINER_INFO = {
-    "runtime": "SingularityCE", "version": "4.3.7-noble", "has_docker": False,
-    "login_module": None, "compute_module": None, "command": "singularity",
-    "examples": [
-        "singularity pull python_3.12.sif docker://python:3.12",
-        "srun -p VM-CPU -c 8 --mem 16G --pty bash -lc "
-        "'singularity exec python_3.12.sif python3 -V'",
-    ],
-}
-DOCS = {"course_material": "https://jstorage.app.box.com/v/hakusan20260618ja"}
+# a relative HM_SITE (sites/hakusan.json) is read from the repository root
+SITE = site_config.load(os.path.join(ROOT, CFG["site"]) if CFG["site"] else "")
+# the submit plugin's path: HM_JOB_SUBMIT_LUA, else the site file's; empty = none
+CFG["job_submit_lua"] = CFG["job_submit_lua"] or SITE.job_submit_lua
 
 
 # --------------------------------------------------------------------------- #
@@ -146,7 +143,7 @@ class Engine:
                           cpu_probe_interval=cfg["cpu_probe_interval"],
                           policy_interval=cfg["policy_interval"],
                           policy_cache=cfg["policy_cache"], policy_check=cfg["policy_check"],
-                          lua_path=cfg["job_submit_lua"])
+                          lua_path=cfg["job_submit_lua"], probe_order=SITE.probe_order)
         self.login = LoginNodeCollector(
             mode=cfg["source"], nodes=cfg["login_nodes"], ssh_opts=cfg["ssh_opts"],
             mock_dir=cfg["mock_dir"], interval=cfg["login_interval"],
@@ -169,7 +166,6 @@ class Engine:
         self.error = None
         self.fail_count = 0     # consecutive failed sample cycles
         self.last_fail_at = 0
-        self.sing_version = None
         self.login_nodes = None
         self._subs = set()
         self._lock = threading.Lock()
@@ -186,9 +182,9 @@ class Engine:
         now = time.time()
         try:
             nodes, squeue = self.src.fetch()
-            outside = nz.outside_nodes(nodes)
+            pool_of = SITE.assign_pools(nodes.get("nodes", []))
+            outside = nz.outside_nodes(nodes, pool_of, SITE)
             nodes = nz.cluster_nodes(nodes)
-            self.sing_version = self.src.singularity   # captured in the same round trip
             raw_nodes = nodes.get("nodes", [])
             # same last-wins dedupe as normalize(): the per-node array the
             # client iterates must never disagree with the aggregates
@@ -200,19 +196,29 @@ class Engine:
             # the client also receives the normalized scheduling verdict instead
             # of re-deriving Slurm state semantics in multiple TypeScript modules.
             for nd in raw_nodes:
-                nd["pool"] = nz.node_pool(nd.get("name", ""))
+                nd["pool"] = pool_of.get(nd.get("name", ""), "other")
                 states = nz.state_list(nd)
                 nd["state_bucket"] = nz.bucket_state(states)
                 nd["schedulable"] = nz.is_schedulable(states)
             jobs = squeue.get("jobs", [])
             if self.cfg["mask_users"]:   # honour the privacy flag in raw data too
                 jobs = [{**j, "user_name": nz.mask_user(j.get("user_name", ""), True)} for j in jobs]
-            snap = nz.normalize(nodes, squeue,
+            policy = self.src.policy_snapshot
+            snap = nz.normalize(nodes, squeue, site=SITE, pool_of=pool_of,
+                                cluster=SITE.cluster_name(policy),
                                 slurm_version=self.src.slurm_version(nodes),
                                 mask_users=self.cfg["mask_users"])
             snap.update(generated_at=int(now), age_s=0.0,
                         source=self.cfg["source"], stale=False)
             snap["outside_nodes"] = outside
+            snap["partition_order"] = SITE.display_order(policy)
+            seen = {}
+            for pool in snap["pools"]:
+                for part in pool["partitions"]:
+                    seen[part] = seen.get(part, 0) + 1
+            shared = {part for part, n in seen.items() if n > 1}
+            for pool in snap["pools"]:
+                pool["sample_partition"] = SITE.sample_partition(pool, policy, shared)
             snap["licenses"] = squeue.get("licenses", [])
             snap["cpu_submit_probes"] = squeue.get("cpu_submit_probes", [])
             snap["cpu_submit_probes_generated_at"] = squeue.get("cpu_submit_probes_generated_at", 0)
@@ -325,10 +331,10 @@ class Engine:
 
     def meta(self):
         snap = self.latest or {}
-        ci = dict(CONTAINER_INFO)
-        if self.sing_version:
-            ci["version"] = self.sing_version
-        return {"cluster": snap.get("cluster", "hakusan"),
+        sing = self.src.singularity   # read once, kept in the policy cache
+        ci = {"runtime": sing["runtime"], "version": sing["version"],
+              "command": "singularity"} if sing else None
+        return {"cluster": snap.get("cluster") or SITE.cluster_name(self.src.policy_snapshot),
                 "slurm_version": snap.get("slurm_version", ""),
                 "source": self.cfg["source"], "interval": self.cfg["interval"],
                 "login_nodes": {"configured": bool(self.cfg["login_nodes"]) or self.cfg["source"] in ("mock", "local"),
@@ -336,7 +342,7 @@ class Engine:
                                 "top_n": self.cfg["login_top_n"],
                                 "show_args": self.cfg["login_show_args"]},
                 "policy": self.src.policy_snapshot,
-                "container": ci, "docs": DOCS,
+                "container": ci,
                 "partitions": [{"name": p["name"], "kind": p["kind"]}
                                for p in snap.get("partitions", [])],
                 "store": self.store.stats()}
@@ -506,6 +512,11 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(200, eng.store.visit_stats(days))
         if path == "/api/policy-source":
             return self._json(200, eng.policy_source())
+        if path == "/api/site":
+            out = SITE.public(eng.src.policy_snapshot)
+            # the Containers page only where `singularity` answered on the cluster
+            out["pages"]["containers"] = bool(eng.src.singularity) or CFG["source"] == "mock"
+            return self._json(200, out)
         if path == "/api/meta":
             return self._json(200, eng.meta())
         if path == "/api/health":
