@@ -22,7 +22,7 @@ export function cpuProbeRows(pool: Pool, snap: Snapshot): CpuProbeRow[] {
     .map((probe) => cpuProbeRow(probe.partition, probe, snap));
 }
 
-export function cpuProbeRow(partition: string, probe: CpuSubmitProbe | null, snap: Snapshot): CpuProbeRow {
+function cpuProbeRow(partition: string, probe: CpuSubmitProbe | null, snap: Snapshot): CpuProbeRow {
   const base = { partition, probe, cores: probe?.processors || 0, command: `salloc -p ${partition}` };
   return { ...base, state: cpuStartState(base, snap) };
 }
@@ -190,7 +190,7 @@ export function cpuDefaultSpreads(snap: Snapshot, partition: string, cores: numb
 }
 
 /** How long Slurm's own "starts now" outranks the live judgement. */
-export const PROBE_NOW_TRUST_S = 300;
+const PROBE_NOW_TRUST_S = 300;
 
 /** The verdict shown for a CPU partition: the live judgement, except that a
  *  probe the scheduler rejected outright stays "failed", and a fresh probe
@@ -209,7 +209,7 @@ export function cpuStartState(row: Pick<CpuProbeRow, "partition" | "probe">, sna
   return liveCpuStart(snap, row.partition) ?? probed;
 }
 
-export function cpuProbeMaxAge(snap: Snapshot) {
+function cpuProbeMaxAge(snap: Snapshot) {
   return (snap.cpu_submit_probe_interval ?? 900) + 300;
 }
 

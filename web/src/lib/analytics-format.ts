@@ -133,7 +133,7 @@ const mean = (xs: (number | null)[]) => {
 };
 
 /** Weekday (Mon–Fri) average per hour of the submit grid. */
-export function weekdayHours(view: AnalyticsView): number[] {
+function weekdayHours(view: AnalyticsView): number[] {
   return Array.from({ length: 24 }, (_, h) => mean(view.submit.cells.slice(0, 5).map((r) => r[h])) ?? 0);
 }
 

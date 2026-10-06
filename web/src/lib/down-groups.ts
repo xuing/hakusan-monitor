@@ -22,7 +22,7 @@ const STAMP = /\s*\[([^@\]]+)@([0-9T:-]+)\]\s*$/;
 
 /** gray: planned (a maintenance reason or MAINT state, or a pool wholly
  *  offline); red: the node failed; amber: drained for another reason. */
-export function downTone(node: DownNode, poolInMaint: boolean): DownTone {
+function downTone(node: DownNode, poolInMaint: boolean): DownTone {
   const states = new Set(node.state.map((s) => s.toUpperCase()));
   if (poolInMaint || states.has("MAINT") || /^maint/i.test(node.reason || "")) return "maint";
   if (states.has("DOWN") || states.has("NOT_RESPONDING")) return "fault";

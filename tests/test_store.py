@@ -8,34 +8,35 @@ from backend.store import Store
 
 
 class StoreHistoryTests(unittest.TestCase):
-    def record_sample(self, ts, util=0.5):
-        metrics = dict(cpu_util=util, gpu_util=util, mem_util=util,
+    def record_sample(self, ts, free=1):
+        metrics = dict(cpu_util=0.5, gpu_util=0.5, mem_util=0.5,
                        cpus_total=10, cpus_alloc=5, gpus_total=10, gpus_used=5,
                        nodes_total=1, nodes_avail=1, nodes_down=0, running=1, pending=0)
+        snap = {"pools": [{"id": "a40", "kind": "gpu", "gpu": {"free": free, "maint": False}}]}
         with patch("backend.store._metrics", return_value=metrics):
-            self.store.record({}, ts)
+            self.store.record(snap, ts)
 
     def test_duplicate_samples_do_not_change_rollup_after_reopen(self):
         self.record_sample(3600)
         self.record_sample(3601)
         self.store.close()
         self.store = Store(self.path)
-        self.record_sample(3600, util=1)
+        self.record_sample(3600, free=0)
         c = self.store._conn()
         self.assertEqual(c.execute("SELECT count(*) FROM samples").fetchone()[0], 2)
-        row = c.execute("SELECT n,cpu_avg FROM samples_hourly").fetchone()
-        self.assertEqual(tuple(row), (2, 0.5))
+        row = c.execute("SELECT n,free_n FROM pool_hourly").fetchone()
+        self.assertEqual(tuple(row), (2, 2))
 
     def test_failed_rollup_rolls_back_and_can_retry_same_timestamp(self):
         c = self.store._conn()
-        c.execute("""CREATE TRIGGER fail_rollup BEFORE INSERT ON samples_hourly
+        c.execute("""CREATE TRIGGER fail_rollup BEFORE INSERT ON pool_hourly
                      BEGIN SELECT RAISE(ABORT, 'test failure'); END""")
         with self.assertRaises(sqlite3.IntegrityError):
             self.record_sample(3600)
         self.assertEqual(c.execute("SELECT count(*) FROM samples").fetchone()[0], 0)
         c.execute("DROP TRIGGER fail_rollup")
         self.record_sample(3600)
-        self.assertEqual(c.execute("SELECT n FROM samples_hourly").fetchone()[0], 1)
+        self.assertEqual(c.execute("SELECT n FROM pool_hourly").fetchone()[0], 1)
 
     def setUp(self):
         fd, self.path = tempfile.mkstemp(suffix=".sqlite")
@@ -71,20 +72,6 @@ class StoreHistoryTests(unittest.TestCase):
         self.assertEqual(by_node["b"][0]["ts"], 1)
         self.assertEqual(by_node["b"][-1]["ts"], 6)
         self.assertLessEqual(len(rows), 10)
-
-    def test_history_does_not_halve_exact_budget_and_keeps_latest(self):
-        c = self.store._conn()
-        with c:
-            for ts in range(1, 11):
-                c.execute("INSERT INTO samples (ts,cpu_util) VALUES (?,?)", (ts, ts / 10))
-
-        exact = self.store.history(1, 10, max_points=10)
-        sampled = self.store.history(1, 10, max_points=4)
-
-        self.assertEqual(len(exact), 10)
-        self.assertEqual(sampled[0]["ts"], 1)
-        self.assertEqual(sampled[-1]["ts"], 10)
-        self.assertLessEqual(len(sampled), 4)
 
     def test_prune_applies_to_cluster_login_and_visits(self):
         now = 10 * 86400

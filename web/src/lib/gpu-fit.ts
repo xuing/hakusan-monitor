@@ -11,7 +11,7 @@ import {
   type GpuNodeFacts,
 } from "@/lib/gpu-availability";
 import { mayUseNode, queueModel, shareOf, type Claim, type QueueModel, type Waiter } from "@/lib/queue";
-import { capPerGpu, effectiveGpuLimit, minutesToSlurmTime, partitionCap, partitionDefaultRequest, type PartitionCap } from "@/lib/slurm";
+import { capPerGpu, minutesToSlurmTime, partitionCap, partitionDefaultRequest, type PartitionCap } from "@/lib/slurm";
 import type { Pool, RawJob, RawNode, Snapshot } from "@/types/snapshot";
 
 export interface GpuFitNeed {
@@ -52,10 +52,10 @@ export interface GpuFitTipData {
 export function gpuFitSnapshot(snap: Snapshot, pool: Pool, cap: PartitionCap, partition: string): GpuFitInfo {
   return gpuFitFromNodes(snap.nodes, snap.jobs, pool, cap, partition,
                          partitionDefaultRequest(partition, snap.policy),
-                         effectiveGpuLimit(cap).total);
+                         cap.maxGpus);
 }
 
-/** `jobGpus`: GPUs one job really holds (effectiveGpuLimit), which divides
+/** `jobGpus`: GPUs one job really holds (the QoS gres cap), which divides
  *  the QoS cap into a per-GPU share; defaults to the QoS gres cap. */
 export function gpuFitFromNodes(nodes: RawNode[], jobs: RawJob[], pool: Pool, cap: PartitionCap,
                                 partition: string, request: GpuDefaultRequest,
@@ -193,7 +193,7 @@ function partitionVerdict(facts: GpuNodeFacts[], snap: Snapshot, partition: stri
   return gpuAvailability(
     facts,
     partitionDefaultRequest(partition, snap.policy),
-    capPerGpu(cap, effectiveGpuLimit(cap).total),
+    capPerGpu(cap, cap.maxGpus),
   );
 }
 
@@ -232,7 +232,7 @@ function gpuFitNeed(nodes: RawNode[], pool: Pool, cap: PartitionCap, partition: 
   return { partition, gpus: need.gpus, cores: need.cores, memMb: need.memMb };
 }
 
-export function runningJobsByNode(jobs: RawJob[]) {
+function runningJobsByNode(jobs: RawJob[]) {
   const byNode = new Map<string, RawJob[]>();
   for (const job of jobs) {
     if (String(job.job_state || "").toUpperCase() !== "RUNNING" || !job.nodelist) continue;

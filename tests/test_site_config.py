@@ -59,7 +59,6 @@ class AutoPoolTests(unittest.TestCase):
         self.assertEqual(gpu["kind"], "gpu")
         self.assertEqual(gpu["gpu"]["label"], "A100")
         self.assertIsNone(gpu["gpu"]["mem_gb"])   # unknown unless the site file says
-        self.assertEqual(snap["gpus"][0]["label"], "A100")
 
     def test_sample_partition_prefers_slurm_default(self):
         site = site_config.Site()

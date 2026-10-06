@@ -3,7 +3,7 @@
 
 export type AnalyticsKind = "gpu" | "cpu";
 
-export interface AnalyticsPool {
+interface AnalyticsPool {
   id: string;
   label: string;
   units: number | null;   // GPUs (gpu view) or cores (cpu view)

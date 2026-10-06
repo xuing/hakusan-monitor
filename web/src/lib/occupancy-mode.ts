@@ -2,7 +2,7 @@ import { partitionCap } from "@/lib/slurm";
 import type { Pool, Snapshot } from "@/types/snapshot";
 
 /** CPU pools of at most this many cores draw one cell per core. */
-export const GRID_MAX_CORES = 128;
+const GRID_MAX_CORES = 128;
 
 /** How a pool's occupancy map is drawn, from the pool's own shape: one cell
  *  per GPU, or per core on a pool this small (the 96-core large-memory

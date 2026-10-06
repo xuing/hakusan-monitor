@@ -3,7 +3,6 @@ import { fmtCapMem } from "./policy-hints";
 import {
   allowsMultiNode,
   defaultRequestSec,
-  effectiveGpuLimit,
   effectiveJobMemGb,
   effectiveMemPerNodeGb,
   fmtWallMinutes,
@@ -119,13 +118,6 @@ describe("plugin-forced interactive walltime", () => {
     expect(defaultRequestSec("GPU-1", POLICY)).toBe(720 * 60);
     expect(defaultRequestSec("TINY", POLICY)).toBe(30 * 60);
     expect(defaultRequestSec("GPU-1", undefined)).toBe(Number.POSITIVE_INFINITY);
-  });
-});
-
-describe("effective GPU limit", () => {
-  it("is the QoS gres cap, undefined when the QoS states none", () => {
-    expect(effectiveGpuLimit({ maxGpus: 2 })).toEqual({ total: 2 });
-    expect(effectiveGpuLimit({})).toEqual({ total: undefined });
   });
 });
 

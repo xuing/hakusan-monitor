@@ -78,13 +78,6 @@ def is_schedulable(states):
     return bool(s & {"IDLE", "MIXED"}) and not bool(s & _BLOCKING_STATES)
 
 
-def release_counts(acc):
-    """{"jobs", "nodes": set} accumulator -> {"jobs": n, "nodes": distinct nodes}."""
-    if not acc:
-        return {"jobs": 0, "nodes": 0}
-    return {"jobs": acc["jobs"], "nodes": len(acc["nodes"])}
-
-
 def idle_gpu_bucket(states):
     """Where a node's idle GPUs go when they are not free capacity.
 
@@ -118,73 +111,6 @@ def mask_user(u, mask):
     if not mask or not u:
         return u
     return (u[:2] + "***") if len(u) > 2 else "***"
-
-
-def pressure_level(p):
-    if p >= 0.9:
-        return "critical"
-    if p >= 0.75:
-        return "high"
-    if p >= 0.5:
-        return "moderate"
-    return "low"
-
-
-RELEASE_SOON_S = 2 * 3600   # a running job "releases soon" if it ends within 2h
-
-
-def expand_hostlist(text):
-    """Slurm hostlist -> names: "lcpcc-[002-003,005],gl01" -> 4 names; every
-    bracket group expands, so "rack[1-2]n[01-02]" -> 4 hosts.
-    Mirrors the frontend's expandHostlist (web/src/lib/derive.ts)."""
-    items, depth, start = [], 0, 0
-    text = str(text or "")
-    for i, ch in enumerate(text + ","):
-        if ch == "[":
-            depth += 1
-        elif ch == "]":
-            depth -= 1
-        elif ch == "," and depth == 0:
-            if text[start:i].strip():
-                items.append(text[start:i].strip())
-            start = i + 1
-    names = []
-    for item in items:
-        names.extend(_expand_host(item))
-    return names
-
-
-def _expand_host(item):
-    m = re.match(r"(.*?)\[([^\]]+)\](.*)", item)
-    if not m:
-        return [item]
-    prefix, ranges, rest = m.groups()
-    heads = []
-    for r in ranges.split(","):
-        lo, _, hi = r.partition("-")
-        if not hi:
-            heads.append(f"{prefix}{lo}")
-            continue
-        heads.extend(f"{prefix}{str(n).zfill(len(lo))}" for n in range(int(lo), int(hi) + 1))
-    tails = _expand_host(rest) if rest else [""]
-    return [h + t for h in heads for t in tails]
-
-
-def parse_duration(s):
-    """Slurm time-left -> seconds. Handles MM:SS, H:MM:SS, D-HH:MM:SS. None if unset."""
-    if not s or (":" not in s and "-" not in s):
-        return None
-    try:
-        days = 0
-        if "-" in s:
-            d, s = s.split("-", 1)
-            days = int(d)
-        parts = [int(x) for x in s.split(":")]
-        while len(parts) < 3:
-            parts.insert(0, 0)
-        return days * 86400 + parts[-3] * 3600 + parts[-2] * 60 + parts[-1]
-    except Exception:
-        return None
 
 
 def cluster_nodes(nodes_json):
@@ -225,27 +151,19 @@ def normalize(nodes_json, squeue_json, *, site, pool_of=None, cluster="slurm",
     # the physical identity and therefore the normalization invariant. Last row
     # wins so a later, fresher observation replaces an earlier duplicate.
     by_name = {}
-    duplicate_nodes = []
     for nd in nodes:
         name = nd.get("name", "")
         if not name:
             continue
-        if name in by_name and name not in duplicate_nodes:
-            duplicate_nodes.append(name)
         by_name[name] = nd
     nodes = list(by_name.values())
 
     # ---- per-node pass -------------------------------------------------------
     tot_cpu = alloc_cpu = 0
-    other_cpu = 0          # cores on down/drained nodes — present but NOT runnable
     tot_mem = alloc_mem = 0
-    by_state = Counter()
-    gpu_nodes_total = gpu_nodes_free = 0   # GPU nodes / with a free GPU
-    cpu_nodes_total = cpu_nodes_free = 0   # CPU nodes / with free cores
+    nodes_total = 0
     gpu_total = Counter()
     gpu_used = Counter()
-    gpu_down = Counter()       # idle GPUs on nodes needing operator attention
-    gpu_reserved = Counter()   # idle GPUs blocked/reserved by the scheduler
     pools = {}            # id -> accumulator
     part_nodes = defaultdict(list)
     nodes_down = []
@@ -257,7 +175,7 @@ def normalize(nodes_json, squeue_json, *, site, pool_of=None, cluster="slurm",
             continue
         states = state_list(nd)
         b = bucket_state(states)
-        by_state[b] += 1
+        nodes_total += 1
         cpus = num(nd.get("cpus")) or 0
         acpu = num(nd.get("alloc_cpus")) or 0
         rmem = num(nd.get("real_memory")) or 0
@@ -275,18 +193,6 @@ def normalize(nodes_json, squeue_json, *, site, pool_of=None, cluster="slurm",
             gpu_used[k] += v
         node_up = is_schedulable(states)
         gpu_bucket_name = idle_gpu_bucket(states)
-        if gpu_bucket_name:
-            unavailable = gpu_down if gpu_bucket_name == "down" else gpu_reserved
-            for k, v in g_tot.items():
-                unavailable[k] += max(v - g_use.get(k, 0), 0)
-        if g_tot:
-            gpu_nodes_total += 1
-            if node_up and (sum(g_tot.values()) - sum(g_use.values())) > 0:
-                gpu_nodes_free += 1
-        else:
-            cpu_nodes_total += 1
-            if node_up and (cpus - acpu) > 0:
-                cpu_nodes_free += 1
 
         pid = pool_of.get(name, "other")
         pa = pools.setdefault(pid, dict(id=pid, kind="cpu",
@@ -317,7 +223,6 @@ def normalize(nodes_json, squeue_json, *, site, pool_of=None, cluster="slurm",
                                    for k, v in g_tot.items()})
         if not node_up:
             pa["other_cores"] += cpus - acpu
-            other_cpu += cpus - acpu
         if needs_attention(states):
             pa["down_nodes"] += 1
 
@@ -334,8 +239,6 @@ def normalize(nodes_json, squeue_json, *, site, pool_of=None, cluster="slurm",
 
     gpu_total_n = sum(gpu_total.values())
     gpu_used_n = sum(gpu_used.values())
-    gpu_down_n = sum(gpu_down.values())
-    gpu_reserved_n = sum(gpu_reserved.values())
 
     # partition -> dominant GPU type (GPU jobs report only a count, not a type)
     # partition -> hardware pool (its nodes' pool)
@@ -355,19 +258,14 @@ def normalize(nodes_json, squeue_json, *, site, pool_of=None, cluster="slurm",
     # ---- queue pass ----------------------------------------------------------
     run_by_part = Counter()
     pend_by_part = Counter()
-    pend_reason_by_part = defaultdict(Counter)
     pend_reasons = Counter()
     running = pending = container_jobs = 0
     pending_jobs = []
     longest_pending_by_part = {}
     releases = []                # running jobs that will free resources, by end time
     next_free = {}               # gpu type -> soonest {at, left, gpus} release
-    # per-partition / per-pool, within 2h: job count + DISTINCT nodes touched
-    # (summing node_count counted lcpcc-002 three times for three jobs)
-    releasing = defaultdict(lambda: {"jobs": 0, "nodes": set()})
     pool_run = Counter()
     pool_pend = Counter()
-    pool_releasing = defaultdict(lambda: {"jobs": 0, "nodes": set()})
 
     def gpu_label(gtype, n):
         lbl = site.gpu_info(gtype)["label"] if gtype else "GPU"
@@ -380,19 +278,10 @@ def normalize(nodes_json, squeue_json, *, site, pool_of=None, cluster="slurm",
         if st == "RUNNING":
             running += 1
             left = j.get("time_left") or ""
-            soon = parse_duration(left)
-            soon = soon is not None and soon <= RELEASE_SOON_S
-            hosts = set(expand_hostlist(j.get("nodelist"))) if soon else set()
             for p in parts:
                 run_by_part[p] += 1
-                if soon:
-                    releasing[p]["jobs"] += 1
-                    releasing[p]["nodes"] |= hosts
             for pool in {part_pool.get(p) for p in parts if p in part_pool}:
                 pool_run[pool] += 1
-                if soon:
-                    pool_releasing[pool]["jobs"] += 1
-                    pool_releasing[pool]["nodes"] |= hosts
             u = j.get("user_name", "")
             end = j.get("end_time") or ""
             if end:
@@ -420,7 +309,6 @@ def normalize(nodes_json, squeue_json, *, site, pool_of=None, cluster="slurm",
             pend_reasons[reason] += 1
             for p in parts:
                 pend_by_part[p] += 1
-                pend_reason_by_part[p][reason] += 1
             for pool in {part_pool.get(p) for p in parts if p in part_pool}:
                 pool_pend[pool] += 1
             gp = j.get("gpus", 0)
@@ -466,11 +354,6 @@ def normalize(nodes_json, squeue_json, *, site, pool_of=None, cluster="slurm",
         )
         cpu_util = (ca / ct) if ct else 0.0
         gpu_util = (gu / gt) if gt else 0.0
-        util = gpu_util if kind == "gpu" else cpu_util
-        r = run_by_part.get(p, 0)
-        pd = pend_by_part.get(p, 0)
-        queue_ratio = min(pd / (r + 1), 1.0)
-        pressure = round(0.6 * util + 0.4 * queue_ratio, 3)
         states = Counter(m[1] for m in members)              # bucketed node states
         other_c = sum(
             cpus - acpu for nd_m, _b, cpus, acpu, _g_tot, _g_use in members
@@ -484,7 +367,6 @@ def normalize(nodes_json, squeue_json, *, site, pool_of=None, cluster="slurm",
         )
         partitions.append({
             "name": p, "kind": kind, "nodes": len(members),
-            "gpu_type": part_gpu_type.get(p) if kind == "gpu" else None,
             # unavailable: unallocated cores on down/drained/held nodes, so
             # total = alloc + free + unavailable reconciles
             "cpus": {"total": ct, "alloc": ca, "free": max(ct - ca - other_c, 0),
@@ -494,9 +376,7 @@ def normalize(nodes_json, squeue_json, *, site, pool_of=None, cluster="slurm",
                      "free": max(gt - gu - gpu_down_part - gpu_reserved_part, 0),
                      "util": round(gpu_util, 3)} if gt else None),
             "pool": part_pool.get(p),
-            "jobs": {"running": r, "pending": pd},
-            "pending_reasons": dict(pend_reason_by_part.get(p, {})),
-            "pressure": pressure, "level": pressure_level(pressure),
+            "jobs": {"running": run_by_part.get(p, 0), "pending": pend_by_part.get(p, 0)},
             # per-node spec (nodes in a partition are homogeneous) + live availability
             "spec": {
                 "cores_per_node": max((m[2] for m in members), default=0),
@@ -504,13 +384,9 @@ def normalize(nodes_json, squeue_json, *, site, pool_of=None, cluster="slurm",
                 "gpu_per_node": max((sum(m[4].values()) for m in members), default=0),
             },
             "nodes_state": dict(states),
-            "free_nodes": states.get("idle", 0),
             "available_nodes": available_nodes,
-            "busy_nodes": states.get("allocated", 0) + states.get("mixed", 0),
-            "releasing": release_counts(releasing.get(p)),
         })
-    # busiest first
-    partitions.sort(key=lambda x: (-x["pressure"], -x["jobs"]["pending"], x["name"]))
+    partitions.sort(key=lambda x: x["name"])
 
     # ---- pools (the primary resource view) -----------------------------------
     pool_out = []
@@ -534,7 +410,6 @@ def normalize(nodes_json, squeue_json, *, site, pool_of=None, cluster="slurm",
                    "next_free": next_free.get(gtype) if gd < gt else None}
         free_cores = max(ctot - calloc - pa["other_cores"], 0)   # idle, runnable cores
         util = gpu["util"] if (is_gpu and gpu) else (calloc / ctot if ctot else 0.0)
-        avail = (gpu["free"] if gpu else 0) if is_gpu else free_cores
         pool_out.append({
             "id": pid, "kind": pa["kind"], "nodes": pa["nodes"],
             "mem_per_node": pa["mem_per_node"],
@@ -542,33 +417,15 @@ def normalize(nodes_json, squeue_json, *, site, pool_of=None, cluster="slurm",
             "idle_nodes": st.get("idle", 0),
             "available_nodes": pa["available_nodes"],
             "down_nodes": pa["down_nodes"],
-            "cpus_total": ctot, "cpus_alloc": calloc,
             "cores": {"total": ctot, "alloc": calloc, "free": free_cores,
                       "unavailable": pa["other_cores"],
                       "util": round(calloc / ctot, 3) if ctot else 0.0},
             "util": round(util, 3),
             "gpu": gpu,
             "partitions": sorted(pa["parts"]),
-            "queue": {"running": pool_run.get(pid, 0), "pending": pool_pend.get(pid, 0),
-                      "releasing": release_counts(pool_releasing.get(pid))},
-            "avail": {"units": avail, "unit": "gpu" if is_gpu else "cores",
-                      "can_now": avail > 0, "idle_nodes": st.get("idle", 0)},
+            "queue": {"running": pool_run.get(pid, 0), "pending": pool_pend.get(pid, 0)},
         })
     pool_out.sort(key=site.pool_rank)
-
-    # ---- gpu board -----------------------------------------------------------
-    gpus = []
-    for t in sorted(gpu_total, key=site.gpu_rank):
-        if gpu_total.get(t):
-            cat = site.gpu_info(t)
-            tt, uu, dd = gpu_total[t], gpu_used.get(t, 0), gpu_down.get(t, 0)
-            rr = gpu_reserved.get(t, 0)
-            gpus.append({"type": t, "label": cat["label"], "mem_gb": cat["mem_gb"],
-                         "total": tt, "used": uu, "down": dd, "reserved": rr,
-                         "free": max(tt - uu - dd - rr, 0),  # usable & idle right now
-                         "util": round(uu / tt, 3) if tt else 0.0,
-                         "maint": dd >= tt,                # whole type is offline
-                         "next_free": next_free.get(t) if dd < tt else None})
 
     # ---- pending preview -------------------------------------------------------
     pending_jobs.sort(key=pending_sort_key)
@@ -578,46 +435,24 @@ def normalize(nodes_json, squeue_json, *, site, pool_of=None, cluster="slurm",
     releases.sort(key=lambda x: x["end_time"])
     top_releases = releases[:14]
 
-    avail = sched_avail
-    down = len(nodes_down)
-
     return {
         "schema_version": 1,
         "cluster": cluster,
         "slurm_version": slurm_version,
+        # cluster-wide figures the store keeps per sample (store._metrics)
         "totals": {
-            "nodes": {"total": sum(by_state.values()), "available": avail,
-                      "down": down, "by_state": dict(by_state),
-                      "gpu_total": gpu_nodes_total, "gpu_free": gpu_nodes_free,
-                      "cpu_total": cpu_nodes_total, "cpu_free": cpu_nodes_free},
+            "nodes": {"total": nodes_total, "available": sched_avail, "down": len(nodes_down)},
             "cpus": {"total": tot_cpu, "alloc": alloc_cpu,
-                     "free": max(tot_cpu - alloc_cpu - other_cpu, 0),
-                     "unavailable": other_cpu,
                      "util": round(alloc_cpu / tot_cpu, 3) if tot_cpu else 0.0},
-            "memory": {"total_mb": tot_mem, "alloc_mb": alloc_mem,
-                       "util": round(alloc_mem / tot_mem, 3) if tot_mem else 0.0},
+            "memory": {"util": round(alloc_mem / tot_mem, 3) if tot_mem else 0.0},
             "gpus": {"total": gpu_total_n, "used": gpu_used_n,
-                     "down": gpu_down_n, "reserved": gpu_reserved_n,
-                     "free": max(gpu_total_n - gpu_used_n - gpu_down_n - gpu_reserved_n, 0),
-                     "util": round(gpu_used_n / gpu_total_n, 3) if gpu_total_n else 0.0,
-                     "by_type": {k: {"total": gpu_total[k],
-                                      "used": gpu_used.get(k, 0),
-                                      "down": gpu_down.get(k, 0),
-                                      "reserved": gpu_reserved.get(k, 0),
-                                      "free": max(gpu_total[k] - gpu_used.get(k, 0)
-                                                  - gpu_down.get(k, 0)
-                                                  - gpu_reserved.get(k, 0), 0)}
-                                 for k in gpu_total}},
+                     "util": round(gpu_used_n / gpu_total_n, 3) if gpu_total_n else 0.0},
         },
         "pools": pool_out,
         "partitions": partitions,
-        "gpus": gpus,
         "queue": {
-            "running": running, "pending": pending, "total": running + pending,
+            "running": running, "pending": pending,
             "pending_reasons": dict(pend_reasons),
-            "by_partition": [{"partition": p, "running": run_by_part.get(p, 0),
-                              "pending": pend_by_part.get(p, 0)}
-                             for p in sorted(set(run_by_part) | set(pend_by_part))],
             "top_pending": top_pending,
             "longest_pending_by_partition": longest_pending,
             "releases": top_releases,
@@ -625,7 +460,6 @@ def normalize(nodes_json, squeue_json, *, site, pool_of=None, cluster="slurm",
         },
         "nodes_down": nodes_down,
         "part_pool": part_pool,    # partition -> pool id (lets the client group raw jobs)
-        "diagnostics": {"duplicate_nodes": duplicate_nodes},
     }
 
 

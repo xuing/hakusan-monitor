@@ -1,13 +1,11 @@
 // Typed client for the backend JSON API. The live snapshot (with embedded raw
 // nodes/jobs) arrives via SSE (see lib/live.ts); these are the on-demand extras.
 import type {
-  HistoryPoint,
   LoginHistoryPoint,
   LoginNodesResponse,
   Meta,
   PolicySource,
   Snapshot,
-  UsagePattern,
   VisitStats,
 } from "@/types/snapshot";
 import type { AnalyticsPayload } from "@/types/analytics";
@@ -37,9 +35,6 @@ export const api = {
   },
   snapshot: () => get<Snapshot>("/api/snapshot", validateSnapshot),
   meta: () => get<Meta>("/api/meta"),
-  history: (hours = 24) =>
-    get<{ since: number; until: number; points: HistoryPoint[] }>(`/api/history?hours=${hours}`),
-  usage: (days = 30) => get<UsagePattern>(`/api/usage?days=${days}`),
   analytics: () => get<AnalyticsPayload>("/api/analytics"),
   visits: (days = 30) => get<VisitStats>(`/api/visits?days=${days}`),
   loginNodes: () => get<LoginNodesResponse>("/api/login-nodes"),

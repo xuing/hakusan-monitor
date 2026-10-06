@@ -109,59 +109,6 @@ export function AreaChart({
   );
 }
 
-/** Small dependency-free bar chart used by the visit summary. */
-export function BarChart({
-  data,
-  index,
-  categories,
-  colors = ["blue"],
-  valueFormatter = (value) => String(Math.round(value)),
-  className,
-}: ChartProps) {
-  const category = categories[0];
-  const max = niceMax(Math.max(0, ...data.map((row) => number(row[category]))));
-  const chartW = size.width - size.left - size.right;
-  const chartH = size.height - size.top - size.bottom;
-  const slot = chartW / Math.max(data.length, 1);
-  const barW = Math.max(2, Math.min(20, slot * .7));
-  return (
-    <figure className={cn("min-h-0", className)} aria-label={category}>
-      <svg className="h-full w-full overflow-visible" viewBox={`0 0 ${size.width} ${size.height}`} role="img">
-        <title>{category}</title>
-        {[0, .5, 1].map((ratio) => {
-          const yy = size.top + chartH * (1 - ratio);
-          return (
-            <g key={ratio}>
-              <line x1={size.left} y1={yy} x2={size.width - size.right} y2={yy} stroke="currentColor" className="text-border" />
-              <text x={size.left - 7} y={yy + 4} textAnchor="end" className="fill-muted-foreground text-xs">
-                {valueFormatter(max * ratio)}
-              </text>
-            </g>
-          );
-        })}
-        {data.map((row, i) => {
-          const value = number(row[category]);
-          const h = (value / max) * chartH;
-          const xx = size.left + i * slot + (slot - barW) / 2;
-          return (
-            <rect key={i} x={xx} y={size.top + chartH - h} width={barW} height={h} rx="2" fill={color(colors[0])}>
-              <title>{`${row[index]} · ${category}: ${valueFormatter(value)}`}</title>
-            </rect>
-          );
-        })}
-        {data.length > 0 && (
-          <>
-            <text x={size.left} y={size.height - 7} className="fill-muted-foreground text-xs">{String(data[0][index])}</text>
-            <text x={size.width - size.right} y={size.height - 7} textAnchor="end" className="fill-muted-foreground text-xs">
-              {String(data.at(-1)![index])}
-            </text>
-          </>
-        )}
-      </svg>
-    </figure>
-  );
-}
-
 function number(value: string | number | undefined) {
   const n = Number(value ?? 0);
   return Number.isFinite(n) ? n : 0;

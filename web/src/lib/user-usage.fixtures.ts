@@ -15,7 +15,6 @@
  */
 import type { Pool, RawJob, RawNode, Snapshot } from "@/types/snapshot";
 
-export const CAPTURED_AT = "2026-10-05T16:37:07+09:00";
 
 // ---------------------------------------------------------------------------
 // Pools, verbatim from snap.pools (the fields the derivation and card read)
@@ -26,10 +25,7 @@ const pool = (p: Partial<Pool> & Pick<Pool, "id" | "kind" | "nodes" | "mem_per_n
   idle_nodes: 0,
   available_nodes: 0,
   down_nodes: 0,
-  cpus_total: p.cores.total,
-  cpus_alloc: p.cores.alloc,
   util: p.cores.util,
-  avail: { units: 0, unit: p.gpu ? "gpu" : "cores", can_now: false, idle_nodes: 0 },
   ...p,
 });
 
@@ -38,7 +34,7 @@ export const POOL_A40 = pool({
   cores: { total: 1040, alloc: 692, free: 208, unavailable: 140, util: 0.665 },
   gpu: { type: "nvidia_a40", label: "A40", mem_gb: 48, total: 40, used: 40, down: 0, reserved: 0, free: 0, maint: false, util: 1.0, next_free: null },
   partitions: ["GPU-1", "GPU-L", "GPU-S"],
-  queue: { running: 38, pending: 51, releasing: { jobs: 0, nodes: 0 } },
+  queue: { running: 38, pending: 51 },
 });
 
 export const POOL_A100 = pool({
@@ -46,7 +42,7 @@ export const POOL_A100 = pool({
   cores: { total: 520, alloc: 376, free: 68, unavailable: 76, util: 0.723 },
   gpu: { type: "nvidia_a100", label: "A100", mem_gb: 40, total: 20, used: 20, down: 0, reserved: 0, free: 0, maint: false, util: 1.0, next_free: null },
   partitions: ["GPU-1A", "GPU-LA"],
-  queue: { running: 20, pending: 42, releasing: { jobs: 0, nodes: 0 } },
+  queue: { running: 20, pending: 42 },
 });
 
 export const POOL_H100_80 = pool({
@@ -54,7 +50,7 @@ export const POOL_H100_80 = pool({
   cores: { total: 128, alloc: 88, free: 0, unavailable: 40, util: 0.688 },
   gpu: { type: "h100-80c", label: "H100 80GB", mem_gb: 80, total: 4, used: 3, down: 1, reserved: 0, free: 0, maint: false, util: 0.75, next_free: null },
   partitions: ["VM-GPU-L"],
-  queue: { running: 3, pending: 6, releasing: { jobs: 0, nodes: 0 } },
+  queue: { running: 3, pending: 6 },
 });
 
 export const POOL_H100_20C = pool({
@@ -62,7 +58,7 @@ export const POOL_H100_20C = pool({
   cores: { total: 128, alloc: 0, free: 0, unavailable: 128, util: 0.0 },
   gpu: { type: "h100-20c", label: "H100 MIG 20GB", mem_gb: 20, total: 16, used: 0, down: 16, reserved: 0, free: 0, maint: true, util: 0.0, next_free: null },
   partitions: [],
-  queue: { running: 0, pending: 0, releasing: { jobs: 0, nodes: 0 } },
+  queue: { running: 0, pending: 0 },
 });
 
 export const POOL_CPU = pool({
@@ -70,7 +66,7 @@ export const POOL_CPU = pool({
   cores: { total: 31744, alloc: 30087, free: 1465, unavailable: 192, util: 0.948 },
   gpu: null,
   partitions: ["DEF", "LARGE", "LONG", "LONG-L", "MS_Amorphous", "MS_Castep", "MS_Compass", "MS_Dftbplus", "MS_Dmol3", "MS_Forcite", "MatStudio", "SINGLE", "SMALL", "TINY", "X2LARGE", "XLARGE"],
-  queue: { running: 374, pending: 220, releasing: { jobs: 0, nodes: 0 } },
+  queue: { running: 374, pending: 220 },
 });
 
 export const POOL_VM_CPU = pool({
@@ -78,7 +74,7 @@ export const POOL_VM_CPU = pool({
   cores: { total: 1408, alloc: 32, free: 1376, unavailable: 0, util: 0.023 },
   gpu: null,
   partitions: ["VM-CPU"],
-  queue: { running: 1, pending: 1, releasing: { jobs: 0, nodes: 0 } },
+  queue: { running: 1, pending: 1 },
 });
 
 export const POOL_LM = pool({
@@ -86,7 +82,7 @@ export const POOL_LM = pool({
   cores: { total: 96, alloc: 0, free: 96, unavailable: 0, util: 0.0 },
   gpu: null,
   partitions: ["VM-LM"],
-  queue: { running: 0, pending: 0, releasing: { jobs: 0, nodes: 0 } },
+  queue: { running: 0, pending: 0 },
 });
 
 /** snap.part_pool, verbatim. */

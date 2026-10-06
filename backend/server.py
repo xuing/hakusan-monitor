@@ -536,13 +536,6 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(200, eng.snapshot())
             except Exception:
                 return self._json(503, {"error": "snapshot unavailable", "source": CFG["source"]})
-        if path == "/api/history":
-            hours = query_float(q, "hours", 24, 1, 168)
-            until = int(time.time())
-            since = until - int(hours * 3600)
-            mp = query_int(q, "points", 600, 10, 2000)
-            return self._json(200, {"since": since, "until": until,
-                                    "points": eng.store.history(since, until, mp)})
         if path == "/api/login-nodes":
             return self._json(200, eng.login_snapshot())
         if path == "/api/login-nodes/history":
@@ -554,9 +547,6 @@ class Handler(BaseHTTPRequestHandler):
                                     "points": eng.store.login_history(since, until, mp)})
         if path == "/api/analytics":
             return self._json(200, eng.jobs.payload())
-        if path == "/api/usage":
-            days = query_int(q, "days", 30, 1, 365)
-            return self._json(200, eng.store.usage_pattern(days))
         if path == "/api/visits":
             days = query_int(q, "days", 30, 1, 365)
             return self._json(200, eng.store.visit_stats(days))

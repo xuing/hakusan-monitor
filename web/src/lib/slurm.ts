@@ -1,6 +1,5 @@
-// Slurm-domain helpers: load tones, chart color mapping, resource filtering.
+// Slurm-domain helpers: partition policy (caps, defaults, walltimes), tones, resource filtering.
 import type { GpuDefaultRequest } from "@/lib/gpu-availability";
-import { partitionOrderRank } from "@/lib/site";
 import type { Partition, PartitionDefaults, PolicySnapshot, Pool, Release } from "@/types/snapshot";
 
 export type Tone = "ok" | "warn" | "bad" | "info" | "neutral";
@@ -23,20 +22,6 @@ export type ResourceFilter = "all" | string;
 export const matchPool = (p: Pool, f: ResourceFilter) => f === "all" || p.id === f;
 export const matchPartition = (p: Partition, f: ResourceFilter) => f === "all" || p.pool === f;
 export const matchRelease = (r: Release, f: ResourceFilter) => f === "all" || r.pool === f;
-
-/** Smooth green->amber->red ramp for the usage heatmap (0..1 -> rgba string). */
-export function heatColor(v: number): string {
-  const stops: [number, number, number][] = [
-    [63, 185, 80],
-    [210, 153, 34],
-    [248, 81, 73],
-  ];
-  const x = Math.max(0, Math.min(1, v));
-  const [a, b] = x < 0.5 ? [stops[0], stops[1]] : [stops[1], stops[2]];
-  const f = x < 0.5 ? x * 2 : (x - 0.5) * 2;
-  const c = a.map((n, i) => Math.round(n + (b[i] - n) * f));
-  return `rgba(${c[0]}, ${c[1]}, ${c[2]}, ${0.18 + 0.62 * x})`;
-}
 
 // ---- per-partition policy caps ------------------------------------------------
 // The snapshot's policy block is the single source of truth: caps and
@@ -116,9 +101,6 @@ export function partitionDown(p: Partition): boolean {
   return p.nodes > 0 && down >= p.nodes;
 }
 
-/** Display order of partitions: the site's order, else slurm.conf's. */
-export const partitionDisplayRank = partitionOrderRank;
-
 /** Partitions that take only license jobs (`-L`): the submit plugin rejects a
  *  job without one, or fills in a default license. On Hakusan these are the
  *  Materials Studio partitions. */
@@ -144,7 +126,7 @@ function cpuBoundMemGb(cap: PartitionCap): number | undefined {
 
 /** QoS ceiling expressed per GPU, for narrowing the per-GPU need. Slurm quotes
  *  MaxTRES memory in binary GB (mem=256G = 256 GiB), so scale by 1024.
- *  `gpus` is how many GPUs one job can really hold (effectiveGpuLimit); it
+ *  `gpus` is how many GPUs one job can really hold; it
  *  defaults to the QoS gres cap, and to 1 when neither is known — then the
  *  cap is not divided, i.e. it never pretends to be stricter than stated. */
 export function capPerGpu(cap: PartitionCap, gpus: number | undefined = cap.maxGpus): { cores?: number; memMb?: number } {
@@ -153,18 +135,6 @@ export function capPerGpu(cap: PartitionCap, gpus: number | undefined = cap.maxG
     cores: cap.maxCores ? Math.ceil(cap.maxCores / maxGpus) : undefined,
     memMb: cap.maxMemGb ? Math.ceil((cap.maxMemGb * 1024) / maxGpus) : undefined,
   };
-}
-
-/** How many GPUs a job in this partition can get without the node shape:
- *  the QoS gres cap (`maxGpus`), undefined when the QoS states none. With the
- *  node shape known, maxJobGpus (gpu-layout) gives the exact figure. */
-export interface GpuLimit {
-  /** most GPUs one job can hold, when that is knowable */
-  total?: number;
-}
-
-export function effectiveGpuLimit(cap: PartitionCap): GpuLimit {
-  return { total: cap.maxGpus };
 }
 
 /**

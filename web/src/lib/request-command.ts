@@ -16,8 +16,6 @@ export interface RequestCommandInput {
   scriptFile: string;
 }
 
-export type BackfillVariant = "script" | "switch" | "fits" | null;
-
 /** The gap-shell box exists only while the recipe is active: it then holds
  * the usage note and the only restore control, and must survive tips
  * recomputing to null on a later poll. There is no standalone pre-activation

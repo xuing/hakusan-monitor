@@ -1,4 +1,3 @@
-import json
 import os
 import tempfile
 import unittest
@@ -69,17 +68,6 @@ class StoreJobTests(unittest.TestCase):
             self.store.record({"pools": POOLS}, 7300)
         rows = {pool: (n, free) for _, pool, n, free in self.store.pool_hours(0)}
         self.assertEqual(rows, {"a40": (2, 2), "h100": (2, 0), "cpu": (2, 2)})
-
-    def test_pool_hourly_backfills_from_raw_samples(self):
-        c = self.store._conn()
-        with c:
-            c.execute("INSERT INTO samples (ts, detail) VALUES (?, ?)",
-                      (3600 * 5 + 10, json.dumps({"pools": POOLS})))
-            c.execute("DELETE FROM pool_hourly")
-        self.store.close()
-        self.store = Store(self.path)
-        self.assertEqual(sorted(self.store.pool_hours(0)),
-                         [(18000, "a40", 1, 1), (18000, "cpu", 1, 1), (18000, "h100", 1, 0)])
 
     def test_pool_free_metrics(self):
         self.assertEqual(pool_free({"kind": "gpu", "gpu": {"free": 3, "maint": True}}), (3, 0))

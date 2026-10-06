@@ -6,7 +6,7 @@ import { coresText, wallText, type TFn } from "@/i18n";
 import { cleanCpuProbeRaw, type CpuProbeRow, type CpuProbeState } from "@/lib/cpu-probes";
 import { nf } from "@/lib/format";
 import { maxJobGpus, type GpuNodeShape } from "@/lib/gpu-layout";
-import { allowsMultiNode, effectiveGpuLimit, effectiveJobMemGb, interactiveForcedLabel, type PartitionCap, type PartitionPolicy, type Tone } from "@/lib/slurm";
+import { allowsMultiNode, effectiveJobMemGb, interactiveForcedLabel, type PartitionCap, type PartitionPolicy, type Tone } from "@/lib/slurm";
 import type { PolicySnapshot } from "@/types/snapshot";
 
 export interface PolicyLimitRow {
@@ -16,7 +16,7 @@ export interface PolicyLimitRow {
   near: boolean;
 }
 
-export function limitLevel(current: number, max: number) {
+function limitLevel(current: number, max: number) {
   return {
     reached: current >= max,
     near: max > 1 && current >= Math.ceil(max * 0.8),
@@ -100,13 +100,12 @@ export function fmtPolicyLimit(cap: PartitionCap, isGpu: boolean, t: TFn, partit
 /** The GPU term of the policy line, "" when nothing can be stated. With the
  *  node shape known it is the most GPUs a job can really get (maxJobGpus);
  *  without it, the QoS gres cap. */
-export function fmtGpuLimit(cap: PartitionCap, shape?: GpuNodeShape) {
+function fmtGpuLimit(cap: PartitionCap, shape?: GpuNodeShape) {
   if (shape && shape.gpus > 0) {
     const n = maxJobGpus(cap, shape, allowsMultiNode(cap, shape.cores));
     return n > 0 ? `${n} GPU` : "";
   }
-  const { total } = effectiveGpuLimit(cap);
-  return total ? `${total} GPU` : "";
+  return cap.maxGpus ? `${cap.maxGpus} GPU` : "";
 }
 
 export function cpuProbeLabel(state: CpuProbeState, t: TFn) {
@@ -132,7 +131,7 @@ export function cpuProbeDetail(row: CpuProbeRow, state: CpuProbeState | null, t:
   return truncateProbeRaw(cleanCpuProbeRaw(probe.raw));
 }
 
-export function truncateProbeRaw(text: string) {
+function truncateProbeRaw(text: string) {
   if (!text) return "";
   return text.length > 120 ? `${text.slice(0, 117)}...` : text;
 }

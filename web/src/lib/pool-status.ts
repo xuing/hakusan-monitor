@@ -12,7 +12,8 @@
 import { cpuPartitionStatus, cpuPartitionTone, type CpuPartitionStatus } from "@/lib/cpu-partition";
 import { unschedulableCores } from "@/lib/derive";
 import { gpuStatus, gpuVerdict, type GpuStatus, type GpuVerdict } from "@/lib/gpu-partition";
-import { isLicensePartition, partitionDisplayRank, type Tone } from "@/lib/slurm";
+import { isLicensePartition, type Tone } from "@/lib/slurm";
+import { partitionOrderRank } from "@/lib/site";
 import type { Pool, Snapshot } from "@/types/snapshot";
 
 export type PoolTone = "ok" | "warn" | "bad" | "off";
@@ -31,7 +32,7 @@ export function poolPick(snap: Snapshot, pool: Pool): PoolPick | null {
   const parts = pool.partitions
     .filter((p) => !isLicensePartition(p, snap.policy))
     .sort((a, b) => Number(b === pool.sample_partition) - Number(a === pool.sample_partition)
-      || partitionDisplayRank(a) - partitionDisplayRank(b));
+      || partitionOrderRank(a) - partitionOrderRank(b));
   if (parts.length === 0) return null;
   if (pool.kind === "gpu") {
     const picks = parts.map((partition) => ({ kind: "gpu" as const, partition, status: gpuStatus(snap, pool, partition) }));

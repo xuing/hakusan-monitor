@@ -1,9 +1,11 @@
-"""SQLite time-series store for Hakusan Monitor (stdlib `sqlite3` only).
+"""SQLite store for Hakusan Monitor (stdlib `sqlite3` only).
 
-Two tables, the classic raw + rollup TSDB pattern:
-  • samples         — one compact row per sample; pruned to a retention window.
-  • samples_hourly  — running hourly aggregate (avg/max); kept indefinitely so
-                      peak/trough analysis works over months without huge tables.
+  • samples       — one compact row per collected snapshot, pruned to a retention
+                    window. Its timestamp key makes recording idempotent across
+                    restarts and retries.
+  • pool_hourly   — per pool and hour: how often anything was free (the
+                    Analytics "when is it free" card), kept indefinitely.
+  • login_samples — login-node load; visits; jobs / job_attempts (sacct history).
 
 Thread-safe: one connection per thread (works under ThreadingHTTPServer).
 """
@@ -20,15 +22,7 @@ CREATE TABLE IF NOT EXISTS samples (
   gpus_total  INTEGER, gpus_used  INTEGER,
   nodes_total INTEGER, nodes_avail INTEGER, nodes_down INTEGER,
   running     INTEGER, pending INTEGER,
-  detail      TEXT                            -- JSON: per-pool / per-gpu utilization
-);
-CREATE TABLE IF NOT EXISTS samples_hourly (
-  hour        INTEGER PRIMARY KEY,            -- unix seconds truncated to the hour
-  n           INTEGER,
-  cpu_avg     REAL, cpu_max REAL,
-  gpu_avg     REAL, gpu_max REAL,
-  pending_avg REAL, pending_max INTEGER,
-  running_avg REAL
+  detail      TEXT                            -- no longer written (was per-pool JSON)
 );
 CREATE TABLE IF NOT EXISTS login_samples (
   ts              INTEGER,
@@ -141,7 +135,6 @@ class Store:
         c.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
         self._visitor_salt = self._meta_secret("visitor_salt")
         self._user_key = bytes.fromhex(self._meta_secret("job_user_salt"))
-        self._backfill_pool_hourly()
 
     def _conn(self):
         c = getattr(self._local, "conn", None)
@@ -157,41 +150,24 @@ class Store:
     def record(self, snap, ts):
         with self._record_lock:
             m = _metrics(snap)
-            detail = json.dumps({"pools": snap.get("pools"), "gpus": snap.get("gpus")})
             c = self._conn()
             with c:
                 inserted = c.execute(
                     """INSERT INTO samples
                        (ts,cpu_util,gpu_util,mem_util,cpus_total,cpus_alloc,
                         gpus_total,gpus_used,nodes_total,nodes_avail,nodes_down,
-                        running,pending,detail)
-                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                        running,pending)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
                        ON CONFLICT(ts) DO NOTHING""",
                     (ts, m["cpu_util"], m["gpu_util"], m["mem_util"], m["cpus_total"],
                      m["cpus_alloc"], m["gpus_total"], m["gpus_used"], m["nodes_total"],
-                     m["nodes_avail"], m["nodes_down"], m["running"], m["pending"], detail),
+                     m["nodes_avail"], m["nodes_down"], m["running"], m["pending"]),
                 )
                 # Database-backed idempotency also survives restarts and
-                # out-of-order retries. Raw data and rollup commit together.
+                # out-of-order retries: the sample and its rollup commit together.
                 if inserted.rowcount == 0:
                     return
                 hour = ts - ts % 3600
-                c.execute(
-                    """INSERT INTO samples_hourly
-                         (hour,n,cpu_avg,cpu_max,gpu_avg,gpu_max,pending_avg,pending_max,running_avg)
-                       VALUES (?,1,?,?,?,?,?,?,?)
-                       ON CONFLICT(hour) DO UPDATE SET
-                         cpu_avg     = (cpu_avg*n + excluded.cpu_avg)/(n+1),
-                         cpu_max     = max(cpu_max, excluded.cpu_max),
-                         gpu_avg     = (gpu_avg*n + excluded.gpu_avg)/(n+1),
-                         gpu_max     = max(gpu_max, excluded.gpu_max),
-                         pending_avg = (pending_avg*n + excluded.pending_avg)/(n+1),
-                         pending_max = max(pending_max, excluded.pending_max),
-                         running_avg = (running_avg*n + excluded.running_avg)/(n+1),
-                         n = n+1""",
-                    (hour, m["cpu_util"], m["cpu_util"], m["gpu_util"], m["gpu_util"],
-                     m["pending"], m["pending"], m["running"]),
-                )
                 for pool in snap.get("pools") or []:
                     free, any_free = pool_free(pool)
                     c.execute(
@@ -260,30 +236,6 @@ class Store:
         with c:
             c.execute("INSERT OR IGNORE INTO app_meta (key,value) VALUES (?,?)", (key, value))
         return c.execute("SELECT value FROM app_meta WHERE key = ?", (key,)).fetchone()["value"]
-
-    def _backfill_pool_hourly(self):
-        """Seed pool_hourly from the raw samples once (it started empty on upgrade)."""
-        c = self._conn()
-        if c.execute("SELECT 1 FROM pool_hourly LIMIT 1").fetchone():
-            return
-        acc = {}
-        for ts, detail in c.execute("SELECT ts, detail FROM samples ORDER BY ts"):
-            try:
-                pools = (json.loads(detail or "{}") or {}).get("pools") or []
-            except ValueError:
-                continue
-            hour = ts - ts % 3600
-            for pool in pools:
-                free, any_free = pool_free(pool)
-                a = acc.setdefault((hour, pool.get("id", "")), [0, 0, 0.0])
-                a[0] += 1
-                a[1] += any_free
-                a[2] += free
-        if acc:
-            with c:
-                c.executemany(
-                    "INSERT OR IGNORE INTO pool_hourly (hour,pool,n,free_n,free_sum) VALUES (?,?,?,?,?)",
-                    [(h, p, *v) for (h, p), v in acc.items()])
 
     def pool_hours(self, since):
         """[(hour, pool, n, free_n)] from `since` on."""
@@ -455,16 +407,6 @@ class Store:
             c.execute('DELETE FROM job_attempts WHERE coalesce("end", start) < ?', (job_cutoff,))
 
     # ---- read --------------------------------------------------------------
-    def history(self, since, until, max_points=600):
-        """Raw samples in [since, until], evenly down-sampled to <= max_points."""
-        c = self._conn()
-        rows = c.execute(
-            """SELECT ts,cpu_util,gpu_util,mem_util,running,pending,
-                      nodes_avail,nodes_down
-               FROM samples WHERE ts BETWEEN ? AND ? ORDER BY ts""",
-            (since, until)).fetchall()
-        return [dict(r) for r in _evenly_sample(rows, max_points)]
-
     def login_history(self, since, until, max_points=600):
         c = self._conn()
         rows = c.execute(
@@ -527,82 +469,12 @@ class Store:
                 "window": dict(window),
                 "total": totals}
 
-    def usage_pattern(self, days=30):
-        """Peak/trough analysis from the hourly rollup, in **local** time.
-
-        Returns averages by hour-of-day (0-23), by weekday (0=Sun..6=Sat), and a
-        weekday×hour heatmap. Values are Slurm allocation ratios, not hardware
-        utilization. Hour buckets are weighted by their raw sample count.
-        """
-        c = self._conn()
-        # Exactly days*24 hour buckets ending at the current hour. The window
-        # used to be anchored to the newest stored hour with an inclusive
-        # lower bound — 25 buckets for "1 day", and frozen in place during a
-        # collection outage instead of following the clock.
-        now_hour = int(time.time()) // 3600 * 3600
-        since = now_hour - days * 86400 + 3600
-        rows = c.execute(
-            """SELECT
-                 hour,
-                 CAST(strftime('%w', hour, 'unixepoch', 'localtime') AS INTEGER) AS wd,
-                 CAST(strftime('%H', hour, 'unixepoch', 'localtime') AS INTEGER) AS hod,
-                 cpu_avg, gpu_avg, pending_avg, n
-               FROM samples_hourly WHERE hour >= ?""", (since,)).fetchall()
-
-        by_hour = {h: {"cpu": 0.0, "gpu": 0.0, "pending": 0.0, "samples": 0, "hours": 0} for h in range(24)}
-        by_wd = {d: {"cpu": 0.0, "gpu": 0.0, "pending": 0.0, "samples": 0, "hours": 0} for d in range(7)}
-        heat = {}
-        first = min((r["hour"] for r in rows), default=0)
-        last = max((r["hour"] for r in rows), default=0)
-        total_samples = 0
-        for r in rows:
-            samples = int(r["n"] or 0)
-            if samples <= 0:
-                continue
-            total_samples += samples
-            for bucket, key in ((by_hour, r["hod"]), (by_wd, r["wd"])):
-                b = bucket[key]
-                b["cpu"] += r["cpu_avg"] * samples; b["gpu"] += r["gpu_avg"] * samples
-                b["pending"] += r["pending_avg"] * samples; b["samples"] += samples
-                b["hours"] += 1
-            hk = (r["wd"], r["hod"])
-            h = heat.setdefault(hk, {"cpu": 0.0, "gpu": 0.0, "pending": 0.0, "samples": 0, "hours": 0})
-            h["cpu"] += r["cpu_avg"] * samples; h["gpu"] += r["gpu_avg"] * samples
-            h["pending"] += r["pending_avg"] * samples; h["samples"] += samples
-            h["hours"] += 1
-
-        def avg(b):
-            samples = b["samples"] or 1
-            return {"cpu": round(b["cpu"]/samples, 3), "gpu": round(b["gpu"]/samples, 3),
-                    "pending": round(b["pending"]/samples, 1),
-                    "samples": b["samples"], "hours": b["hours"]}
-
-        hours = [{"hour": h, **avg(by_hour[h])} for h in range(24)]
-        weekdays = [{"weekday": d, **avg(by_wd[d])} for d in range(7)]
-        heatmap = [{"weekday": wd, "hour": hod,
-                    "gpu": round(v["gpu"]/(v["samples"] or 1), 3),
-                    "cpu": round(v["cpu"]/(v["samples"] or 1), 3),
-                    "pending": round(v["pending"]/(v["samples"] or 1), 1),
-                    "samples": v["samples"], "hours": v["hours"]}
-                   for (wd, hod), v in sorted(heat.items())]
-        ranked = [h for h in hours if h["samples"]]
-        busiest = max(ranked, key=lambda x: x["gpu"], default=None)
-        quietest = min(ranked, key=lambda x: x["gpu"], default=None)
-        return {"days": days, "by_hour": hours, "by_weekday": weekdays,
-                "heatmap": heatmap, "busiest_hour": busiest, "quietest_hour": quietest,
-                "total_hours": len(rows), "total_samples": total_samples,
-                # coverage actually observed: never past "now" (the current
-                # hour's bucket is still filling)
-                "since": first, "until": min(last + 3599, int(time.time())) if last else 0,
-                "timezone": os.environ.get("TZ") or time.tzname[0] or "localtime"}
-
     def stats(self):
         c = self._conn()
         s = c.execute("SELECT count(*) n, min(ts) a, max(ts) b FROM samples").fetchone()
-        h = c.execute("SELECT count(*) n FROM samples_hourly").fetchone()
         l = c.execute("SELECT count(*) n FROM login_samples").fetchone()
         return {"samples": s["n"], "first_ts": s["a"], "last_ts": s["b"],
-                "hours": h["n"], "login_samples": l["n"],
+                "login_samples": l["n"],
                 "retain_days": self.retain_days,
                 "login_retain_days": self.login_retain_days,
                 "visit_retain_days": self.visit_retain_days,

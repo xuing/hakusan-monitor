@@ -1,30 +1,13 @@
 // Mirrors the backend JSON schema (backend/normalize.py + server endpoints).
 
-export type ResourceKind = "cpu" | "gpu";
-export type PressureLevel = "low" | "moderate" | "high" | "critical";
+type ResourceKind = "cpu" | "gpu";
 
-export interface Totals {
-  nodes: {
-    total: number;
-    available: number;
-    down: number;
-    by_state: Record<string, number>;
-    gpu_total: number;
-    gpu_free: number;
-    cpu_total: number;
-    cpu_free: number;
-  };
-  cpus: { total: number; alloc: number; free: number; unavailable?: number; util: number };
-  memory: { total_mb: number; alloc_mb: number; util: number };
-  gpus: {
-    total: number;
-    used: number;
-    down: number;
-    reserved?: number;
-    free: number;
-    util: number;
-    by_type: Record<string, { total: number; used: number; down: number; reserved?: number; free: number }>;
-  };
+/** Cluster-wide figures the backend keeps per sample (store._metrics). */
+interface Totals {
+  nodes: { total: number; available: number; down: number };
+  cpus: { total: number; alloc: number; util: number };
+  memory: { util: number };
+  gpus: { total: number; used: number; util: number };
 }
 
 export interface Occupant {
@@ -66,35 +49,26 @@ export interface Pool {
   idle_nodes: number;
   available_nodes: number;
   down_nodes: number;
-  cpus_total: number;
-  cpus_alloc: number;
   cores: { total: number; alloc: number; free: number; unavailable?: number; util: number };
   util: number;
   gpu: PoolGpu | null;
   partitions: string[];
-  queue: { running: number; pending: number; releasing: { jobs: number; nodes: number } };
-  avail: { units: number; unit: "gpu" | "cores"; can_now: boolean; idle_nodes: number };
+  queue: { running: number; pending: number };
 }
 
 export interface Partition {
   name: string;
   kind: ResourceKind;
   nodes: number;
-  gpu_type: string | null;
   pool: string | null;
   cpus: { total: number; alloc: number; free: number; unavailable?: number; util: number };
   gpu: { total: number; used: number; down: number; reserved?: number; free: number; util: number } | null;
+  /** a job queued to several partitions counts in each */
   jobs: { running: number; pending: number };
-  pending_reasons: Record<string, number>;
-  pressure: number;
-  level: PressureLevel;
   spec: { cores_per_node: number; mem_per_node: number; gpu_per_node: number };
   nodes_state: Record<string, number>;
-  free_nodes: number;
+  /** in service, with a free GPU (GPU partitions) or a free core */
   available_nodes: number;
-  busy_nodes: number;
-  /** jobs ending within 2h and the DISTINCT nodes they run on */
-  releasing: { jobs: number; nodes: number };
 }
 
 export interface NextFree {
@@ -104,21 +78,7 @@ export interface NextFree {
   gpus?: number;
 }
 
-export interface GpuType {
-  type: string;
-  label: string;
-  mem_gb: number | null;
-  total: number;
-  used: number;
-  down: number;
-  reserved?: number;
-  free: number;
-  util: number;
-  maint: boolean;
-  next_free: NextFree | null;
-}
-
-export interface PendingJob {
+interface PendingJob {
   job_id: number | string;
   user: string;
   partition: string;
@@ -142,12 +102,10 @@ export interface Release {
   cpus: number;
 }
 
-export interface QueueData {
+interface QueueData {
   running: number;
   pending: number;
-  total: number;
   pending_reasons: Record<string, number>;
-  by_partition: { partition: string; running: number; pending: number }[];
   top_pending: PendingJob[];
   longest_pending_by_partition?: PendingJob[];
   releases: Release[];
@@ -322,7 +280,6 @@ export interface Snapshot {
   totals: Totals;
   pools: Pool[];
   partitions: Partition[];
-  gpus: GpuType[];
   queue: QueueData;
   /** cluster licenses (`scontrol show lic`): the names -L must use */
   licenses?: ClusterLicense[];
@@ -341,7 +298,6 @@ export interface Snapshot {
   nodes: RawNode[];
   jobs: RawJob[];
   part_pool: Record<string, string>;
-  diagnostics?: { duplicate_nodes: string[] };
   generated_at: number;
   age_s: number;
   source: string;
@@ -375,7 +331,6 @@ export interface Meta {
   partitions: { name: string; kind: string }[];
   store: {
     samples: number;
-    hours: number;
     retain_days: number;
     login_retain_days?: number;
     visit_retain_days?: number;
@@ -439,59 +394,6 @@ export interface RawJob {
   /** Slurm priority (squeue %Q); comparable across partitions here */
   priority?: number;
   time_limit: string;
-}
-
-export interface HistoryPoint {
-  ts: number;
-  cpu_util: number;
-  gpu_util: number;
-  mem_util: number;
-  running: number;
-  pending: number;
-  nodes_avail: number;
-  nodes_down: number;
-}
-
-export interface UsageHour {
-  hour: number;
-  cpu: number;
-  gpu: number;
-  pending: number;
-  samples: number;
-  hours?: number;
-}
-
-export interface UsageWeekday {
-  weekday: number;
-  cpu: number;
-  gpu: number;
-  pending: number;
-  samples: number;
-  hours?: number;
-}
-
-export interface UsageCell {
-  weekday: number;
-  hour: number;
-  gpu: number;
-  cpu: number;
-  pending: number;
-  samples: number;
-  hours?: number;
-}
-
-export interface UsagePattern {
-  days: number;
-  by_hour: UsageHour[];
-  by_weekday: UsageWeekday[];
-  heatmap: UsageCell[];
-  busiest_hour: UsageHour | null;
-  quietest_hour: UsageHour | null;
-  total_hours: number;
-  total_samples: number;
-  since: number;
-  until: number;
-  timezone: string;
 }
 
 export interface LoginProcess {

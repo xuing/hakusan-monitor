@@ -117,7 +117,7 @@ export function gpuShapeOf(part: Partition | undefined, pool: Pool): GpuNodeShap
 }
 
 /** The multi-GPU requests the partition can grant at all (QoS, node shape). */
-export function partitionLayouts(snap: Snapshot, pool: Pool, partition: string): GpuLayout[] {
+function partitionLayouts(snap: Snapshot, pool: Pool, partition: string): GpuLayout[] {
   const cap = partitionCap(partition, snap.policy);
   const shape = gpuShapeOf(snap.partitions.find((p) => p.name === partition), pool);
   return gpuLayouts(cap, shape, allowsMultiNode(cap, shape.cores)).layouts;

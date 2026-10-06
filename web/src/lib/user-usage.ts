@@ -17,7 +17,7 @@
  */
 import type { Pool, RawJob, RawNode, Snapshot } from "@/types/snapshot";
 
-export type Resource = "gpus" | "cores" | "mem";
+type Resource = "gpus" | "cores" | "mem";
 
 /** Tie order: a GPU is the scarcer unit, memory the least visible one. */
 const RESOURCE_ORDER: Resource[] = ["gpus", "cores", "mem"];
@@ -28,7 +28,7 @@ export interface PoolTotals {
   memMb: number;
 }
 
-export interface Amounts {
+interface Amounts {
   cores: number;
   gpus: number;
   memMb: number;
@@ -81,10 +81,10 @@ function add(into: Amounts, job: RawJob) {
 }
 
 /** Amount of one resource out of an Amounts record. */
-export const amountOf = (a: Amounts, r: Resource): number => (r === "mem" ? a.memMb : a[r]);
+const amountOf = (a: Amounts, r: Resource): number => (r === "mem" ? a.memMb : a[r]);
 
 /** Share of the pool's total capacity for one resource; 0 when the pool has none. */
-export function shareOf(totals: PoolTotals, r: Resource, amount: number): number {
+function shareOf(totals: PoolTotals, r: Resource, amount: number): number {
   const total = r === "mem" ? totals.memMb : totals[r];
   return total > 0 ? amount / total : 0;
 }
@@ -110,12 +110,12 @@ export function poolTotals(pool: Pool, nodes: RawNode[]): PoolTotals {
  *  counts in a pool when any of them maps there (same rule as pendingForPool). */
 const partitions = (job: RawJob) => String(job.partition || "").split(",").filter(Boolean);
 
-export function runsInPool(job: RawJob, partPool: Record<string, string>, poolId: string): boolean {
+function runsInPool(job: RawJob, partPool: Record<string, string>, poolId: string): boolean {
   const first = partitions(job)[0];
   return first !== undefined && partPool[first] === poolId;
 }
 
-export function pendsInPool(job: RawJob, partPool: Record<string, string>, poolId: string): boolean {
+function pendsInPool(job: RawJob, partPool: Record<string, string>, poolId: string): boolean {
   return partitions(job).some((p) => partPool[p] === poolId);
 }
 

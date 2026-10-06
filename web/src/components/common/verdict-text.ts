@@ -43,7 +43,7 @@ export function aheadText(ahead: number, free: string | null, t: TFn): string {
   return t("pool.queueFactAhead", { free, n: ahead });
 }
 
-export function gpuFitShortText(fit: GpuFitInfo, t: TFn) {
+function gpuFitShortText(fit: GpuFitInfo, t: TFn) {
   const best = fit.stranded[0];
   if (!best) return t("pool.queueReasonGpuFit");
   return t("pool.fitShort", {

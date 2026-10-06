@@ -114,7 +114,7 @@ export interface GpuPerGpuNeed {
   memMb: number;
 }
 
-export interface GpuNodeVerdict extends GpuNodeFacts {
+interface GpuNodeVerdict extends GpuNodeFacts {
   idleGpu: number;
   /** The node's dominant state (first non-empty in display order). */
   kind: GpuAvailabilityKind;
@@ -178,7 +178,7 @@ export function gpuPerGpuNeed(
 }
 
 /** Why this node's idle GPUs are (or are not) takeable right now. */
-export function classifyGpuNode(node: GpuNodeFacts, need: GpuPerGpuNeed): GpuNodeVerdict {
+function classifyGpuNode(node: GpuNodeFacts, need: GpuPerGpuNeed): GpuNodeVerdict {
   const idleGpu = Math.max(0, (node.gpusTotal || 0) - (node.gpusUsed || 0));
   const counts: Partial<Record<GpuAvailabilityKind, number>> = {};
   const add = (kind: GpuAvailabilityKind, n: number) => {

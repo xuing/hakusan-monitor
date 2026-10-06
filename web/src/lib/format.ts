@@ -11,7 +11,7 @@ export const nf = (n: number | null | undefined) => (n ?? 0).toLocaleString();
 
 /** Slurm time strings are cluster-local; format as plain text (no TZ math). */
 export const clockOf = (iso: string) => (iso ? iso.slice(11, 16) : ""); // "23:44"
-export const dateOf = (iso: string) => (iso ? iso.slice(5, 10) : ""); // "06-27"
+const dateOf = (iso: string) => (iso ? iso.slice(5, 10) : ""); // "06-27"
 export const fmtAt = (iso: string) => (iso ? `${dateOf(iso)} ${clockOf(iso)}` : "—");
 
 /** Which cluster-local day a Slurm timestamp falls on: 0 = today,

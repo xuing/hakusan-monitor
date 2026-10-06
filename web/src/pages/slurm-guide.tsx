@@ -17,10 +17,10 @@ import {
   interactiveForcedLabel,
   partitionCap,
   partitionDefaults,
-  partitionDisplayRank,
   partitionPolicy,
   type Tone,
 } from "@/lib/slurm";
+import { partitionOrderRank } from "@/lib/site";
 import { cn } from "@/lib/utils";
 import type { Partition, Snapshot } from "@/types/snapshot";
 
@@ -176,7 +176,7 @@ function readFacts(snap: Snapshot | null): Facts {
     }];
   });
 
-  const sorted = [...snap.partitions].sort((a, b) => partitionDisplayRank(a.name) - partitionDisplayRank(b.name));
+  const sorted = [...snap.partitions].sort((a, b) => partitionOrderRank(a.name) - partitionOrderRank(b.name));
   facts.multiNode = sorted
     .filter((p) => p.kind === "cpu" && policy.partition_caps?.[p.name]
       && allowsMultiNode(partitionCap(p.name, policy), p.spec?.cores_per_node || undefined))

@@ -25,11 +25,11 @@ import {
   isLicensePartition,
   matchPartition,
   partitionCap,
-  partitionDisplayRank,
   partitionDown,
   partitionPolicy,
   type Tone,
 } from "@/lib/slurm";
+import { partitionOrderRank } from "@/lib/site";
 import { cn } from "@/lib/utils";
 import type { Partition, Pool, Snapshot } from "@/types/snapshot";
 
@@ -128,7 +128,7 @@ export function PartitionList() {
             // startable first, then the site's own order — never the load,
             // which reshuffled the rows with every sample
             const rows = parts.map((p) => rowOf(snap, pool, p, t)).sort((a, b) =>
-              a.rank - b.rank || partitionDisplayRank(a.p.name) - partitionDisplayRank(b.p.name));
+              a.rank - b.rank || partitionOrderRank(a.p.name) - partitionOrderRank(b.p.name));
             const general = rows.filter((r) => !isLicensePartition(r.p.name, snap.policy));
             const materials = rows.filter((r) => isLicensePartition(r.p.name, snap.policy));
             return (

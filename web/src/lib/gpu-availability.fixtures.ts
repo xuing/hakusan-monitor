@@ -18,8 +18,6 @@ import type { GpuDefaultRequest } from "@/lib/gpu-availability";
 import type { PartitionCap } from "@/lib/slurm";
 import type { Pool, RawJob, RawNode } from "@/types/snapshot";
 
-export const CAPTURED_AT = "2026-07-29T06:34:00+09:00";
-
 // ---------------------------------------------------------------------------
 // Measured request defaults. `scontrol show partition` gives DefMemPerCPU;
 // the core count comes from the held-job probe above. In production the same

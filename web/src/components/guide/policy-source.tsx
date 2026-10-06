@@ -12,7 +12,8 @@ import { useLive } from "@/hooks/live-context";
 import { useT } from "@/i18n";
 import { api } from "@/lib/api";
 import { CLUSTER_TIME_ZONE, nf } from "@/lib/format";
-import { partitionDisplayRank, type Tone } from "@/lib/slurm";
+import { type Tone } from "@/lib/slurm";
+import { partitionOrderRank } from "@/lib/site";
 import { cn } from "@/lib/utils";
 import type {
   DynamicPartitionCap,
@@ -60,7 +61,7 @@ function buildRows(policy: PolicySnapshot): Row[] {
         defaults,
       };
     })
-    .sort((a, b) => partitionDisplayRank(a.name) - partitionDisplayRank(b.name) || a.name.localeCompare(b.name));
+    .sort((a, b) => partitionOrderRank(a.name) - partitionOrderRank(b.name) || a.name.localeCompare(b.name));
 }
 
 function Callout({ tone, children }: { tone: Tone; children: ReactNode }) {

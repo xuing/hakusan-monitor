@@ -6,7 +6,8 @@ import { SectionCard } from "@/components/common/section-card";
 import { useLive } from "@/hooks/live-context";
 import { coresText, reasonLabel, useT } from "@/i18n";
 import { fmtAt, fmtEpoch } from "@/lib/format";
-import { partitionDisplayRank } from "@/lib/slurm";
+
+import { partitionOrderRank } from "@/lib/site";
 import { cn } from "@/lib/utils";
 
 export function QueueInsights() {
@@ -20,7 +21,7 @@ export function QueueInsights() {
   const longestSource = q.longest_pending_by_partition?.length ? q.longest_pending_by_partition : q.top_pending;
   const longestPending = [...longestSource].sort(
     (a, b) =>
-      partitionDisplayRank(a.partition) - partitionDisplayRank(b.partition)
+      partitionOrderRank(a.partition) - partitionOrderRank(b.partition)
       || String(a.partition || "").localeCompare(String(b.partition || ""))
       || (a.submit_time || 0) - (b.submit_time || 0),
   );

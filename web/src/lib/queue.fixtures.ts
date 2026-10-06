@@ -5,7 +5,7 @@
  * by u01, u02, … ; nothing else is edited.
  *
  * Captured with: curl -s localhost:8787/api/snapshot > snap.json
- *                python3 capture_queue_fixture.py snap.json queue.fixtures.ts
+ *                python3 scripts/capture_queue_fixture.py snap.json web/src/lib/queue.fixtures.ts
  *
  * What it holds (the reason it was kept):
  *  - five jobs of one user queued to GPU-1,GPU-1A,GPU-S whose Reason is
@@ -60,11 +60,7 @@ export const POOLS = [
     ],
     "queue": {
       "running": 39,
-      "pending": 41,
-      "releasing": {
-        "jobs": 2,
-        "nodes": 2
-      }
+      "pending": 41
     }
   },
   {
@@ -105,11 +101,7 @@ export const POOLS = [
     ],
     "queue": {
       "running": 20,
-      "pending": 48,
-      "releasing": {
-        "jobs": 0,
-        "nodes": 0
-      }
+      "pending": 48
     }
   },
   {
@@ -149,16 +141,12 @@ export const POOLS = [
     ],
     "queue": {
       "running": 3,
-      "pending": 5,
-      "releasing": {
-        "jobs": 0,
-        "nodes": 0
-      }
+      "pending": 5
     }
   }
 ] as unknown as Pool[];
 
-export const PARTITIONS = [
+const PARTITIONS = [
   {
     "name": "GPU-1A",
     "kind": "gpu",
