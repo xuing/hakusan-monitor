@@ -1,6 +1,7 @@
 import { useT } from "@/i18n";
 import { nf } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { scaleCells } from "@/lib/unit-cells";
 
 export function UnitBlocks({
   free,
@@ -11,6 +12,7 @@ export function UnitBlocks({
   unit,
   schedulable,
   strandedLabel,
+  cells = 48,
   className,
 }: {
   free: number;
@@ -26,6 +28,8 @@ export function UnitBlocks({
   /** Tooltip wording for the amber part of `free` (CPU node bars use it for
    *  nodes with only some cores free). */
   strandedLabel?: string;
+  /** most cells drawn; a larger pool is scaled down to this many */
+  cells?: number;
   className?: string;
 }) {
   const t = useT();
@@ -35,6 +39,7 @@ export function UnitBlocks({
   const [okCells, strandedCells, usedCells, reservedCells, downCells] = scaleCells(
     [okFree, stranded, used, reserved, down],
     total,
+    cells,
   );
   const cell = (n: number, cls: string, key: string) =>
     Array.from({ length: n }, (_, i) => (
@@ -60,22 +65,4 @@ export function UnitBlocks({
       {cell(downCells, "bg-muted-foreground/25 ring-1 ring-inset ring-muted-foreground/45", "down")}
     </div>
   );
-}
-
-function scaleCells(values: number[], total: number, maxCells = 48): number[] {
-  const cells = Math.max(1, Math.min(maxCells, Math.round(total)));
-  if (total <= maxCells) return values.map((v) => Math.max(0, Math.round(v)));
-  const raw = values.map((v) => (Math.max(0, v) / total) * cells);
-  const out = raw.map(Math.floor);
-  let remaining = cells - out.reduce((sum, n) => sum + n, 0);
-  raw
-    .map((v, i) => ({ i, frac: v - Math.floor(v) }))
-    .sort((a, b) => b.frac - a.frac)
-    .forEach(({ i }) => {
-      if (remaining > 0) {
-        out[i] += 1;
-        remaining -= 1;
-      }
-    });
-  return out;
 }

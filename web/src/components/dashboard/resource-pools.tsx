@@ -8,6 +8,7 @@ import { FieldLabel, FieldNote, RangeSlider, SliderValueFixed, SliderValueInput,
 import { Segmented } from "@/components/common/segmented";
 import { Tag } from "@/components/common/tag";
 import { UnitBlocks } from "@/components/common/unit-blocks";
+import { barCells } from "@/lib/unit-cells";
 import { Card, CardContent } from "@/components/ui/card";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { PartitionTable, type PartitionAxis, type PartitionTableRow } from "@/components/dashboard/partition-table";
@@ -273,19 +274,21 @@ function PoolCard({ pool, snap, t }: { pool: Pool; snap: Snapshot; t: TFn }) {
               <GpuAvailabilityBreakdown segments={avail.segments} t={t} />
             ) : (
               <>
-                <div className={cn("tnum text-2xl font-bold", freeColor)}>
-                  {nf(free)}
-                  <span className="text-sm font-normal text-muted-foreground">
-                    {" / "}
-                    {nf(total)} {t("unit.cores")}
-                  </span>
+                <div className="flex flex-wrap items-baseline gap-x-3">
+                  <div className={cn("tnum text-2xl font-bold", freeColor)}>
+                    {nf(free)}
+                    <span className="text-sm font-normal text-muted-foreground">
+                      {" / "}
+                      {nf(total)} {t("unit.cores")}
+                    </span>
+                  </div>
+                  {/* held cores are idle and may turn free at the next scheduling
+                      pass — say so, or the free count seems to jump at random */}
+                  {cpuHeld.reserved > 0 && (
+                    <span className="text-xs text-warn-fg">{t("pool.coresReserved", { n: nf(cpuHeld.reserved) })}</span>
+                  )}
                 </div>
                 <div className="text-xs text-muted-foreground">{availableNodesLabel}</div>
-                {/* held cores are idle and may turn free at the next scheduling
-                    pass — say so, or the free count seems to jump at random */}
-                {cpuHeld.reserved > 0 && (
-                  <div className="text-xs text-warn-fg">{t("pool.coresReserved", { n: nf(cpuHeld.reserved) })}</div>
-                )}
               </>
             )}
           </div>
@@ -295,15 +298,22 @@ function PoolCard({ pool, snap, t }: { pool: Pool; snap: Snapshot; t: TFn }) {
         {isGpu && pool.gpu ? (
           <GpuBlocks t={t} gpu={pool.gpu} schedulableFree={readyGpu} className="mt-2" />
         ) : (
-          <UnitBlocks
-            free={free}
-            used={used}
-            reserved={cpuHeld.reserved}
-            down={cpuHeld.down}
-            total={total}
-            unit={t("unit.cores")}
-            className="mt-2 w-full"
-          />
+          <>
+            {/* cells by pool size (barCells); phones cap at 48 so cells stay ≥ 3 px */}
+            {[barCells(total, pool.nodes), Math.min(48, barCells(total, pool.nodes))].map((cells, i) => (
+              <UnitBlocks
+                key={i}
+                free={free}
+                used={used}
+                reserved={cpuHeld.reserved}
+                down={cpuHeld.down}
+                total={total}
+                unit={t("unit.cores")}
+                cells={cells}
+                className={cn("mt-2 w-full", i === 0 ? "hidden sm:flex" : "sm:hidden")}
+              />
+            ))}
+          </>
         )}
 
         <div className="mt-2.5 flex flex-wrap items-center gap-x-4 text-xs text-muted-foreground">
