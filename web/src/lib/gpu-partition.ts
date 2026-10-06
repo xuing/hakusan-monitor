@@ -8,7 +8,7 @@
  * The CPU counterpart is cpu-partition.ts. Who is ahead in the queue comes
  * from queue.ts; this module only applies it to one partition's request.
  */
-import { nodeIsSchedulable, parseGpuCount } from "@/lib/derive";
+import { coresPerNode, nodeIsSchedulable, parseGpuCount } from "@/lib/derive";
 import {
   fitHasClearSlot,
   gpuBackfillTipCommand,
@@ -110,7 +110,7 @@ export function gpuStatus(snap: Snapshot, pool: Pool, partition: string, req: Gp
 export function gpuShapeOf(part: Partition | undefined, pool: Pool): GpuNodeShape {
   return {
     gpus: part?.spec.gpu_per_node ?? 0,
-    cores: part?.spec.cores_per_node || (pool.nodes > 0 ? Math.floor(pool.cores.total / pool.nodes) : 0),
+    cores: part?.spec.cores_per_node || coresPerNode(pool),
     memMb: part?.spec.mem_per_node || pool.mem_per_node,
     count: part?.nodes ?? pool.nodes,
   };

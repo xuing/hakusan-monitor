@@ -7,7 +7,7 @@ import { describe, expect, it } from "vitest";
 describe("GPU availability layout", () => {
   it("keeps the count and GPU unit on the same line", () => {
     const source = readFileSync(
-      join(process.cwd(), "src/components/dashboard/resource-pools.tsx"),
+      join(process.cwd(), "src/components/pools/pool-card.tsx"),
       "utf8",
     );
     const countClasses = source.match(

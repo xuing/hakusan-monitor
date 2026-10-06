@@ -1,32 +1,25 @@
-import { useEffect, useState, type ReactNode } from "react";
+// The quick request: a pool's partitions on one axis, then the chosen
+// partition's request — sliders bounded by its limits, green up to what starts
+// now — and the command. Verdicts come from lib/gpu-partition and
+// lib/cpu-partition, the same the Partitions page reads.
+import { useState } from "react";
 import { Link } from "react-router";
-import { ChevronRight, ExternalLink, Link2, Link2Off } from "lucide-react";
+import { ChevronRight } from "lucide-react";
 import { CopyButton } from "@/components/common/copy-button";
-import { OccupancyMap, type OccupancyTile } from "@/components/common/occupancy-map";
-import { dayClockLabel, GpuReleaseHint } from "@/components/common/gpu-release-hint";
-import { FieldLabel, FieldNote, RangeSlider, SliderValueFixed, SliderValueInput, type SliderTick } from "@/components/common/range-slider";
-import { Segmented } from "@/components/common/segmented";
-import { POOL_BORDER, POOL_DOT, POOL_RING, POOL_TEXT } from "@/components/common/pool-tone";
+import { dayClockLabel } from "@/components/common/gpu-release-hint";
 import {
-  aheadText,
-  fmtMemRaw,
-  gpuReasonText,
-  gpuVerdictTag,
-  jobSizeText,
-  missingText,
-  nodeFreeText,
-  resourceParts,
-  resourceText,
-} from "@/components/common/verdict-text";
+  FieldLabel,
+  FieldNote,
+  RangeSlider,
+  SliderValueFixed,
+  SliderValueInput,
+} from "@/components/common/range-slider";
+import { Segmented } from "@/components/common/segmented";
+import { aheadText, fmtMemRaw, gpuReasonText, gpuVerdictTag } from "@/components/common/verdict-text";
 import { Tag } from "@/components/common/tag";
-import { UnitBlocks } from "@/components/common/unit-blocks";
-import { barCells } from "@/lib/unit-cells";
-import { Card, CardContent } from "@/components/ui/card";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { PartitionTable, type PartitionAxis, type PartitionTableRow } from "@/components/dashboard/partition-table";
+import { PartitionTable, type PartitionAxis, type PartitionTableRow } from "@/components/request/partition-table";
 import { useLive } from "@/hooks/live-context";
-import { useResourceFilter } from "@/hooks/resource-filter-context";
-import { coresText, durText, poolTitle, reasonLabel, useT, wallText, type TFn, type TranslationKey } from "@/i18n";
+import { coresText, durText, tOptional, wallText, type TFn } from "@/i18n";
 import { cpuPartitionStatus, cpuPartitionVerdict } from "@/lib/cpu-partition";
 import {
   cpuDefaultSpreads,
@@ -37,25 +30,15 @@ import {
   type CpuProbeState,
 } from "@/lib/cpu-probes";
 import { defaultRequestFit, singleNodeCoreFlag } from "@/lib/default-request";
-import { occupantsForPool, poolCapacity, unschedulableCores } from "@/lib/derive";
-import { fmtCountdown, fmtDur, fmtMB, nf, parseDur } from "@/lib/format";
-import type { GpuAvailabilitySegment } from "@/lib/gpu-availability";
-import {
-  gpuFitSnapshot,
-  parseWalltimeSec,
-  poolGpuAvailability,
-  slotContenders,
-  type GpuBackfillTipData,
-  type GpuFitInfo,
-  type GpuFitNode,
-} from "@/lib/gpu-fit";
+import { coresPerNode, poolCapacity } from "@/lib/derive";
+import { fmtDur } from "@/lib/format";
+import { gpuFitSnapshot, parseWalltimeSec } from "@/lib/gpu-fit";
 import { gpuLayouts, type GpuLayout, type GpuNodeShape } from "@/lib/gpu-layout";
 import { gpuStartCount, gpuStatus, layoutFit } from "@/lib/gpu-partition";
 import { licenseBusy, licensePlan } from "@/lib/licenses";
-import { occupancyMode } from "@/lib/occupancy-mode";
 import { cpuProbeDetail, cpuProbeLabel, cpuProbeTone, policyLimitRows } from "@/lib/policy-hints";
-import { poolPick, poolTone, type PoolTone } from "@/lib/pool-status";
-import { poolContenders, poolWaiters, queueModel, turnOrder, type Waiter } from "@/lib/queue";
+import { poolPick } from "@/lib/pool-status";
+import { poolContenders, poolWaiters, queueModel } from "@/lib/queue";
 import { buildRequestCommand, shouldShowGapShell } from "@/lib/request-command";
 import { requestLimits, type PoolShape } from "@/lib/request-limits";
 import { getSite } from "@/lib/site";
@@ -64,7 +47,6 @@ import {
   interactiveForcedLabel,
   interactiveForcedSec,
   isLicensePartition,
-  matchPool,
   minutesToSlurmTime,
   partitionCap,
   partitionDefaultRequest,
@@ -75,328 +57,17 @@ import {
   type Tone,
 } from "@/lib/slurm";
 import { cn } from "@/lib/utils";
-import type { Occupant, Partition, Pool, PoolGpu, RawJob, Snapshot } from "@/types/snapshot";
-import { gpuSegmentLabel, gpuSegmentTextClass } from "@/components/common/gpu-status";
-
-export function ResourcePools() {
-  const { snap } = useLive();
-  const { filter } = useResourceFilter();
-  const t = useT();
-  if (!snap) return null;
-  const pools = snap.pools
-    .map((p, i) => ({ p, i }))
-    .filter(({ p }) => matchPool(p, filter))
-    .sort((a, b) => Number(!!a.p.gpu?.maint) - Number(!!b.p.gpu?.maint) || a.i - b.i)
-    .map(({ p }) => p);
-  const groups = [
-    { key: "gpu", label: t("kpi.gpu"), pools: pools.filter((p) => p.kind === "gpu") },
-    { key: "cpu", label: t("kpi.cpu"), pools: pools.filter((p) => p.kind === "cpu") },
-  ].filter((g) => g.pools.length > 0);
-
-  return (
-    <div>
-      <div className="space-y-5">
-        {groups.map((g) => (
-          <PoolGroup
-            key={g.key}
-            groupKey={g.key}
-            label={g.label}
-            pools={g.pools}
-            snap={snap}
-            t={t}
-            outside={filter === "all" ? (snap.outside_nodes ?? []).filter((o) => (o.gpus > 0) === (g.key === "gpu")) : []}
-          />
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function PoolGroup({ groupKey, label, pools, snap, t, outside = [] }: {
-  groupKey: string;
-  label: string;
-  pools: Pool[];
-  snap: Snapshot;
-  t: TFn;
-  /** hardware of this kind no partition reaches: a gray card, not counted */
-  outside?: NonNullable<Snapshot["outside_nodes"]>;
-}) {
-  const tones = pools.map((p) => poolTone(snap, p));
-  const available = tones.filter((tone) => tone === "ok").length;
-  const groupTone: PoolTone = tones.every((tone) => tone === "off") ? "off" : available > 0 ? "ok" : "bad";
-  // collapsed groups stay collapsed for this viewer
-  const storeKey = `hm_pool_group_${groupKey}`;
-  const [open, setOpen] = useState(() => {
-    try {
-      return localStorage.getItem(storeKey) !== "closed";
-    } catch {
-      return true;
-    }
-  });
-  const toggle = () => {
-    setOpen(!open);
-    try {
-      localStorage.setItem(storeKey, open ? "closed" : "open");
-    } catch {
-      /* storage unavailable: the choice lasts this visit */
-    }
-  };
-  return (
-    <section className="space-y-2">
-      <button
-        type="button"
-        onClick={toggle}
-        aria-expanded={open}
-        className="flex w-full flex-wrap items-center gap-2 border-b border-border pb-1.5 text-left hover:text-foreground"
-      >
-        <ChevronRight className={cn("h-3.5 w-3.5 text-muted-foreground transition-transform", open && "rotate-90")} />
-        <span className={cn("h-2.5 w-2.5 rounded-full", POOL_DOT[groupTone])} />
-        <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{label}</span>
-        <span className="font-mono text-xs text-muted-foreground">
-          {available}/{pools.length} {t("part.available")}
-        </span>
-      </button>
-      {open && <div className={cn("grid gap-4", pools.length + outside.length > 1 && "lg:grid-cols-2")}>
-        {pools.map((p) => (
-          <PoolCard key={p.id} pool={p} snap={snap} t={t} />
-        ))}
-        {outside.map((o) => <OutsideCard key={o.pool} o={o} t={t} />)}
-      </div>}
-    </section>
-  );
-}
-
-/** Hardware scontrol lists but no partition schedules: where it would sit,
- *  grayed, saying why it cannot be used from here. */
-function OutsideCard({ o, t }: { o: NonNullable<Snapshot["outside_nodes"]>[number]; t: TFn }) {
-  const outsideUrl = getSite().links.outside_hardware;
-  return (
-    <Card className="border-dashed bg-muted/30">
-      <CardContent className="space-y-2 p-4">
-        <div className="flex flex-wrap items-baseline gap-2">
-          <span className="h-2.5 w-2.5 self-center rounded-full bg-muted-foreground/45" />
-          <span className="font-semibold text-muted-foreground">{o.label || o.pool}</span>
-          <span className="text-xs text-muted-foreground">
-            {o.nodes} {t("spec.nodes")}{o.gpus ? ` · ${nf(o.gpus)} ${t("unit.gpu")}` : ""}
-          </span>
-        </div>
-        <p className="text-sm text-muted-foreground">{t("pool.outsideCard")}</p>
-        {outsideUrl && (
-          <a
-            href={outsideUrl}
-            target="_blank"
-            rel="noreferrer"
-            className="inline-flex items-center gap-1 text-xs text-info-fg hover:underline"
-          >
-            {t("pool.outsideLink")}
-            <ExternalLink aria-hidden className="h-3 w-3" />
-          </a>
-        )}
-      </CardContent>
-    </Card>
-  );
-}
-
-function PoolCard({ pool, snap, t }: { pool: Pool; snap: Snapshot; t: TFn }) {
-  const [open, setOpen] = useState(false);
-  const [queueOpen, setQueueOpen] = useState(false);
-  const isGpu = pool.kind === "gpu";
-  // one verdict for the dot, the border and the free count — the same the
-  // filter chip, the group header and the collapsed quick request read
-  const tone = poolTone(snap, pool);
-  const maint = tone === "off";
-  const availableNodes = pool.available_nodes ?? pool.idle_nodes ?? 0;
-  // One classifier decides every GPU number on this card — the same verdict
-  // the filter chips, group header, KPIs and Partitions page read.
-  const avail = isGpu ? poolGpuAvailability(snap, pool) : null;
-  const readyGpu = avail?.ready ?? 0;
-  // The header says "N GPUs free": idle GPUs on in-service nodes (= backend
-  // gpu.free). Never physicalIdle — that also counts drained and
-  // scheduler-held cards, which the body lists as their own segments.
-  const freeGpu = avail?.free ?? 0;
-  const availableNodesLabel = isGpu
-    ? t("pool.gpuFreePhysical", { n: freeGpu })
-    : t("pool.availableNodes", { n: availableNodes });
-  const free = isGpu ? freeGpu : pool.cores.free;
-  const total = isGpu && pool.gpu ? pool.gpu.total : pool.cores.total;
-  const cpuHeld = isGpu ? { reserved: 0, down: 0 } : unschedulableCores(snap.nodes, pool.id);
-
-  return (
-    <Card
-      className={cn(
-        // min-w-0: a grid item sizes to its longest unbreakable line without
-        // it; the collapsed-row summary and the per-GPU block strip would
-        // widen the card past a phone screen
-        "min-w-0 transition-colors",
-        POOL_BORDER[tone],
-      )}
-    >
-      <CardContent className="p-4">
-        <div className="flex items-center justify-between gap-2">
-          <div className="flex items-center gap-2">
-            <span
-              className={cn("h-2.5 w-2.5 rounded-full ring-2", POOL_DOT[tone], POOL_RING[tone])}
-            />
-            <span className="font-semibold">{poolTitle(t, pool)}</span>
-            {/* GPU pools carry more cards than nodes (A100: 10 nodes x 2), and
-                every big number on this card counts GPUs — state the pool's GPU
-                total here so "20" never reads as a node count. */}
-            <span className="text-xs text-muted-foreground">
-              {pool.nodes} {t("spec.nodes")}
-              {isGpu && pool.gpu ? ` · ${nf(pool.gpu.total)} ${t("unit.gpu")}` : ""}
-              {" · "}
-              {/* node memory, worded apart from the cards' own */}
-              {t("pool.headMem", { mem: fmtMB(pool.mem_per_node) })}
-            </span>
-          </div>
-          <span className="tnum font-mono text-sm text-muted-foreground">
-            {maint ? t("pool.maint") : availableNodesLabel}
-          </span>
-        </div>
-
-        <div className="mt-3 flex items-start justify-between gap-3">
-          <div className="min-w-0 flex-1">
-            {maint ? (
-              <span className="text-lg font-semibold text-muted-foreground">{t("pool.maint")}</span>
-            ) : isGpu && avail ? (
-              <GpuAvailabilityBreakdown segments={avail.segments} t={t} />
-            ) : (
-              <>
-                <div className="flex flex-wrap items-baseline gap-x-3">
-                  <div className={cn("tnum text-2xl font-bold", POOL_TEXT[tone])}>
-                    {nf(free)}
-                    <span className="text-sm font-normal text-muted-foreground">
-                      {" / "}
-                      {nf(total)} {t("unit.cores")}
-                    </span>
-                  </div>
-                  {/* held cores are idle and may turn free at the next scheduling
-                      pass — say so, or the free count seems to jump at random */}
-                  {cpuHeld.reserved > 0 && (
-                    <span className="text-xs text-warn-fg">{t("pool.coresReserved", { n: nf(cpuHeld.reserved) })}</span>
-                  )}
-                </div>
-                <div className="text-xs text-muted-foreground">{availableNodesLabel}</div>
-              </>
-            )}
-          </div>
-          <GpuReleaseHint next={isGpu ? pool.gpu?.next_free : null} generatedAt={snap.generated_at} />
-        </div>
-
-        {isGpu && pool.gpu ? (
-          <GpuBlocks t={t} gpu={pool.gpu} schedulableFree={readyGpu} className="mt-2" />
-        ) : (
-          <>
-            {/* core shares, one cell per node's worth of cores (barCells);
-                phones cap at 48 cells so cells stay ≥ 3 px */}
-            {[barCells(total, pool.nodes), Math.min(48, barCells(total, pool.nodes))].map((cells, i) => (
-              <UnitBlocks
-                key={i}
-                free={free}
-                used={pool.cores.alloc}
-                reserved={cpuHeld.reserved}
-                down={cpuHeld.down}
-                total={total}
-                unit={t("unit.cores")}
-                cells={cells}
-                className={cn("mt-2 w-full", i === 0 ? "hidden sm:flex" : "sm:hidden")}
-              />
-            ))}
-          </>
-        )}
-
-        <div className="mt-2.5 flex flex-wrap items-center gap-x-4 text-xs text-muted-foreground">
-          <span className="inline-flex items-center gap-1.5">
-            <span aria-hidden className="h-2 w-2 rounded-full bg-ok/80" />
-            <b className="tnum text-foreground">{pool.queue.running}</b> {t(pool.queue.running === 1 ? "queue.running1" : "queue.running")}
-          </span>
-          <span className="inline-flex items-center gap-1.5">
-            {/* the same yellow as every "queues" bar and zone */}
-            <span aria-hidden className={cn("h-2 w-2 rounded-full", pool.queue.pending ? "bg-warn/45" : "bg-muted")} />
-            <b className="tnum text-foreground">{pool.queue.pending}</b> {t(pool.queue.pending === 1 ? "queue.pending1" : "queue.pending")}
-          </span>
-        </div>
-
-        <div className="-mx-2 mt-3 border-t border-border pt-1.5">
-          {pool.queue.running > 0 && (
-            <>
-              <DisclosureRow
-                open={open}
-                onToggle={() => setOpen(!open)}
-                label={t("pool.occupants")}
-                count={pool.queue.running}
-              />
-              {open && (
-                <div className="px-2 pb-1.5">
-                  <Occupants pool={pool} t={t} />
-                </div>
-              )}
-            </>
-          )}
-
-          {pool.queue.pending > 0 && (
-            <>
-              <DisclosureRow
-                open={queueOpen}
-                onToggle={() => setQueueOpen(!queueOpen)}
-                label={t("pool.pendingJobs")}
-                count={pool.queue.pending}
-              />
-              {queueOpen && (
-                <div className="px-2 pb-1.5">
-                  <PendingJobs pool={pool} t={t} />
-                </div>
-              )}
-            </>
-          )}
-
-          {!maint && <RequestSample pool={pool} t={t} />}
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-
-/** Full-width clickable expander row — the one affordance for every
- *  collapsible section on a pool card (occupants / pending / quick request). */
-function DisclosureRow({
-  open,
-  onToggle,
-  label,
-  count,
-  summary,
-}: {
-  open: boolean;
-  onToggle: () => void;
-  label: string;
-  count?: number;
-  summary?: ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onToggle}
-      aria-expanded={open}
-      className={cn(
-        "flex min-h-8 w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-left text-xs text-muted-foreground outline-none transition-colors",
-        "hover:bg-muted/60 hover:text-foreground focus-visible:ring-2 focus-visible:ring-primary/45",
-        open && "text-foreground",
-      )}
-    >
-      <ChevronRight className={cn("h-3.5 w-3.5 shrink-0 transition-transform duration-150", open && "rotate-90")} />
-      <span className="font-medium text-foreground/85">{label}</span>
-      {count !== undefined && <span className="tnum font-mono">{count}</span>}
-      {summary && <span className="ml-auto flex min-w-0 items-center gap-1.5 pl-2">{summary}</span>}
-    </button>
-  );
-}
+import type { Partition, Pool, Snapshot } from "@/types/snapshot";
+import { DisclosureRow } from "@/components/pools/pool-card";
+import { CommandVerdict, GpuBackfillQuickTip, GpuFitExplanation, HintAction, MemLinkToggle, clockShort, layoutPlacementLabel } from "@/components/request/request-parts";
+import { fmtGb, fmtGbNear, largestPassing, linearTicks, logTicks, niceCoreCount, normalizeMem, numberOptions, parseHumanTime, parseMemoryInputMb, quantizeWalltime, walltimeTicks, withinCapInt } from "@/lib/request-input";
 
 /** Collapsible starter request for this pool, in two steps: a table of its
  *  partitions on one axis (what a job may ask for, green = what starts now) to
  *  pick from, then that partition's request — sliders bounded by its limits,
  *  green up to what starts now — and the command. Picking a partition resets
  *  every field to that partition's defaults. */
-function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
+export function RequestPanel({ pool, t }: { pool: Pool; t: TFn }) {
   const { snap } = useLive();
   // Minimal starter: the pool's sample partition (site file, else Slurm's
   // default partition) with no resource flags — the submit plugin and the
@@ -446,7 +117,7 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
   // field bounds come from request-limits (shared with the daily boundary check)
   const limitShape: PoolShape = {
     nodes: selectedPart?.nodes ?? pool.nodes,
-    coresPerNode: poolCoresPerNode(pool),
+    coresPerNode: coresPerNode(pool),
     memPerNodeMb: pool.mem_per_node,
     gpusPerNode: selectedPart?.spec.gpu_per_node ?? 0,
   };
@@ -456,7 +127,7 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
   // node shape). Anything else is not offered at all.
   const gpuShape: GpuNodeShape = {
     gpus: selectedPart?.spec.gpu_per_node ?? 0,
-    cores: poolCoresPerNode(pool),
+    cores: coresPerNode(pool),
     memMb: pool.mem_per_node,
     count: pool.nodes,
   };
@@ -479,7 +150,7 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
   // VM-GPU-L 476800 MB vs 469070 MB, VM-LM 3772800 MB vs 3754178 MB). Slurm
   // then spreads the job — VM-GPU-L takes a second H100 for one task — or
   // refuses it. Pin it back to one node and say why.
-  const nodeShape = { cores: poolCoresPerNode(pool), memMb: pool.mem_per_node };
+  const nodeShape = { cores: coresPerNode(pool), memMb: pool.mem_per_node };
   const defaultFit = defaultRequestFit(partitionDefaultRequest(partition, snap?.policy), nodeShape);
   // every extra node the split lands on takes the plugin's per-node GPUs with it
   const overflowExtraGpus = isGpu && defaultFit
@@ -510,7 +181,7 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
   // tasks must cover the nodes: an -n below the chosen -N cannot be placed
   const coreCount = nodeCount && coreCountRaw && coreCountRaw < nodeCount ? 0 : coreCountRaw;
   // Same rule for -t vs the partition wall (mirrors --mem's memTooHigh).
-  const wallSec = parseWallMinutes(cap.wall) * 60;
+  const wallSec = wallLabelSec(cap.wall);
   const timeSel = time.trim() && (!wallSec || parseWalltimeSec(time) <= wallSec) ? time : "";
   const cpuRows = snap && !isGpu ? cpuProbeRows(pool, snap) : [];
   const partDefaults = partitionDefaults(partition, snap?.policy);
@@ -632,7 +303,7 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
   const defMemMb = perNodeCores * memPerCore;
   const memShownMb = memValue ? parsedMemMb : defMemMb;
   const coreMin = cap.minCores ?? 1;
-  const coreMax = Math.max(coreMin, cap.maxCores ?? poolCoresPerNode(pool));
+  const coreMax = Math.max(coreMin, cap.maxCores ?? coresPerNode(pool));
   const setCoreCount = (v: number) => setCores(v === defCores && !nodeCount ? "" : String(v));
 
   // -L decides first: no license where one is required, or a default name
@@ -856,7 +527,7 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
     const policyP = partitionPolicy(p, snap?.policy);
     const fullP = Boolean(q?.groupFull(p));
     const wall = capP.wall ? wallText(t, capP.wall) : "—";
-    const desc = trMaybe(t, `policy.${p}.desc`, "") || undefined;
+    const desc = tOptional(t, `policy.${p}.desc`) || undefined;
     if (isGpu) {
       const req = { timeSec: optionVerdictSec };
       const status = snap ? gpuStatus(snap, pool, p, req, nowMs) : null;
@@ -874,7 +545,7 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
     // full group or a used-up license starts nothing
     const refused = !st || st.license.kind === "required" || st.license.kind === "missing" || st.state === "failed";
     return {
-      name: p, title: desc, lo, hi: Math.max(lo, capP.maxCores ?? poolCoresPerNode(pool)),
+      name: p, title: desc, lo, hi: Math.max(lo, capP.maxCores ?? coresPerNode(pool)),
       now: st?.maxCores ?? 0, wall, perUser: perUserText(policyP.maxJobsPerUser),
       verdict: st ? cpuPartitionVerdict(st, t) : { tone: cpuProbeTone("unknown"), label: cpuProbeLabel("unknown", t) }, judged: !refused,
       selected: p === partition, marker: p === partition ? coresNow : undefined,
@@ -1374,203 +1045,6 @@ function RequestSample({ pool, t }: { pool: Pool; t: TFn }) {
   );
 }
 
-/** 🔗 between cores and --mem: linked, the memory is cores x the default
- *  per core and follows the core slider; a hand-set --mem unlinks it, and a
- *  click links it again (or pins the current value). */
-function MemLinkToggle({ linked, per, onToggle, t }: { linked: boolean; per: string; onToggle: () => void; t: TFn }) {
-  const Icon = linked ? Link2 : Link2Off;
-  return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <button
-          type="button"
-          onClick={onToggle}
-          aria-pressed={linked}
-          aria-label={linked ? t("pool.memLinkedTip", { per }) : t("pool.memUnlinkedTip")}
-          className={cn(
-            "ml-1 inline-flex h-5 w-5 items-center justify-center rounded transition-colors hover:bg-muted",
-            linked ? "text-info-fg" : "text-muted-foreground",
-          )}
-        >
-          <Icon className="h-3.5 w-3.5" />
-        </button>
-      </TooltipTrigger>
-      <TooltipContent className="max-w-xs leading-relaxed">
-        {linked ? t("pool.memLinkedTip", { per }) : t("pool.memUnlinkedTip")}
-      </TooltipContent>
-    </Tooltip>
-  );
-}
-
-/** The one-click fix after a hint: sets the value the hint names. */
-function HintAction({ label, onClick }: { label: string; onClick: () => void }) {
-  return (
-    <button type="button" onClick={onClick} className="ml-1.5 whitespace-nowrap font-medium text-info-fg underline-offset-2 hover:underline">
-      {label}
-    </button>
-  );
-}
-
-/** The verdict pill inside the always-dark command box. */
-function CommandVerdict({ tone, label }: { tone: Tone; label: string }) {
-  const cls: Record<Tone, string> = {
-    ok: "bg-emerald-500/15 text-emerald-300",
-    warn: "bg-amber-500/15 text-amber-300",
-    bad: "bg-red-500/15 text-red-300",
-    info: "bg-sky-500/15 text-sky-300",
-    neutral: "bg-zinc-500/20 text-zinc-300",
-  };
-  return (
-    <span className={cn("inline-flex shrink-0 items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-semibold", cls[tone])}>
-      <span className="h-1.5 w-1.5 rounded-full bg-current" />
-      {label}
-    </span>
-  );
-}
-
-function layoutPlacementLabel(l: GpuLayout, t: TFn) {
-  if (l.nodes === 1) return t("pool.layoutOneNode", { n: l.gpus });
-  return l.packed
-    ? t("pool.layoutPackedN", { nodes: l.nodes, per: l.gpusPerNode })
-    : t("pool.layoutSpreadN", { nodes: l.nodes });
-}
-
-/** A limit in whole GiB, rounded down: never promise memory that isn't there. */
-const fmtGb = (mb: number) => (mb > 0 ? `${Math.floor(mb / 1024)}G` : "");
-/** A default in GiB as the slider shows it (rounded). */
-const fmtGbNear = (mb: number) => (mb > 0 ? `${Math.round(mb / 1024)}G` : "");
-
-/** The largest integer in lo..hi a monotone test still passes (fewer
- *  resources never hurt); lo - 1 when none does. */
-function largestPassing(lo: number, hi: number, ok: (v: number) => boolean) {
-  if (hi < lo || !ok(lo)) return lo - 1;
-  let a = lo;
-  let b = hi;
-  while (a < b) {
-    const m = Math.ceil((a + b) / 2);
-    if (ok(m)) a = m;
-    else b = m - 1;
-  }
-  return a;
-}
-
-/** Ticks for a linear count axis: the ends plus ~3 round steps between. */
-function linearTicks(lo: number, hi: number): SliderTick[] {
-  const steps = [1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096];
-  const step = steps.find((s) => (hi - lo) / s <= 4) ?? steps[steps.length - 1];
-  const out: SliderTick[] = [{ value: lo, label: String(lo) }];
-  for (let v = Math.ceil((lo + 1) / step) * step; v < hi; v += step) {
-    if ((v - lo) / Math.max(hi - lo, 1) > 0.08) out.push({ value: v, label: String(v) });
-  }
-  out.push({ value: hi, label: String(hi) });
-  return out;
-}
-
-/** A clicked point on the log core axis as a count a person would ask for:
- *  a power of two when close to one, else a round step for its size. */
-function niceCoreCount(v: number) {
-  const p2 = 2 ** Math.round(Math.log2(v));
-  if (Math.abs(v - p2) / p2 < 0.12) return Math.max(1, p2);
-  const step = v <= 16 ? 1 : v <= 256 ? 8 : 64;
-  return Math.max(1, Math.round(v / step) * step);
-}
-
-const fmtCount = (v: number) => (v >= 1024 && v % 1024 === 0 ? `${v / 1024}K` : String(v));
-
-/** Ticks for the table's log core axis: powers of four, and the end; the
- *  odd powers of two are minor (hidden on a phone-width bar). */
-function logTicks(max: number) {
-  const out = [1, 4, 16, 64, 256, 1024, 4096, 16384]
-    .filter((v) => v <= max)
-    .map((v) => ({ value: v, label: fmtCount(v), minor: v !== max && (Math.log2(v) % 4 !== 0 || Math.log2(max / v) < 1.5) }));
-  // the end gets its own label; ticks within 1.5 octaves of it would touch
-  if (max / out[out.length - 1].value >= 1.5) {
-    return [...out.filter((tk) => Math.log2(max / tk.value) >= 1.5), { value: max, label: fmtCount(max), minor: false }];
-  }
-  return out;
-}
-
-const WALLTIME_TICKS: [number, string][] = [[600, "10m"], [3600, "1h"], [21600, "6h"], [86400, "1d"], [259200, "3d"], [604800, "7d"], [1209600, "14d"], [1814400, "21d"]];
-
-/** Log-axis ticks for -t: the ends plus round steps, none closer than 15%
- *  of the track to a neighbour (so "3d" never sits on top of "7d"). */
-function walltimeTicks(min: number, max: number): SliderTick[] {
-  const pos = (v: number) => Math.log(v / min) / (Math.log(max / min) || 1);
-  const out: SliderTick[] = [{ value: min, label: fmtDur(min) }];
-  for (const [value, label] of WALLTIME_TICKS) {
-    if (value <= min || value >= max) continue;
-    if (pos(value) - pos(out[out.length - 1].value) < 0.15 || 1 - pos(value) < 0.15) continue;
-    out.push({ value, label });
-  }
-  out.push({ value: max, label: fmtDur(max) });
-  return out;
-}
-
-/** Round a dragged walltime to a step a person would type. */
-function quantizeWalltime(sec: number) {
-  const step = sec < 7200 ? 300 : sec < 86400 ? 1800 : 3600;
-  return Math.max(step, Math.round(sec / step) * step);
-}
-
-/** "3d", "12h", "90m", "1d12h" or any Slurm -t form -> seconds (0 = unreadable). */
-function parseHumanTime(text: string) {
-  const s = text.trim().toLowerCase();
-  if (!s) return 0;
-  const m = s.match(/^(?:(\d+)\s*d)?\s*(?:(\d+)\s*h)?\s*(?:(\d+)\s*m)?$/);
-  if (m && (m[1] || m[2] || m[3])) return Number(m[1] || 0) * 86400 + Number(m[2] || 0) * 3600 + Number(m[3] || 0) * 60;
-  return parseWalltimeSec(s);
-}
-
-/** A stored selection outside the (new) partition's bounds counts as "no
- *  selection" — clamping it silently would emit a flag the UI no longer
- *  shows. Bounds are two-sided: QOS MinTRES rejects too-small requests. */
-function withinCapInt(value: string, max?: number, min?: number) {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed) || parsed <= 0) return 0;
-  const n = Math.floor(parsed);
-  if (max && n > max) return 0;
-  if (min && n < min) return 0;
-  return n;
-}
-
-function normalizeMem(value: string) {
-  const raw = value.trim().toUpperCase();
-  if (!raw) return "";
-  const m = raw.match(/^(\d+)([KMGTP])$/);
-  if (!m) return "";
-  const n = Number(m[1]);
-  if (!Number.isFinite(n) || n <= 0) return "";
-  return `${Math.floor(n)}${m[2]}`;
-}
-
-function parseMemoryInputMb(value: string) {
-  const m = normalizeMem(value).match(/^(\d+)([KMGTP])$/);
-  if (!m) return 0;
-  const n = Number(m[1]);
-  const unit = m[2];
-  const mult: Record<string, number> = { K: 1 / 1024, M: 1, G: 1024, T: 1024 * 1024, P: 1024 * 1024 * 1024 };
-  return Math.round(n * mult[unit]);
-}
-
-function numberOptions(max: number | undefined, values: number[], min?: number) {
-  const limit = max ?? Math.max(...values);
-  const floor = min ?? 1;
-  const out = new Set(values.filter((n) => n >= floor && n <= limit));
-  if (max && max > 0) out.add(max);
-  if (min && min > 0 && min <= limit) out.add(min);
-  return [...out].sort((a, b) => a - b);
-}
-
-function parseWallMinutes(wall: string | undefined) {
-  if (!wall) return 0;
-  const m = wall.match(/^(\d+)([mhd])$/);
-  if (!m) return 0;
-  const n = Number(m[1]);
-  if (m[2] === "m") return n;
-  if (m[2] === "h") return n * 60;
-  return n * 24 * 60;
-}
-
 /** The collapsed quick-request row: the pool's most startable partition
  *  (poolPick), worded as its table row and the Partitions page word it. */
 function pickSummary(snap: Snapshot, pool: Pool, t: TFn): { tone: Tone; label: string; text: string } | null {
@@ -1601,507 +1075,5 @@ function cpuQueueDetail(snap: Snapshot, pool: Pool, part: Partition | undefined,
   if (req.coreCount > 0 && req.coreCount > (req.multiNode ? free.freeCores : free.emptiestNodeFree)) return t("pool.queueReasonCores");
   const ahead = poolContenders(snap, pool.id).length;
   return ahead > 0 ? aheadText(ahead, pool.cores.free > 0 ? coresText(t, pool.cores.free) : null, t) : "";
-}
-
-function GpuBackfillQuickTip({
-  tip,
-  variant,
-  forced,
-  applied,
-  onApply,
-  t,
-}: {
-  tip: GpuBackfillTipData;
-  /** script: normal -t advice · switch: salloc can't -t, offer script mode · fits: gap ≥ the pinned walltime, only --mem needed */
-  variant: "script" | "switch" | "fits";
-  /** the plugin-pinned interactive walltime label ("12h"), from the policy */
-  forced: string;
-  applied: boolean;
-  onApply: () => void;
-  t: TFn;
-}) {
-  const until = clockShort(tip.untilMs);
-  const text =
-    variant === "switch"
-      ? tip.mem
-        ? t("pool.bfTipSalloc", { node: tip.node, until, mem: tip.mem, t: tip.t, forced })
-        : t("pool.bfTipSallocTime", { node: tip.node, until, t: tip.t, forced })
-      : variant === "fits"
-        ? t("pool.bfTipFits", { node: tip.node, until, mem: tip.mem, forced })
-        : tip.mem
-          ? t("pool.bfTipText", { node: tip.node, until, mem: tip.mem, t: tip.t })
-          : t("pool.bfTipTextTime", { node: tip.node, until, t: tip.t });
-  const applyLabel =
-    variant === "switch"
-      ? t("pool.bfTipSallocApply")
-      : variant === "fits"
-        ? t("pool.fitTipApply", { mem: tip.mem })
-        : tip.mem
-          ? t("pool.bfTipApply", { mem: tip.mem, t: tip.t })
-          : t("pool.bfTipApplyTime", { t: tip.t });
-  return (
-    <div className="mt-2 rounded-md border border-info/40 bg-info-soft/45 px-2 py-1.5 text-xs leading-relaxed">
-      <div className="flex flex-wrap items-center gap-1.5">
-        <Tag tone="info">{t("pool.bfTip")}</Tag>
-        <span className="text-foreground">{text}</span>
-        <button
-          type="button"
-          onClick={onApply}
-          className={cn(
-            "rounded border px-1.5 py-0.5 font-medium transition-colors",
-            applied
-              ? "border-ok/40 bg-ok-soft text-ok-fg"
-              : "border-info/45 bg-background/80 text-info-fg hover:bg-info-soft",
-          )}
-        >
-          {applied ? t("pool.fitTipApplied") : applyLabel}
-        </button>
-      </div>
-    </div>
-  );
-}
-
-/** "01:45" today, "7/9 01:45" once it crosses midnight. */
-function clockShort(ms: number) {
-  const d = new Date(ms);
-  const hm = `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
-  return d.toDateString() === new Date().toDateString() ? hm : `${d.getMonth() + 1}/${d.getDate()} ${hm}`;
-}
-
-/** Cores on one node of this pool — pools are homogeneous, so the pool total
- *  divided by its node count is the per-node figure Slurm sees. */
-function poolCoresPerNode(pool: Pool) {
-  return pool.nodes > 0 ? Math.floor(pool.cores.total / pool.nodes) : 0;
-}
-
-function trMaybe(t: TFn, key: string, fallback: string) {
-  const translated = t(key as TranslationKey);
-  return translated === key ? fallback : translated;
-}
-
-function GpuAvailabilityBreakdown({
-  segments,
-  t,
-}: {
-  segments: GpuAvailabilitySegment[];
-  t: TFn;
-}) {
-  return (
-    <div className="flex flex-wrap items-end gap-x-6 gap-y-2">
-      {segments.map((segment) => (
-        <span key={segment.kind} className="inline-flex items-end gap-x-2">
-          <b className={cn("tnum shrink-0 whitespace-nowrap text-2xl font-bold leading-none", gpuSegmentTextClass(segment.kind))}>
-            {t("pool.gpuCount", { n: nf(segment.count) })}
-          </b>
-          <span className="text-xs leading-snug text-muted-foreground">
-            {gpuSegmentLabel(segment.kind, t)}
-          </span>
-        </span>
-      ))}
-    </div>
-  );
-}
-
-function strandedTipNode(fit: GpuFitInfo | null) {
-  return fit?.stranded.find((row) => row.freeGpu >= 1 && row.freeCores >= fit.need.cores && row.freeMemMb > 1024) ?? null;
-}
-
-function GpuFitExplanation({ fit, contenders, t }: { fit: GpuFitInfo; contenders: Waiter[]; t: TFn }) {
-  const rows = fit.stranded.slice(0, 4);
-  if (rows.length === 0) return null;
-  const more = Math.max(0, fit.stranded.length - rows.length);
-  const best = strandedTipNode(fit) ?? fit.stranded[0];
-  const contested = best ? slotContenders(best, contenders) : 0;
-  return (
-    <div className="mt-2 rounded-md border border-warn/35 bg-warn-soft/45 px-2.5 py-2 text-xs leading-relaxed">
-      <div className="flex flex-wrap items-center gap-1.5">
-        <Tag tone="warn">{t("pool.fitBlocked")}</Tag>
-        <span className="text-foreground">{t("pool.fitNeed", { partition: fit.need.partition, need: resourceText(fit.need, t) })}</span>
-      </div>
-      {contested > 0 && (
-        <div className="mt-1 font-medium text-warn-fg">{t("pool.fitContestedNote", { n: contested })}</div>
-      )}
-      <div className="mt-1 text-muted-foreground">
-        {t("pool.fitRawFree", { gpu: fit.rawFree, nodes: fit.stranded.length, sched: fit.schedulable })}
-      </div>
-      <div className="mt-1.5 space-y-1">
-        {rows.map((row) => (
-          <GpuFitNodeRow key={row.node.name} row={row} t={t} />
-        ))}
-      </div>
-      {more > 0 && <div className="mt-1 text-muted-foreground">{t("pool.fitMoreNodes", { n: more })}</div>}
-    </div>
-  );
-}
-
-function GpuFitNodeRow({ row, t }: { row: GpuFitNode; t: TFn }) {
-  const occupants = row.occupants.slice(0, 3);
-  const more = Math.max(0, row.occupants.length - occupants.length);
-  const allocated = allocatedResourceText(row, t);
-  return (
-    <div className="rounded-md border border-border/70 bg-background/70 px-2 py-1.5">
-      <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
-        <span className="font-mono text-info-fg">{row.node.name}</span>
-        <span className="font-mono text-muted-foreground">
-          {t("pool.fitNodeLeft", { free: nodeFreeText(row, t) })}
-        </span>
-        <span className="font-mono text-bad-fg">{t("pool.fitNodeMissing", { missing: missingText(row, t) })}</span>
-      </div>
-      {allocated && <div className="mt-0.5 font-mono text-muted-foreground">{t("pool.fitNodeAllocated", { used: allocated })}</div>}
-      {occupants.length > 0 && (
-        <div className="mt-0.5 text-muted-foreground">
-          {t("pool.fitOccupants")}:{" "}
-          {occupants.map((job, i) => (
-            <span key={String(job.job_id)} className="font-mono">
-              {i > 0 ? " · " : ""}
-              {job.user_name} #{job.job_id} {job.partition} {jobResourceText(job, t)}
-            </span>
-          ))}
-          {more > 0 && <span className="font-mono"> · +{more}</span>}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function allocatedResourceText(row: GpuFitNode, t: TFn) {
-  if (row.usedGpu <= 0 && row.node.alloc_cpus <= 0 && row.node.alloc_memory <= 0) return "";
-  return resourceParts(row.usedGpu, row.node.alloc_cpus, row.node.alloc_memory, t);
-}
-
-function jobResourceText(job: RawJob, t: TFn) {
-  const parts = [];
-  if (job.gpus) parts.push(`${nf(job.gpus)} ${t("unit.gpu")}`);
-  if (job.cpus) parts.push(coresText(t, job.cpus));
-  if (job.min_memory) parts.push(job.min_memory);
-  return parts.length ? `(${parts.join(" / ")})` : "";
-}
-
-/** One block per physical GPU — ready (green), unavailable idle capacity
- * (amber, whether constrained or scheduler-reserved), used (red), then
- * genuinely offline (grey with an inset border). */
-function GpuBlocks({ gpu, schedulableFree, className, t }: { gpu: PoolGpu; schedulableFree?: number; className?: string; t: TFn }) {
-  const ready = Math.max(0, Math.min(gpu.free, schedulableFree ?? gpu.free));
-  const stranded = Math.max(0, gpu.free - ready);
-  const reserved = Math.max(0, gpu.reserved ?? 0);
-  const seg = (n: number, cls: string, key: string) =>
-    Array.from({ length: Math.max(0, n) }, (_, i) => (
-      <span key={key + i} className={cn("h-2.5 min-w-0 flex-1 rounded-sm", cls)} />
-    ));
-  return (
-    <div className={cn("flex gap-0.5", className)} title={[
-      ready && t("blocks.ready", { n: `${ready} ${t("unit.gpu")}` }),
-      stranded && t("blocks.constrained", { n: `${stranded} ${t("unit.gpu")}` }),
-      reserved && t("blocks.reserved", { n: `${reserved} ${t("unit.gpu")}` }),
-      gpu.used && t("blocks.used", { n: `${gpu.used} ${t("unit.gpu")}` }),
-      gpu.down && t("blocks.down", { n: `${gpu.down} ${t("unit.gpu")}` }),
-    ].filter(Boolean).join(" · ")}>
-      {seg(ready, "bg-ok", "f")}
-      {seg(stranded, "bg-warn", "s")}
-      {seg(reserved, "bg-warn", "r")}
-      {seg(gpu.used, "bg-bad", "u")}
-      {seg(gpu.down, "bg-muted-foreground/25 ring-1 ring-inset ring-muted-foreground/45", "d")}
-    </div>
-  );
-}
-
-function PendingJobs({ pool, t }: { pool: Pool; t: TFn }) {
-  const { snap } = useLive();
-  if (!snap) return null;
-  // every waiting job, in the order it gets its turn (the box scrolls)
-  const list = turnOrder(poolWaiters(snap, pool.id)).map((w) => w.job);
-  if (list.length === 0) return null;
-  return (
-    <div className="mt-2 max-h-64 space-y-1 overflow-y-auto pr-1">
-      {list.map((j) => (
-        <PendingJobRow key={String(j.job_id)} job={j} t={t} />
-      ))}
-    </div>
-  );
-}
-
-function PendingJobRow({ job, t }: { job: RawJob; t: TFn }) {
-  const rawReason = job.state_reason || "None";
-  return (
-    <div className="rounded-md bg-muted/40 px-2.5 py-1.5 text-xs">
-      <div className="flex items-center justify-between gap-2">
-        <span className="font-mono text-info-fg">{job.user_name}</span>
-        <div className="flex items-center gap-2 font-mono text-muted-foreground">
-          <span>{job.partition}</span>
-          <span className="text-foreground">{jobSizeText(job, t, true)}</span>
-        </div>
-      </div>
-      <div className="mt-1 truncate text-xs text-muted-foreground">
-        {reasonLabel(t, rawReason)}
-        {job.start_est && Number.isFinite(Date.parse(job.start_est)) && (
-          <> · {t("pool.pendingStartEst", { when: dayClockLabel(job.start_est, t) })}</>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function Occupants({ pool, t }: { pool: Pool; t: TFn }) {
-  const { snap } = useLive();
-  const [q, setQ] = useState("");
-  const [sort, setSort] = useState<"usage" | "ending">("ending");
-  const [now, setNow] = useState(() => Date.now() / 1000); // ticks the live countdown
-  useEffect(() => {
-    const id = setInterval(() => setNow(Date.now() / 1000), 1000);
-    return () => clearInterval(id);
-  }, []);
-  if (!snap) return null;
-
-  const isGpu = pool.kind === "gpu";
-  const all = occupantsForPool(snap, pool.id); // pre-sorted by resource usage
-  const needle = q.trim().toLowerCase();
-  const filtered = needle
-    ? all.filter((o) => o.user.toLowerCase().includes(needle) || o.nodelist.toLowerCase().includes(needle))
-    : all;
-  let list = filtered;
-  if (sort === "ending") {
-    list = [...list].sort((a, b) => (a.end_time || "~").localeCompare(b.end_time || "~"));
-  }
-  const groupByUser = sort === "usage";
-  const userGroups = groupByUser ? occupantUserGroups(filtered) : [];
-  const totalUserGroups = groupByUser ? occupantUserGroups(all).length : 0;
-  const shown = groupByUser ? userGroups.length : list.length;
-  const total = groupByUser ? totalUserGroups : all.length;
-  // One shared ruler for every row in this pool — the longest wall-time cap among the
-  // partitions sharing this hardware. Otherwise a job that maxes out its own (shorter)
-  // partition policy looks "full" even though a sibling partition allows much longer.
-  const poolCapSeconds = Math.max(0, ...pool.partitions.map((p) => partitionWallSeconds(p, snap.policy)));
-  return (
-    <div className="mt-2">
-      <div className="mb-2 flex flex-wrap items-center gap-2">
-        <input
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-          placeholder={t("table.search")}
-          aria-label={t("table.search")}
-          className="h-7 w-40 rounded-md border border-border bg-background px-2 text-xs outline-none focus:border-primary"
-        />
-        <div className="flex items-center rounded-md border border-border p-0.5">
-          {(["ending", "usage"] as const).map((s) => (
-            <button
-              key={s}
-              type="button"
-              onClick={() => setSort(s)}
-              className={cn(
-                "rounded px-2 py-0.5 text-xs transition-colors",
-                sort === s ? "bg-accent text-foreground" : "text-muted-foreground hover:text-foreground",
-              )}
-            >
-              {t(s === "usage" ? "pool.sortUsage" : "pool.sortEnding")}
-            </button>
-          ))}
-        </div>
-        <span className="tnum ml-auto text-xs text-muted-foreground">
-          {shown}/{total}
-        </span>
-      </div>
-      {/* by usage: the pool as one map, each user's tile its share; a search
-          narrows it to a list of the matching users */}
-      {groupByUser && !needle ? (
-        <OccupancyMap
-          tiles={poolOccupancyTiles(pool, snap, userGroups, t)}
-          ariaLabel={t("pool.sortUsage")}
-          restLabel={(k, amount) => ({ label: t("users.others", { n: k }), amount: isGpu ? `${nf(amount)} ${t("unit.gpu")}` : coresText(t, amount) })}
-          nodeWord={t("spec.nodes")}
-          {...occupancyMode(pool, snap)}
-        />
-      ) : (
-      <div className="max-h-72 space-y-1 overflow-y-auto pr-1">
-        {groupByUser ? (
-          userGroups.map((group) => (
-            <OccupantUserRow key={group.user} group={group} isGpu={isGpu} t={t} />
-          ))
-        ) : (
-          list.map((o) => (
-            <OccupantRow key={String(o.job_id)} o={o} now={now} generatedAt={snap.generated_at} poolCap={poolCapSeconds} t={t} />
-          ))
-        )}
-        {shown === 0 && (
-          <div className="py-3 text-center text-xs text-muted-foreground">{t("table.noresults")}</div>
-        )}
-      </div>
-      )}
-    </div>
-  );
-}
-
-/** Tiles for a pool's occupancy map: one per user (GPUs on a GPU pool,
- *  cores otherwise), then what is free and what is offline. */
-function poolOccupancyTiles(pool: Pool, snap: Snapshot, groups: OccupantUserGroup[], t: TFn): OccupancyTile[] {
-  const isGpu = pool.kind === "gpu" && !!pool.gpu;
-  const unit = (n: number) => (isGpu ? `${nf(n)} ${t("unit.gpu")}` : coresText(t, n));
-  const waiting = new Map<string, number>();
-  for (const { job } of poolWaiters(snap, pool.id)) {
-    waiting.set(job.user_name, (waiting.get(job.user_name) ?? 0) + 1);
-  }
-  const users: OccupancyTile[] = groups
-    .map((g) => {
-      const value = isGpu ? g.gpus : g.cpus;
-      const queued = waiting.get(g.user) ?? 0;
-      return {
-        key: g.user,
-        value,
-        kind: "user" as const,
-        label: g.user,
-        amount: unit(value),
-        sub: `${g.nodes} ${t("spec.nodes")}`,
-        // the row layout prints one line: who, how much, how many nodes
-        queued: queued > 0,
-        details: [
-          `${g.nodes} ${t("spec.nodes")} · ${t(g.jobs === 1 ? "users.job1" : "users.jobs", { n: g.jobs })}`,
-          [isGpu ? coresText(t, g.cpus) : "", `${t("kpi.memory")} ${fmtMB(g.mem_mb)}`].filter(Boolean).join(" · "),
-          ...(queued ? [t("users.queuedJobs", { n: queued })] : []),
-        ],
-      };
-    })
-    .sort((a, b) => b.value - a.value);
-  const free = isGpu ? pool.gpu!.free : pool.cores.free;
-  const held = isGpu ? { reserved: pool.gpu!.reserved ?? 0, down: pool.gpu!.down } : unschedulableCores(snap.nodes, pool.id);
-  return [
-    ...users,
-    { key: "~free", value: free, kind: "free", amount: unit(free), sub: t("users.free"), details: [t("users.free")] },
-    { key: "~reserved", value: held.reserved, kind: "reserved", amount: unit(held.reserved), sub: t("users.reserved"), details: [t("users.reservedDetail")] },
-    { key: "~off", value: held.down, kind: "off", amount: unit(held.down), sub: t("users.offline"), details: [t("users.offline")] },
-  ];
-}
-
-interface OccupantUserGroup {
-  user: string;
-  jobs: number;
-  gpus: number;
-  cpus: number;
-  mem_mb: number;
-  nodes: number;
-}
-
-function occupantUserGroups(list: Occupant[]): OccupantUserGroup[] {
-  const map = new Map<string, OccupantUserGroup>();
-  for (const o of list) {
-    const g = map.get(o.user) ?? {
-      user: o.user,
-      jobs: 0,
-      gpus: 0,
-      cpus: 0,
-      mem_mb: 0,
-      nodes: 0,
-    };
-    g.jobs += 1;
-    g.gpus += o.gpus;
-    g.cpus += o.cpus;
-    g.mem_mb += o.mem_mb;
-    g.nodes += o.nodes;
-    map.set(o.user, g);
-  }
-  return [...map.values()].sort(
-    (a, b) =>
-      b.gpus - a.gpus
-      || b.cpus - a.cpus
-      || b.mem_mb - a.mem_mb
-      || b.jobs - a.jobs
-      || a.user.localeCompare(b.user),
-  );
-}
-
-function OccupantRow({
-  o,
-  now,
-  generatedAt,
-  poolCap,
-  t,
-}: {
-  o: Occupant;
-  now: number;
-  generatedAt: number;
-  poolCap: number;
-  t: TFn;
-}) {
-  // live remaining = remaining-at-snapshot minus seconds elapsed since the snapshot
-  const remaining = Math.max(0, parseDur(o.time_left) - (now - generatedAt));
-  const requested = parseDur(o.time_limit);
-  const cap = poolCap || requested;
-  const remFrac = cap > 0 ? Math.min(1, remaining / cap) : 0;
-  const requestedFrac = cap > 0 ? Math.min(1, requested / cap) : 0;
-  // Short jobs in a long-cap partition (e.g. 12h in a 7d DEF slot) round to a sliver —
-  // floor the *visible* width so they stay a readable bar instead of vanishing; the
-  // color still reflects the true fraction, not the floored width.
-  const barWidth = remFrac > 0 ? Math.max(3, remFrac * 100) : 0;
-  // The bar means "how long this can still occupy resources, relative to what this
-  // partition normally allows": short is good, long is expensive.
-  const barColor = remFrac >= 0.5 ? "bg-bad" : remFrac >= 0.15 ? "bg-warn" : "bg-ok";
-  return (
-    <div className="rounded-md bg-muted/40 px-2.5 py-1.5 text-xs">
-      <div className="flex items-center justify-between gap-2">
-        <span className="font-mono text-info-fg">{o.user}</span>
-        <div className="flex items-center gap-2 font-mono text-muted-foreground">
-          <span className="text-foreground">{jobSizeText(o, t)}</span>
-          <span className="max-w-[8rem] truncate">{o.nodelist}</span>
-        </div>
-      </div>
-      <div className="mt-1 flex items-center gap-2">
-        {/* Track = this partition's policy wall-time cap. Three zones, left to right:
-            colored = time left, grey = already spent (of this job's own request),
-            bare track = headroom this job will never touch because it asked for less
-            than the partition allows. */}
-        <div className="relative h-1.5 flex-1 overflow-hidden rounded-full bg-muted">
-          <div
-            className={cn("absolute inset-y-0 left-0 transition-all duration-1000 ease-linear", barColor)}
-            style={{ width: `${barWidth}%` }}
-          />
-          {requestedFrac * 100 > barWidth && (
-            <div
-              className="absolute inset-y-0 bg-muted-foreground/30 transition-all duration-1000 ease-linear"
-              style={{ left: `${barWidth}%`, width: `${requestedFrac * 100 - barWidth}%` }}
-            />
-          )}
-        </div>
-        <span className="tnum shrink-0 font-mono text-xs">
-          <span className="text-foreground">{fmtCountdown(remaining)}</span>
-          {requested > 0 && <span className="text-muted-foreground"> / {fmtDur(requested)}</span>}
-        </span>
-      </div>
-    </div>
-  );
-}
-
-function OccupantUserRow({
-  group,
-  isGpu,
-  t,
-}: {
-  group: OccupantUserGroup;
-  isGpu: boolean;
-  t: TFn;
-}) {
-  const primary = isGpu ? `${group.gpus} ${t("unit.gpu")}` : coresText(t, group.cpus);
-  return (
-    <div className="rounded-md bg-muted/40 px-2.5 py-1.5 text-xs">
-      <div className="flex items-center justify-between gap-2">
-        <span className="font-mono text-info-fg">{group.user}</span>
-        <span className="tnum rounded bg-info-soft px-1.5 py-0.5 font-mono text-xs font-semibold text-info-fg">
-          {primary}
-        </span>
-      </div>
-      <div className="mt-1 flex min-w-0 items-center justify-between gap-2 text-xs text-muted-foreground">
-        <span className="truncate">
-          {group.jobs} {t("topusers.jobs")}
-          {/* the chip above has the headline; the line repeats it among the rest */}
-          {isGpu && <> · {group.gpus} {t("unit.gpu")}</>}
-          {isGpu && <> · {coresText(t, group.cpus)}</>} · {fmtMB(group.mem_mb)}
-          {group.nodes > 0 && <> · {group.nodes} {t("spec.nodes")}</>}
-        </span>
-      </div>
-    </div>
-  );
-}
-
-function partitionWallSeconds(partition: string, policy?: Snapshot["policy"]) {
-  const part = String(partition || "").split(",")[0];
-  const wall = partitionCap(part, policy).wall;
-  return parseWallMinutes(wall) * 60;
 }
 

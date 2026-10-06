@@ -12,8 +12,7 @@ import { gpuSegmentLabel } from "@/components/common/gpu-status";
 import { gpuVerdictTag } from "@/components/common/verdict-text";
 import { useLive } from "@/hooks/live-context";
 import { useResourceFilter } from "@/hooks/resource-filter-context";
-import { coresText, poolTitle, useT, type TFn } from "@/i18n";
-import type { TranslationKey } from "@/i18n/en";
+import { coresText, poolTitle, tOptional, useT, type TFn } from "@/i18n";
 import { cpuPartitionStatus, cpuPartitionTone, cpuPartitionVerdict, type CpuPartitionStatus } from "@/lib/cpu-partition";
 import { poolCapacity, poolNodeStates, type PoolCapacity, type PoolNodeStates } from "@/lib/derive";
 import { fmtMB, nf } from "@/lib/format";
@@ -36,12 +35,10 @@ import type { Partition, Pool, Snapshot } from "@/types/snapshot";
 
 /** A partition's title and description from the site's text
  *  (`policy.<name>` / `policy.<name>.desc`), else the generic pair. */
-function partitionLabelPolicy(name: string, t: TFn): { title: TranslationKey; desc: TranslationKey } {
-  const title = `policy.${name}` as TranslationKey;
-  const desc = `policy.${name}.desc` as TranslationKey;
+function partitionLabels(name: string, t: TFn): { title: string; desc: string } {
   return {
-    title: t(title) !== title ? title : "policy.other",
-    desc: t(desc) !== desc ? desc : "policy.other.desc",
+    title: tOptional(t, `policy.${name}`) || t("policy.other"),
+    desc: tOptional(t, `policy.${name}.desc`) || t("policy.other.desc"),
   };
 }
 
@@ -85,7 +82,7 @@ function rowOf(snap: Snapshot, pool: Pool | undefined, p: Partition, t: TFn): Ro
   };
 }
 
-export function PartitionPressure() {
+export function PartitionList() {
   const { snap } = useLive();
   const { filter } = useResourceFilter();
   const t = useT();
@@ -359,7 +356,7 @@ function PartitionRow({ row, pool, snap, pendShared, t }: {
   const { p, maint, gpu, cpu, tag } = row;
   const isGpu = p.kind === "gpu";
   const policy = snap.policy;
-  const labelPolicy = partitionLabelPolicy(p.name, t);
+  const labels = partitionLabels(p.name, t);
   const limitRows = policyLimitRows(partitionPolicy(p.name, policy), queueModel(snap).running(p.name), t);
   const cap = partitionCap(p.name, policy);
   const starts = tag.tone === "ok";
@@ -398,7 +395,7 @@ function PartitionRow({ row, pool, snap, pendShared, t }: {
       <div className="grid gap-x-3 gap-y-1 sm:grid-cols-[9rem_minmax(0,1fr)_auto] sm:items-center">
         <div className="min-w-0">
           <div className="truncate text-sm font-medium">{p.name}</div>
-          <div className="truncate text-xs text-muted-foreground">{t(labelPolicy.title)}</div>
+          <div className="truncate text-xs text-muted-foreground">{labels.title}</div>
         </div>
         <div className="min-w-0">
           <div className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5">
@@ -420,11 +417,7 @@ function PartitionRow({ row, pool, snap, pendShared, t }: {
               )}
             </span>
           </div>
-          {t(labelPolicy.desc) && (
-            <div className="mt-0.5 text-xs text-muted-foreground/80">
-              {t(labelPolicy.desc)}
-            </div>
-          )}
+          {labels.desc && <div className="mt-0.5 text-xs text-muted-foreground/80">{labels.desc}</div>}
           {verdict === "bypass" && gpu?.memTip && (
             <div className="mt-0.5 text-xs text-warn-fg">
               {t("pool.quickGpuMemHint", { mem: gpu.memTip.mem })} · {gpu.memTip.node}

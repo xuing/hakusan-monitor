@@ -9,6 +9,13 @@ export const LANGS = ["ja", "en", "zh"] as const;
 export type Lang = (typeof LANGS)[number];
 export type TFn = (key: TranslationKey, vars?: Record<string, string | number>) => string;
 
+/** The text for `key`, or "" where no dictionary defines it (site-specific
+ *  keys such as `policy.<partition>.desc`). */
+export function tOptional(t: TFn, key: string): string {
+  const text = t(key as TranslationKey);
+  return text === key ? "" : text;
+}
+
 export const DICTS: Record<Lang, Record<TranslationKey, string>> = { en, ja, zh };
 export const isLang = (value: string): value is Lang => (LANGS as readonly string[]).includes(value);
 

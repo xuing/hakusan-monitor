@@ -1,5 +1,5 @@
-import { PartitionPressure } from "@/components/dashboard/partition-pressure";
+import { PartitionList } from "@/components/partitions/partition-list";
 
 export default function PartitionsPage() {
-  return <PartitionPressure />;
+  return <PartitionList />;
 }

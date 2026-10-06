@@ -3,10 +3,9 @@ import { Info, Lock } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 
-export interface SliderTick {
-  value: number;
-  label: string;
-}
+import type { SliderTick } from "@/lib/request-input";
+
+export type { SliderTick };
 
 /** A request field's name: the name itself, then the Slurm flag it sets and
  *  any qualifier ("per node") in the secondary style, then extras (🔗). */

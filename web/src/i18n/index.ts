@@ -8,6 +8,7 @@ export {
   poolTitle,
   reasonDescription,
   reasonLabel,
+  tOptional,
   wallText,
   type Lang,
   type TFn,

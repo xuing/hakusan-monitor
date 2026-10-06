@@ -21,6 +21,12 @@ function toOccupant(j: RawJob): Occupant {
   };
 }
 
+/** Cores on one node of a pool — pools are homogeneous, so the pool total
+ *  divided by its node count is the per-node figure Slurm sees. */
+export function coresPerNode(pool: { nodes: number; cores: { total: number } }): number {
+  return pool.nodes > 0 ? Math.floor(pool.cores.total / pool.nodes) : 0;
+}
+
 /** All raw nodes belonging to a pool. */
 export function nodesForPool(snap: Snapshot, poolId: string): RawNode[] {
   return snap.nodes.filter((n) => n.pool === poolId);

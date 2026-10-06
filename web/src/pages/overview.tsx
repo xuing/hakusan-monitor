@@ -3,7 +3,7 @@ import { NodesDown } from "@/components/dashboard/nodes-down";
 import { PoolDetail } from "@/components/dashboard/pool-detail";
 import { QueueInsights } from "@/components/dashboard/queue-insights";
 import { ReleasesPanel } from "@/components/dashboard/releases-panel";
-import { ResourcePools } from "@/components/dashboard/resource-pools";
+import { ResourcePools } from "@/components/pools/resource-pools";
 import { TopUsers } from "@/components/dashboard/top-users";
 import { Skeleton } from "@/components/ui/skeleton";
 import { LivePending } from "@/components/common/live-pending";
