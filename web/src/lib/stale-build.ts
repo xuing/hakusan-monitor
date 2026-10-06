@@ -30,3 +30,46 @@ export function installStaleBuildReload() {
     if (reloadForNewBuild()) event.preventDefault();
   });
 }
+
+const BUILD_KEY = "hm_reload_for_build";
+const IDLE_MS = 2 * 60_000;
+let waiting = false;
+
+/** The build this tab runs: the hash in its entry script's name ("" in dev). */
+function ownBuild(): string {
+  if (typeof document === "undefined" || typeof document.querySelector !== "function") return "";
+  const src = document.querySelector<HTMLScriptElement>('script[type="module"][src*="assets/index-"]')?.src ?? "";
+  return /assets\/index-([\w-]+)\.js/.exec(src)?.[1] ?? "";
+}
+
+/** The server serves `build`. When it is not the one this tab runs, reload
+ *  onto it once the viewer is not using the page — the tab is hidden, or no
+ *  input for 2 min — so a half-set request is not lost. Once per build: if
+ *  the reload still lands on another build, the tab stays as it is. */
+export function noticeBuild(build: unknown) {
+  const own = ownBuild();
+  if (waiting || !own || typeof build !== "string" || !build || build === own) return;
+  try {
+    if (sessionStorage.getItem(BUILD_KEY) === build) return;
+  } catch {
+    // storage blocked: the 30 s guard in reloadForNewBuild still applies
+  }
+  waiting = true;
+  let lastInput = Date.now();
+  const mark = () => { lastInput = Date.now(); };
+  for (const type of ["pointerdown", "keydown", "wheel", "touchstart"]) {
+    window.addEventListener(type, mark, { passive: true });
+  }
+  const tryReload = () => {
+    if (!document.hidden && Date.now() - lastInput < IDLE_MS) return;
+    try {
+      sessionStorage.setItem(BUILD_KEY, build);
+    } catch {
+      // see above
+    }
+    reloadForNewBuild();
+  };
+  document.addEventListener("visibilitychange", tryReload);
+  setInterval(tryReload, 15_000);
+  tryReload();
+}

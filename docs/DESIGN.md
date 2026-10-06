@@ -21,7 +21,12 @@ login-node /proc, df, iostat, ps ─▶ login_nodes.py ─▶ store.py: login_sa
 - One sampler thread collects for every viewer; HTTP requests never trigger
   collection. A failed sample keeps serving the last snapshot marked `stale`.
   A database error does not: the fresh snapshot is served, and
-  `/api/health` reports the error as `store_error`.
+  `/api/health` reports the error as `store_error`. Login nodes have their
+  own thread and `HM_LOGIN_INTERVAL`.
+- A connection that sends nothing, idles or stops reading its stream for
+  60 s is closed, so it cannot hold a server thread.
+- Snapshots and stream pings carry the served build (`build`). An open page
+  on an older build reloads once it is hidden or 2 min without input.
 - The snapshot carries the raw `nodes` and `jobs` next to the derived pools
   and partitions. Every page derives from that one payload (`lib/derive.ts`):
   the Nodes and Jobs tables, the occupancy maps and every verdict below.
@@ -115,7 +120,10 @@ in, best fit, on nodes of the GPU type it names, using up group and per-user
 slots as it goes. A new job gets what is left:
 
 - `claims` per node: the share each waiter that starts now asks for, not the
-  whole node.
+  whole node. A GPU job takes the same share on each of its nodes (`--gres`
+  is per node); a CPU job over N nodes takes any cores the N nodes have, at
+  least one each, with memory per core — Slurm spreads its tasks unevenly
+  (a running SMALL job held 256 CPUs on 18 nodes).
 - `groupFull(partition)`: no group slot left once those waiters started.
 - `bookings` per node: Slurm's future starts for the waiters that do not
   start now. A new job starts on a booked node only if it ends before the
@@ -181,14 +189,12 @@ Rules learned from shipped bugs, each pinned by a test:
 ## 8. Known gaps
 
 - **GPU blocks do not show a full group cap.** Pool cards draw the hardware
-  after the queue's claims; a full GrpJobs cap reaches only the verdict, so
-  a block can read ready beside "Will queue". Showing it needs a block state
-  of its own.
-- **Multi-node waiters are split evenly.** A waiter's cores and memory are
-  divided equally over its nodes; Slurm may spread tasks unevenly, so a
-  waiter that would fit uneven leftovers claims nothing.
-- **Login sampling rides the cluster cycle.** It runs after every cluster
-  sample (also a failed one), so `HM_LOGIN_INTERVAL` below
-  `HM_SAMPLE_INTERVAL` cannot sample login nodes more often.
-- **No HTTP request timeout.** SSE connections are capped (`HM_MAX_SSE`), but
-  connection threads and socket writes have no application timeout.
+  after the queue's claims; a full GrpJobs cap reaches only the verdict. A
+  block could read ready beside "Will queue" only when every partition of
+  the pool is capped with a GPU still free — impossible on Hakusan, where the
+  caps sum past the GPUs (A40 30+10+3 jobs on 40 GPUs, A100 20+2 on 20) and
+  every job holds a GPU.
+- **Which nodes a multi-node CPU job takes is an estimate.** The model takes
+  the roomiest nodes; Slurm's choice (cons_tres) also weighs node weights,
+  topology and which cores are free per socket, which the snapshot does not
+  carry.

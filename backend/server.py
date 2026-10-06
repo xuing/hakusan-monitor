@@ -228,6 +228,7 @@ class Engine:
                         refresh_min_interval=self.cfg["refresh_min_interval"],
                         source=self.cfg["source"], stale=False)
             snap["outside_nodes"] = outside
+            snap["build"] = self.cfg.get("build", "")
             snap["partition_order"] = SITE.display_order(policy)
             seen = {}
             for pool in snap["pools"]:
@@ -269,10 +270,6 @@ class Engine:
                     time.time() - self.latest.get("generated_at", time.time()), 1)})
             print(f"collect failed ({self.fail_count}x): {self.error}", flush=True)
             return None
-        finally:
-            # Login nodes are separate machines: a Slurm controller outage
-            # must not freeze their data (it used to skip this entirely).
-            self._sample_login(now)
 
     def _persist(self, snap, now):
         """Save the sample's history. A database error costs that history,
@@ -303,6 +300,15 @@ class Engine:
                                 "configured": bool(self.cfg["login_nodes"]),
                                 "nodes": [], "top_users": [], "stale": True,
                                 "error": str(e)}
+
+    def run_login(self):
+        """Login nodes are separate machines on their own cadence
+        (HM_LOGIN_INTERVAL): a slow or failing cluster sample neither
+        delays nor stops them, and they never delay the cluster data."""
+        while True:
+            t0 = time.time()
+            self._sample_login(t0)
+            time.sleep(max(5.0, self.cfg["login_interval"] - (time.time() - t0)))
 
     def run(self):
         while True:
@@ -462,9 +468,23 @@ def load_static_assets(frontend):
     return MappingProxyType(assets)
 
 
+def build_id(assets):
+    """The web build being served: the hash in its entry script's name
+    (index-<hash>.js), "" without a build. Open pages compare it with their
+    own and reload onto a new deploy."""
+    page = assets.get("/index.html")
+    m = re.search(rb"assets/index-([A-Za-z0-9_-]+)\.js", page[0]) if page else None
+    return m.group(1).decode() if m else ""
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "HakusanMonitor/1.0"
     protocol_version = "HTTP/1.1"
+    # Each connection holds a thread. A client that connects and sends
+    # nothing, idles on keep-alive, or stops reading its live stream is
+    # dropped after this long instead of holding its thread forever; at
+    # 60 s a 600 KB snapshot still reaches a 10 KB/s link.
+    timeout = 60
     engine: "Engine"  # injected in main() before serving
     static_assets = {}  # injected in main() before serving
 
@@ -607,10 +627,11 @@ class Handler(BaseHTTPRequestHandler):
                     # Named event (not an SSE comment): comments are invisible to
                     # EventSource, so the client couldn't tell a quiet-but-alive
                     # stream from a silently dead socket. This feeds its watchdog.
-                    self.wfile.write(b"event: ping\ndata: {}\n\n")
+                    ping = json.dumps({"build": CFG.get("build", "")}).encode()
+                    self.wfile.write(b"event: ping\ndata: " + ping + b"\n\n")
                     self.wfile.flush()
-        except (BrokenPipeError, ConnectionResetError):
-            pass
+        except (BrokenPipeError, ConnectionResetError, TimeoutError):
+            pass   # gone, or stopped reading for `timeout` seconds
         finally:
             eng.unsubscribe(q)
 
@@ -681,9 +702,11 @@ def main():
     eng = Engine(CFG)
     Handler.engine = eng
     Handler.static_assets = load_static_assets(FRONTEND)
+    CFG["build"] = build_id(Handler.static_assets)
     # Sample in the background so the port binds immediately; early requests get
     # an explicit warming-up response and never perform collection themselves.
     threading.Thread(target=eng.run, daemon=True).start()
+    threading.Thread(target=eng.run_login, daemon=True).start()
     if eng.jobs.enabled:
         threading.Thread(target=eng.jobs.run, daemon=True).start()
     httpd = ThreadingHTTPServer(("0.0.0.0", CFG["port"]), Handler)

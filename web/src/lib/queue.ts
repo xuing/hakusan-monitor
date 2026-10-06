@@ -245,12 +245,12 @@ function buildModel(snap: QueueInput): QueueModel {
       const share = shareOf(w.job, gpuPool.has(partPool[p]));
       const placed = place(rooms.filter((r) => r.partitions.has(p)), w.job, share);
       if (!placed) continue;
-      for (const room of placed) {
-        room.gpus -= share.gpus;
-        room.cores -= share.cores;
-        room.memMb -= share.memMb;
+      for (const { room, take } of placed) {
+        room.gpus -= take.gpus;
+        room.cores -= take.cores;
+        room.memMb -= take.memMb;
         const prev = claims.get(room.name) ?? { gpus: 0, cores: 0, memMb: 0 };
-        claims.set(room.name, { gpus: prev.gpus + share.gpus, cores: prev.cores + share.cores, memMb: prev.memMb + share.memMb });
+        claims.set(room.name, { gpus: prev.gpus + take.gpus, cores: prev.cores + take.cores, memMb: prev.memMb + take.memMb });
       }
       groupLeft.set(qos, g - 1);
       userLeft.set(userKey, u - 1);
@@ -326,20 +326,59 @@ export function mayUseNode(job: RawJob, nodeName: string): boolean {
   return Math.max(1, job.node_count || 1) > required.length;
 }
 
-/** The nodes a waiter would start on now — its required hosts first, then
- *  best fit (fewest spare GPUs, then cores, keeping the widest gaps open as
- *  Slurm's packing does) — or null when it cannot start in full now. */
-function place(rooms: Room[], job: RawJob, share: Share): Room[] | null {
-  // a GPU type named in the request (--gres=gpu:nvidia_a40:1) holds on every partition of its list
-  const fits = (r: Room) => mayUseNode(job, r.name) && (!share.gpus || !job.gpu_type || job.gpu_type === r.gpuType)
-    && share.gpus <= r.gpus && share.cores <= r.cores && share.memMb <= r.memMb;
+interface Placement {
+  room: Room;
+  take: Claim;
+}
+
+/** Where a waiter would start now, and what it takes on each node — or null
+ *  when it cannot start in full now. Required hosts come first; a GPU type
+ *  named in the request (--gres=gpu:nvidia_a40:1) holds on every partition
+ *  of its list. */
+function place(rooms: Room[], job: RawJob, share: Share): Placement[] | null {
+  const typeOk = (r: Room) => !share.gpus || !job.gpu_type || job.gpu_type === r.gpuType;
   const required = new Set(expandHostlist(job.req_nodes || ""));
-  const pinned = rooms.filter((r) => required.has(r.name));
-  if (pinned.length < Math.min(required.size, share.nodes) || !pinned.every(fits)) return null;
-  const extra = rooms
+  const usable = rooms.filter((r) => mayUseNode(job, r.name) && typeOk(r));
+  const pinned = usable.filter((r) => required.has(r.name));
+  if (pinned.length < Math.min(required.size, share.nodes)) return null;
+  return !share.gpus && share.nodes > 1
+    ? spread(usable, pinned, required, job, share.nodes)
+    : packEven(usable, pinned, required, share);
+}
+
+/** The same share on every node, best fit: fewest spare GPUs, then cores,
+ *  keeping the widest gaps open as Slurm's packing does. GPU jobs land this
+ *  way: their --gres is per node. */
+function packEven(usable: Room[], pinned: Room[], required: Set<string>, share: Share): Placement[] | null {
+  const fits = (r: Room) => share.gpus <= r.gpus && share.cores <= r.cores && share.memMb <= r.memMb;
+  if (!pinned.every(fits)) return null;
+  const extra = usable
     .filter((r) => !required.has(r.name) && fits(r))
     .sort((a, b) => a.gpus - b.gpus || a.cores - b.cores || a.name.localeCompare(b.name))
     .slice(0, Math.max(0, share.nodes - pinned.length));
   const chosen = [...pinned.slice(0, share.nodes), ...extra];
-  return chosen.length >= share.nodes ? chosen : null;
+  const take = { gpus: share.gpus, cores: share.cores, memMb: share.memMb };
+  return chosen.length >= share.nodes ? chosen.map((room) => ({ room, take })) : null;
+}
+
+/** A CPU job over N nodes: Slurm spreads its tasks over the cores the nodes
+ *  have, at least one per node, not an equal share each — a running SMALL
+ *  job held 256 CPUs on 18 nodes (2026-10-07). Its memory follows the cores
+ *  (the job's memory per CPU). It takes the roomiest nodes, filled in order. */
+function spread(usable: Room[], pinned: Room[], required: Set<string>, job: RawJob, nodes: number): Placement[] | null {
+  const total = Math.max(nodes, job.cpus || 0);
+  const memPerCore = (job.min_memory_mb || 0) / total;
+  const roomOf = (r: Room) => Math.min(r.cores, memPerCore ? Math.floor(r.memMb / memPerCore) : r.cores);
+  if (pinned.some((r) => roomOf(r) < 1)) return null;
+  const extra = usable
+    .filter((r) => !required.has(r.name) && roomOf(r) >= 1)
+    .sort((a, b) => roomOf(b) - roomOf(a) || a.name.localeCompare(b.name));
+  const chosen = [...pinned, ...extra].slice(0, nodes);
+  if (chosen.length < nodes || chosen.reduce((sum, r) => sum + roomOf(r), 0) < total) return null;
+  let left = total;
+  return chosen.map((r, i) => {
+    const cores = Math.min(roomOf(r), left - (nodes - i - 1));
+    left -= cores;
+    return { room: r, take: { gpus: 0, cores, memMb: Math.ceil(cores * memPerCore) } };
+  });
 }

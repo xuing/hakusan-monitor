@@ -1,12 +1,14 @@
 import http.client
 import os
+import socket
 import sqlite3
 import tempfile
 import threading
+import time
 import unittest
 from unittest.mock import patch
 
-from backend.server import Engine, Handler, ThreadingHTTPServer, load_static_assets
+from backend.server import Engine, Handler, ThreadingHTTPServer, build_id, load_static_assets
 
 
 class _FakeEngine:
@@ -235,6 +237,49 @@ class PersistTests(unittest.TestCase):
         self.assertTrue(health["ok"])
         self.assertIsNone(health["error"])
         self.assertIn("database is locked", health["store_error"])
+
+
+class LoginCadenceTests(unittest.TestCase):
+    def test_cluster_sample_never_waits_for_login_nodes(self):
+        engine = object.__new__(Engine)
+        engine.cfg = {"mask_users": False, "refresh_min_interval": 15, "source": "mock",
+                      "cpu_probe_interval": 900}
+        engine.src, engine.store = _OneNodeSource(), _LockedStore()
+        engine.latest = engine.error = engine.store_error = None
+        engine.fail_count = engine._n = 0
+        engine._ready = threading.Event()
+        engine._broadcast = lambda _snap: None
+        engine.login = _ExplodingLogin()
+
+        engine._collect()
+
+        self.assertEqual(engine.login.calls, 0)
+
+
+class BuildIdTests(unittest.TestCase):
+    def test_reads_the_entry_script_hash_from_the_page(self):
+        page = b'<script type="module" crossorigin src="./assets/index-DixYhMJH.js"></script>'
+        self.assertEqual(build_id({"/index.html": (page, ".html", "index.html")}), "DixYhMJH")
+        self.assertEqual(build_id({}), "")
+
+
+class IdleConnectionTests(unittest.TestCase):
+    def test_a_silent_client_is_dropped_after_the_timeout(self):
+        self.assertIsNotNone(Handler.timeout)
+        with patch.object(Handler, "timeout", 0.3):
+            server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                sock = socket.create_connection(("127.0.0.1", server.server_port), timeout=3)
+                start = time.monotonic()
+                self.assertEqual(sock.recv(1), b"")      # closed by the server, not by us
+                self.assertLess(time.monotonic() - start, 2)
+                sock.close()
+            finally:
+                server.shutdown()
+                server.server_close()
+                thread.join(timeout=2)
 
 
 if __name__ == "__main__":

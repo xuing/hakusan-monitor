@@ -231,6 +231,24 @@ describe("where a waiter starts, and what it takes", () => {
   });
 });
 
+describe("a CPU job over several nodes", () => {
+  const cpu = (name: string, free: number) =>
+    node(name, { pool: "cpu", partitions: ["SMALL"], gres: "", cpus: 256, alloc_cpus: 256 - free, real_memory: 1_500_000 });
+  const cores = (s: QueueInput) => [...queueModel(s).claims.entries()].map(([n, c]) => `${n}:${c.cores}:${c.memMb}`);
+  const small = (over: Partial<RawJob> = {}) =>
+    job(1, { partition: "SMALL", node_count: 2, cpus: 48, gpus: 0, min_memory_mb: 48_000, ...over });
+
+  it("spreads its tasks over the cores the nodes have, not an equal share each", () => {
+    // 24 + 24 fits neither 16-core node; Slurm starts it as 32 + 16
+    expect(cores(snapOf([cpu("c1", 16), cpu("c2", 32)], [small()]))).toEqual(["c2:32:32000", "c1:16:16000"]);
+  });
+
+  it("starts only when its nodes hold all its cores, one per node at least", () => {
+    expect(cores(snapOf([cpu("c1", 16), cpu("c2", 16)], [small()]))).toEqual([]);
+    expect(cores(snapOf([cpu("c1", 64)], [small()]))).toEqual([]);
+  });
+});
+
 describe("reasonKind", () => {
   it("believes reasons that hold the whole job, and counts the caps itself", () => {
     expect(reasonKind("DependencyNeverSatisfied")).toBe("never");

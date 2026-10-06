@@ -276,6 +276,8 @@ export interface Snapshot {
   licenses?: ClusterLicense[];
   /** hardware scontrol lists but no partition schedules, per pool */
   outside_nodes?: { pool: string; label: string; nodes: number; gpus: number }[];
+  /** the web build the server serves (lib/stale-build.ts) */
+  build?: string;
   /** the site's partition order, else slurm.conf's */
   partition_order?: string[];
   cpu_submit_probes?: CpuSubmitProbe[];

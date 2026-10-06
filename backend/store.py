@@ -15,9 +15,9 @@ import hashlib, os, json, secrets, sqlite3, sys, threading, time
 SCHEMA_VERSION = 1
 
 SCHEMA = """
-CREATE TABLE IF NOT EXISTS samples (           -- databases before 2026-10 also
-  ts          INTEGER PRIMARY KEY            -- carry cluster-metric columns, no
-);                                           -- longer written or read
+CREATE TABLE IF NOT EXISTS samples (
+  ts          INTEGER PRIMARY KEY            -- unix seconds
+);
 CREATE TABLE IF NOT EXISTS login_samples (
   ts              INTEGER,
   node_id         TEXT,
@@ -113,6 +113,17 @@ class Store:
         cols = {r["name"] for r in c.execute("PRAGMA table_info(jobs)")}
         if "job_key" not in cols:   # jobs tables created before the column existed
             c.execute("ALTER TABLE jobs ADD COLUMN job_key TEXT")
+        # dropped 2026-10: the hourly cluster rollup and the per-sample metric
+        # columns, which nothing has read since /api/history went
+        c.execute("DROP TABLE IF EXISTS samples_hourly")
+        if len(c.execute("PRAGMA table_info(samples)").fetchall()) > 1:
+            c.executescript("""BEGIN;
+                DROP TABLE IF EXISTS samples_ts;
+                CREATE TABLE samples_ts (ts INTEGER PRIMARY KEY);
+                INSERT INTO samples_ts SELECT ts FROM samples;
+                DROP TABLE samples;
+                ALTER TABLE samples_ts RENAME TO samples;
+                COMMIT;""")
         c.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
         self._visitor_salt = self._meta_secret("visitor_salt")
         self._user_key = bytes.fromhex(self._meta_secret("job_user_salt"))

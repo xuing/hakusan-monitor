@@ -2,6 +2,7 @@
 import { withBase } from "@/lib/base-path";
 import type { Snapshot } from "@/types/snapshot";
 import { api, validateSnapshot } from "./api";
+import { noticeBuild } from "./stale-build";
 
 export type LiveStatus = "live" | "polling" | "reconnecting" | "offline";
 
@@ -39,6 +40,7 @@ export function connectLive({ onSnapshot, onStatus, onError }: LiveHandlers): ()
       try {
         const snap = await api.snapshot();
         if (closed || generation !== pollGeneration) return;
+        noticeBuild(snap.build);
         onError?.(null);
         onStatus("polling");
         onSnapshot(snap);
@@ -64,7 +66,10 @@ export function connectLive({ onSnapshot, onStatus, onError }: LiveHandlers): ()
       if (closed) return;
       lastBeat = Date.now();
       try {
-        const snap = validateSnapshot(JSON.parse(e.data));
+        const raw: unknown = JSON.parse(e.data);
+        // before validating: a newer build may ship a snapshot this one rejects
+        noticeBuild((raw as { build?: unknown } | null)?.build);
+        const snap = validateSnapshot(raw);
         gotData = true;
         onError?.(null);
         stopPolling(); // SSE is back — drop the safety-net poller
@@ -78,8 +83,13 @@ export function connectLive({ onSnapshot, onStatus, onError }: LiveHandlers): ()
     };
     // Server heartbeat (15 s). Snapshots only arrive on new samples (minutes
     // apart), so this is the only way to tell "quiet but alive" from "dead".
-    es.addEventListener("ping", () => {
+    es.addEventListener("ping", (e) => {
       lastBeat = Date.now();
+      try {
+        noticeBuild((JSON.parse((e as MessageEvent).data) as { build?: unknown })?.build);
+      } catch {
+        // an older server's ping carries no build
+      }
     });
     es.onerror = () => {
       if (closed) return;

@@ -99,5 +99,28 @@ class StoreHistoryTests(unittest.TestCase):
         self.assertEqual(len(first), 32)
 
 
+
+class LegacySchemaTests(unittest.TestCase):
+    def test_drops_the_hourly_rollup_and_metric_columns_and_keeps_the_ledger(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "old.sqlite")
+            c = sqlite3.connect(path)
+            c.executescript("""
+                CREATE TABLE samples (ts INTEGER PRIMARY KEY, cpu_util REAL, detail TEXT);
+                CREATE TABLE samples_hourly (hour INTEGER PRIMARY KEY, cpu_util REAL);
+                INSERT INTO samples VALUES (3600, 0.5, '{}'), (7200, 0.6, NULL);
+                INSERT INTO samples_hourly VALUES (3600, 0.5);""")
+            c.commit()
+            c.close()
+            store = Store(path)
+            c = store._conn()
+            tables = {r[0] for r in c.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+            self.assertNotIn("samples_hourly", tables)
+            self.assertEqual([r[1] for r in c.execute("PRAGMA table_info(samples)")], ["ts"])
+            self.assertEqual([r[0] for r in c.execute("SELECT ts FROM samples ORDER BY ts")], [3600, 7200])
+            store.record({"pools": []}, 3600)   # still idempotent on the kept timestamps
+            self.assertEqual(c.execute("SELECT count(*) FROM samples").fetchone()[0], 2)
+            store.close()
+
 if __name__ == "__main__":
     unittest.main()
