@@ -3,6 +3,9 @@ import subprocess
 from unittest.mock import patch
 
 from backend.sources import (
+    CONTAINER_COLUMNS,
+    _memory_kind,
+    parse_topology,
     parse_licenses,
     SEP,
     Source,
@@ -278,16 +281,36 @@ class QueueParserTests(unittest.TestCase):
         self.assertEqual(job["min_memory_mb"], 245760)
 
     def test_parse_containers_slices_fixed_width_columns(self):
-        line = ("378759".ljust(64) + "cpu=64,mem=375G,node=1".ljust(256)
-                + "spcc-a40g13".ljust(128) + "docker://ubuntu:22.04")
-        out = parse_containers(line)
-        self.assertEqual(out["378759"]["tres"], "cpu=64,mem=375G,node=1")
-        self.assertEqual(out["378759"]["sched_nodes"], "spcc-a40g13")
-        self.assertEqual(out["378759"]["container"], "docker://ubuntu:22.04")
+        def row(**values):
+            return "".join(str(values.get(name, "")).ljust(width) if name != "Container"
+                           else str(values.get(name, "")) for name, width in CONTAINER_COLUMNS)
+        line = row(**{"JobArrayID": "378759", "tres-alloc": "cpu=64,mem=375G,node=1",
+                      "SchedNodes": "spcc-a40g13", "NumTasks": 64, "NTPerNode": 4, "cpus-per-task": 16,
+                      "MinCpus": 64, "MinMemory": "6000M", "MaxNodes": 3, "Container": "docker://ubuntu:22.04"})
+        job = parse_containers(line)["378759"]
+        self.assertEqual(job["tres"], "cpu=64,mem=375G,node=1")
+        self.assertEqual(job["sched_nodes"], "spcc-a40g13")
+        self.assertEqual(job["container"], "docker://ubuntu:22.04")
+        self.assertEqual((job["tasks"], job["tasks_per_node"], job["cpus_per_task"], job["min_cpus_node"],
+                          job["min_memory_raw"], job["max_nodes"]), (64, 4, 16, 64, "6000M", 3))
 
-        blank = "1".ljust(64) + "N/A".ljust(256) + "(null)".ljust(128) + "N/A"
-        out = parse_containers(blank)
-        self.assertEqual(out["1"], {"tres": "", "sched_nodes": "", "container": ""})
+        blank = parse_containers(row(**{"JobArrayID": "1", "tres-alloc": "N/A", "SchedNodes": "(null)",
+                                        "Container": "N/A"}))["1"]
+        self.assertEqual((blank["tres"], blank["sched_nodes"], blank["container"]), ("", "", ""))
+
+    def test_memory_kind_from_the_total(self):
+        # MinMemory prints both kinds alike; the total decides
+        self.assertEqual(_memory_kind("6000M", 4_608_000, 768, 3), (6000, 0))
+        self.assertEqual(_memory_kind("250G", 768_000, 96, 3), (0, 256_000))
+        self.assertEqual(_memory_kind("", 4_608_000, 768, 3), (0, 0))
+
+    def test_parse_topology(self):
+        text = ("SwitchName=lcpcc-ibsw1 Level=0 LinkSpeed=1 Nodes=lcpcc-[001-050,113-124]\n"
+                "SwitchName=xfusion Level=1 LinkSpeed=1 Nodes=lcpcc-[001-124] Switches=lcpcc-ibsw[1-2]\n")
+        self.assertEqual(parse_topology(text), [
+            {"name": "lcpcc-ibsw1", "level": 0, "nodes": "lcpcc-[001-050,113-124]", "switches": ""},
+            {"name": "xfusion", "level": 1, "nodes": "lcpcc-[001-124]", "switches": "lcpcc-ibsw[1-2]"},
+        ])
 
     def test_parse_cpu_submit_probes(self):
         raw = (

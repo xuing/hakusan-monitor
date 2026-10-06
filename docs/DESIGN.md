@@ -119,11 +119,18 @@ priority order, each into the first partition of its own list it may start
 in, best fit, on nodes of the GPU type it names, using up group and per-user
 slots as it goes. A new job gets what is left:
 
-- `claims` per node: the share each waiter that starts now asks for, not the
-  whole node. A GPU job takes the same share on each of its nodes (`--gres`
-  is per node); a CPU job over N nodes takes any cores the N nodes have, at
-  least one each, with memory per core — Slurm spreads its tasks unevenly
-  (a running SMALL job held 256 CPUs on 18 nodes).
+- `claims` per node: what each waiter that starts now takes, on the nodes
+  Slurm would give it. `lib/node-select.ts` ports Slurm 25.05's selection
+  (topology/tree `_eval_nodes_topo`, `common_topo_choose_nodes`, cons_tres
+  `_can_job_run_on_node`): usable CPUs per node from free cores, memory per
+  CPU or per node, tasks per node and CPUs per task; the tightest leaf
+  switch that fits; nodes in slurm.conf order, each giving all its usable
+  CPUs; when a fixed node count runs out first, the nodes with the fewest
+  CPUs are dropped and it tries again. The request's shape comes from
+  `squeue -O` (NumTasks, NTPerNode, cpus-per-task, MinCpus, MinMemory,
+  MaxNodes), the switch tree from `scontrol show topology` (daily).
+  `node-select.test.ts` pins it to 12 `sbatch --test-only` answers and a real
+  job, captured by `scripts/capture_placement_fixture.py`.
 - `groupFull(partition)`: no group slot left once those waiters started.
 - `bookings` per node: Slurm's future starts for the waiters that do not
   start now. A new job starts on a booked node only if it ends before the
@@ -194,7 +201,8 @@ Rules learned from shipped bugs, each pinned by a test:
   the pool is capped with a GPU still free — impossible on Hakusan, where the
   caps sum past the GPUs (A40 30+10+3 jobs on 40 GPUs, A100 20+2 on 20) and
   every job holds a GPU.
-- **Which nodes a multi-node CPU job takes is an estimate.** The model takes
-  the roomiest nodes; Slurm's choice (cons_tres) also weighs node weights,
-  topology and which cores are free per socket, which the snapshot does not
-  carry.
+- **Node selection leaves out what the snapshot cannot see.** Which cores
+  of a socket are free (no request here constrains sockets), GPU-to-core
+  binding (Hakusan's GPUs are bound to both sockets), backfill reservations
+  inside a node, and `--exclusive`. GPU placement is not yet checked
+  against `--test-only`: every A40/A100 was busy when the evidence was taken.

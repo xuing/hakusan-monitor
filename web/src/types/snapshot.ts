@@ -206,6 +206,8 @@ export interface PolicyCheckSummary {
 export interface PolicySnapshot {
   generated_at: number;
   interval: number;
+  /** `scontrol show topology` (topology/tree): switches with hostlists */
+  topology?: { name: string; level: number; nodes: string; switches: string }[];
   partition_caps: Record<string, DynamicPartitionCap>;
   partition_policies: Record<string, DynamicPartitionPolicy>;
   partition_defaults?: Record<string, PartitionDefaults>;
@@ -383,6 +385,15 @@ export interface RawJob {
   req_nodes?: string;
   /** nodes explicitly made ineligible by --exclude */
   exc_nodes?: string;
+  /** the request's shape, as Slurm's node selection reads it (0 = not given) */
+  tasks?: number;
+  tasks_per_node?: number;
+  cpus_per_task?: number;
+  min_cpus_node?: number;
+  max_nodes?: number;
+  /** --mem-per-cpu or --mem per node (MB); one is 0 */
+  mem_per_cpu_mb?: number;
+  mem_per_node_mb?: number;
   time_used: string;
   /** Slurm priority (squeue %Q); comparable across partitions here */
   priority?: number;

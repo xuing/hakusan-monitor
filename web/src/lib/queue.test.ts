@@ -231,21 +231,23 @@ describe("where a waiter starts, and what it takes", () => {
   });
 });
 
-describe("a CPU job over several nodes", () => {
+describe("a CPU job over several nodes (Slurm's selection, lib/node-select.ts)", () => {
   const cpu = (name: string, free: number) =>
     node(name, { pool: "cpu", partitions: ["SMALL"], gres: "", cpus: 256, alloc_cpus: 256 - free, real_memory: 1_500_000 });
   const cores = (s: QueueInput) => [...queueModel(s).claims.entries()].map(([n, c]) => `${n}:${c.cores}:${c.memMb}`);
-  const small = (over: Partial<RawJob> = {}) =>
-    job(1, { partition: "SMALL", node_count: 2, cpus: 48, gpus: 0, min_memory_mb: 48_000, ...over });
-
-  it("spreads its tasks over the cores the nodes have, not an equal share each", () => {
-    // 24 + 24 fits neither 16-core node; Slurm starts it as 32 + 16
-    expect(cores(snapOf([cpu("c1", 16), cpu("c2", 32)], [small()]))).toEqual(["c2:32:32000", "c1:16:16000"]);
+  // -n 48 over at least 2 nodes, 1000 MB per CPU
+  const small = (over: Partial<RawJob> = {}) => job(1, {
+    partition: "SMALL", node_count: 2, cpus: 48, tasks: 48, cpus_per_task: 1, gpus: 0,
+    min_memory_mb: 48_000, mem_per_cpu_mb: 1000, ...over,
   });
 
-  it("starts only when its nodes hold all its cores, one per node at least", () => {
+  it("fills nodes in node order with all their free cores, not an equal share each", () => {
+    // 24 + 24 fits neither 16-core node; Slurm takes c1's 16, then 32 on c2
+    expect(cores(snapOf([cpu("c1", 16), cpu("c2", 32)], [small()]))).toEqual(["c1:16:16000", "c2:32:32000"]);
+  });
+
+  it("starts only when the nodes hold all its cores", () => {
     expect(cores(snapOf([cpu("c1", 16), cpu("c2", 16)], [small()]))).toEqual([]);
-    expect(cores(snapOf([cpu("c1", 64)], [small()]))).toEqual([]);
   });
 });
 

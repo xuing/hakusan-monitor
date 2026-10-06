@@ -27,6 +27,7 @@ except ImportError:        # package import in tests (`from backend.sources impo
 
 MARK = "@@HM@@"
 LUA_MARK = "@@HM-LUA@@"
+TOPO_MARK = "@@HM-TOPO@@"
 SEP = "|@|"   # field separator unlikely to occur in any value (e.g. job names)
 # order matters — see parse_queue()
 SQUEUE_FIELDS = ["%i", "%u", "%a", "%P", "%T", "%r", "%D", "%C", "%b", "%V",
@@ -34,7 +35,12 @@ SQUEUE_FIELDS = ["%i", "%u", "%a", "%P", "%T", "%r", "%D", "%C", "%b", "%V",
 SQUEUE_FMT = SEP.join(SQUEUE_FIELDS)
 # JobArrayID, not JobID: -O JobID prints an array's BASE id ("759320") for
 # every task, so no task ever joined its row; JobArrayID matches %i exactly.
-CONTAINER_FMT = "JobArrayID:64,tres-alloc:256,SchedNodes:128,Container:512"
+# NumTasks .. MaxNodes: the request's shape as Slurm's node selection reads
+# it (web/src/lib/node-select.ts).
+CONTAINER_COLUMNS = [("JobArrayID", 64), ("tres-alloc", 256), ("SchedNodes", 128),
+                     ("NumTasks", 10), ("NTPerNode", 10), ("cpus-per-task", 10),
+                     ("MinCpus", 10), ("MinMemory", 14), ("MaxNodes", 12), ("Container", 512)]
+CONTAINER_FMT = ",".join(f"{name}:{width}" for name, width in CONTAINER_COLUMNS)
 def cpu_test_partitions(policy, node_partitions=None, gpu_partitions=(), order=()):
     """CPU partitions to `sbatch --test-only`: every partition with nodes, no
     GPU node (scontrol), no GPU default and no license requirement. When the
@@ -374,7 +380,7 @@ def parse_lua_versions(stat_txt, lua_path):
 
 
 def build_policy_snapshot(qos_text, partition_text, now, interval, lua_text="", check=None,
-                          lua_meta=None):
+                          lua_meta=None, topology_text=""):
     """The cluster's partition policy, read only from the cluster.
 
     Caps and per-user limits come from the partition's QoS (sacctmgr), request
@@ -407,6 +413,7 @@ def build_policy_snapshot(qos_text, partition_text, now, interval, lua_text="", 
         "cap_origin": origins,
         "lua": {**(lua_meta or {}), "partitions": lua, "parsed": bool(lua)},
         "check": _check_summary(check),
+        "topology": parse_topology(topology_text),
     }
 
 
@@ -429,7 +436,7 @@ def _check_summary(check):
 
 
 def parse_containers(text):
-    """`squeue -r -O JobArrayID,tres-alloc,SchedNodes,Container` -> {job_id: {...}}.
+    """`squeue -r -O CONTAINER_FMT` -> {job_id: {...}}.
 
     The `-O/--Format` surface exposes fields the `-o` single-letter formats
     cannot express. tres-alloc carries each job's *effective* allocation
@@ -437,21 +444,57 @@ def parse_containers(text):
     (per-CPU requests print with no suffix) and %b misses --gpus-style jobs.
     SchedNodes is the backfill scheduler's planned placement for a pending
     job — the node it has reserved and the basis for backfill-window math.
-    Columns are fixed-width per CONTAINER_FMT, so slice, don't split.
+    Columns are fixed-width per CONTAINER_COLUMNS, so slice, don't split.
     """
+    nulls = ("N/A", "(null)", "None", "NULL")
     out = {}
     for line in text.splitlines():
-        jid = line[:64].strip()
+        cols, at = {}, 0
+        for name, width in CONTAINER_COLUMNS:
+            end = len(line) if name == "Container" else at + width
+            value = line[at:end].strip()
+            cols[name] = "" if value in nulls else value
+            at = end
+        jid = cols["JobArrayID"]
         if not jid:
             continue
-        tres = line[64:320].strip()
-        sched = line[320:448].strip()
-        container = line[448:].strip()
         out[jid] = {
-            "tres": "" if tres in ("N/A", "(null)", "None", "NULL") else tres,
-            "sched_nodes": "" if sched in ("N/A", "(null)", "None", "NULL") else sched,
-            "container": "" if container in ("N/A", "(null)", "None", "NULL") else container,
+            "tres": cols["tres-alloc"],
+            "sched_nodes": cols["SchedNodes"],
+            "container": cols["Container"],
+            "tasks": _int(cols["NumTasks"]),
+            "tasks_per_node": _int(cols["NTPerNode"]),
+            "cpus_per_task": _int(cols["cpus-per-task"]),
+            "min_cpus_node": _int(cols["MinCpus"]),
+            "min_memory_raw": cols["MinMemory"],
+            "max_nodes": _int(cols["MaxNodes"]),
         }
+    return out
+
+
+def _memory_kind(raw, total_mb, cpus, nodes):
+    """(per-CPU MB, per-node MB) of a request; one of them 0. squeue's
+    MinMemory prints both kinds alike ("6000M"), so the job's total decides:
+    6000M x 768 CPUs = 4.5T is per CPU, x 3 nodes would be per node."""
+    value = _mem_mb(raw) if raw else 0
+    if not value or not total_mb:
+        return 0, 0
+    if cpus and abs(value * cpus - total_mb) <= max(1, total_mb // 100):
+        return value, 0
+    return 0, value
+
+
+def parse_topology(text):
+    """`scontrol show topology` (topology/tree) -> [{name, level, nodes,
+    switches}]: nodes and switches are Slurm hostlists as printed. Node
+    selection keeps a job on as few leaf (level 0) switches as it can."""
+    out = []
+    for line in (text or "").splitlines():
+        name = _kv(line, "SwitchName")
+        if not name:
+            continue
+        out.append({"name": name, "level": _int(_kv(line, "Level")),
+                    "nodes": _kv(line, "Nodes") or "", "switches": _kv(line, "Switches") or ""})
     return out
 
 
@@ -510,12 +553,22 @@ def parse_queue(text, extras=None, pending_reqtres=None):
         # 64-CPU x 6000M job would read 6000 MB instead of 384000. Report
         # unknown (0) rather than a number that can be 64x off.
         mem_mb = req.get("mem_mb") or alloc.get("mem_mb") or 0
+        cpus_i = int(cpus) if cpus.isdigit() else 0
+        per_cpu, per_node = _memory_kind(extra.get("min_memory_raw", ""), mem_mb, cpus_i, nnodes_i)
         jobs.append({
             "job_id": int(jid) if jid.isdigit() else jid,
             "user_name": user, "account": acct, "partition": part,
             "job_state": state, "state_reason": reason,
             "node_count": nnodes_i,
-            "cpus": int(cpus) if cpus.isdigit() else 0,
+            "cpus": cpus_i,
+            # the request's shape (node selection): 0 = not given
+            "tasks": extra.get("tasks", 0),
+            "tasks_per_node": extra.get("tasks_per_node", 0),
+            "cpus_per_task": extra.get("cpus_per_task", 0),
+            "min_cpus_node": extra.get("min_cpus_node", 0),
+            "max_nodes": extra.get("max_nodes", 0),
+            "mem_per_cpu_mb": per_cpu,
+            "mem_per_node_mb": per_node,
             "gpus": gpu,
             "gpu_type": gpu_type if gpu else "",
             "tres_req_str": f"gres/gpu={gpu}" if gpu else "",
@@ -714,7 +767,8 @@ class Source:
         ) if policy_due else "true"
         partition_cmd = (
             "timeout 8s scontrol -o show partition 2>/dev/null || true; "
-            "timeout 8s scontrol show config 2>/dev/null | grep -m1 '^ClusterName' || true"
+            "timeout 8s scontrol show config 2>/dev/null | grep -m1 '^ClusterName' || true; "
+            f"echo {TOPO_MARK}; timeout 8s scontrol show topology 2>/dev/null || true"
         ) if policy_due else "true"
         # job_submit.lua and its admin backups (job_submit.lua_YYMMDD): the
         # rules the submit plugin applies, plus when they last changed.
@@ -757,8 +811,9 @@ class Source:
             self.cpu_probe_at = now
         if policy_due and (qos_txt.strip() or partition_txt.strip()):
             stat_txt, _, lua_txt = lua_section.partition(LUA_MARK)
+            partition_txt, _, topology_txt = partition_txt.partition(TOPO_MARK)
             self._set_policy(qos_txt.strip("\n"), partition_txt.strip("\n"),
-                             lua_txt.lstrip("\n"), stat_txt.strip(), now)
+                             lua_txt.lstrip("\n"), stat_txt.strip(), now, topology_txt.strip("\n"))
         queue = parse_queue(queue_txt, parse_containers(containers_txt), parse_pending_reqtres(reqtres_txt))
         queue["licenses"] = parse_licenses(license_txt)
         queue["cpu_submit_probes"] = self.cpu_probes
@@ -781,7 +836,7 @@ class Source:
             return 0
 
     # ---- policy sources --------------------------------------------------
-    def _set_policy(self, qos_txt, partition_txt, lua_txt, stat_txt, now):
+    def _set_policy(self, qos_txt, partition_txt, lua_txt, stat_txt, now, topology_txt=""):
         versions = parse_lua_versions(stat_txt, self.lua_path)
         current = next((v for v in versions if v["current"]), None)
         lua_meta = {
@@ -791,10 +846,11 @@ class Source:
             "versions": versions,
         }
         self.policy_sources = {"qos": qos_txt, "partitions": partition_txt, "lua": lua_txt,
-                               "fetched_at": int(now)}
+                               "topology": topology_txt, "fetched_at": int(now)}
         self.policy_snapshot = build_policy_snapshot(
             qos_txt, partition_txt, now, self.policy_interval,
-            lua_text=lua_txt, check=self._read_check(), lua_meta=lua_meta)
+            lua_text=lua_txt, check=self._read_check(), lua_meta=lua_meta,
+            topology_text=topology_txt)
         self.policy_at = now
         self._save_policy_cache()
 
@@ -808,7 +864,7 @@ class Source:
         self.policy_snapshot = build_policy_snapshot(
             src.get("qos", ""), src.get("partitions", ""), self.policy_snapshot["generated_at"],
             self.policy_interval, lua_text=src.get("lua", ""), check=self._read_check(),
-            lua_meta=meta)
+            lua_meta=meta, topology_text=src.get("topology", ""))
 
     def _read_check(self):
         if not self.policy_check or not os.path.exists(self.policy_check):
@@ -852,7 +908,7 @@ class Source:
         self.policy_snapshot = build_policy_snapshot(
             src.get("qos", ""), src.get("partitions", ""), src.get("fetched_at") or time.time(),
             self.policy_interval, lua_text=src.get("lua", ""), check=self._read_check(),
-            lua_meta=cached.get("lua_meta"))
+            lua_meta=cached.get("lua_meta"), topology_text=src.get("topology", ""))
         # cached data is shown immediately but still refreshed on the first cycle
 
     @staticmethod

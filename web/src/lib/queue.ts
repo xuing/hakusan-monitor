@@ -29,7 +29,8 @@
  */
 import { clusterMs, clusterTimeZone } from "@/lib/cluster-time";
 import { expandHostlist, nodeIsSchedulable, parseGpuCount } from "@/lib/derive";
-import { partitionPolicy, wallLabelSec } from "@/lib/slurm";
+import { selectNodes, switchTable, type FreeNode, type NodeRequest } from "@/lib/node-select";
+import { partitionCap, partitionPolicy, wallLabelSec } from "@/lib/slurm";
 import type { RawJob, RawNode, Snapshot } from "@/types/snapshot";
 
 export type WaitKind =
@@ -151,13 +152,8 @@ export function reasonKind(reason: string): WaitKind | null {
 
 // ---- the model ------------------------------------------------------------
 
-interface Room {
-  name: string;
+interface Room extends FreeNode {
   partitions: Set<string>;
-  gpuType: string;
-  gpus: number;
-  cores: number;
-  memMb: number;
 }
 
 function buildModel(snap: QueueInput): QueueModel {
@@ -225,10 +221,12 @@ function buildModel(snap: QueueInput): QueueModel {
   const pools = snap.pools ?? [];
   const gpuType = new Map(pools.map((p) => [p.id, p.gpu?.type ?? ""]));
   const gpuPool = new Set(pools.filter((p) => p.kind === "gpu").map((p) => p.id));
+  // in snapshot order, which is scontrol's — Slurm's node order
   const rooms: Room[] = snap.nodes
     .filter((node) => nodeIsSchedulable(node))
     .map((node) => freeRoom(node, gpuType.get(node.pool) ?? ""))
     .filter((room) => room.cores > 0);
+  const switches = switchTable(policy?.topology ?? [], expandHostlist);
   const groupLeft = new Map<string, number>();
   const userLeft = new Map<string, number>();
   const left = (map: Map<string, number>, key: string, cap: number, used: number) =>
@@ -242,15 +240,16 @@ function buildModel(snap: QueueInput): QueueModel {
       const g = left(groupLeft, qos, groupCap(p), running.get(qos) ?? 0);
       const u = left(userLeft, userKey, userCap(p), userRunning.get(userKey) ?? 0);
       if (g <= 0 || u <= 0) continue;
-      const share = shareOf(w.job, gpuPool.has(partPool[p]));
-      const placed = place(rooms.filter((r) => r.partitions.has(p)), w.job, share);
+      const here = rooms.filter((r) => r.partitions.has(p));
+      const placed = selectNodes(here, requestOf(w.job, gpuPool.has(partPool[p]), partitionCap(p, policy).maxNodes), switches);
       if (!placed) continue;
-      for (const { room, take } of placed) {
+      for (const take of placed) {
+        const room = here.find((r) => r.name === take.name)!;
         room.gpus -= take.gpus;
-        room.cores -= take.cores;
+        room.cores -= take.cpus;
         room.memMb -= take.memMb;
         const prev = claims.get(room.name) ?? { gpus: 0, cores: 0, memMb: 0 };
-        claims.set(room.name, { gpus: prev.gpus + take.gpus, cores: prev.cores + take.cores, memMb: prev.memMb + take.memMb });
+        claims.set(room.name, { gpus: prev.gpus + take.gpus, cores: prev.cores + take.cpus, memMb: prev.memMb + take.memMb });
       }
       groupLeft.set(qos, g - 1);
       userLeft.set(userKey, u - 1);
@@ -326,59 +325,26 @@ export function mayUseNode(job: RawJob, nodeName: string): boolean {
   return Math.max(1, job.node_count || 1) > required.length;
 }
 
-interface Placement {
-  room: Room;
-  take: Claim;
-}
-
-/** Where a waiter would start now, and what it takes on each node — or null
- *  when it cannot start in full now. Required hosts come first; a GPU type
- *  named in the request (--gres=gpu:nvidia_a40:1) holds on every partition
- *  of its list. */
-function place(rooms: Room[], job: RawJob, share: Share): Placement[] | null {
-  const typeOk = (r: Room) => !share.gpus || !job.gpu_type || job.gpu_type === r.gpuType;
-  const required = new Set(expandHostlist(job.req_nodes || ""));
-  const usable = rooms.filter((r) => mayUseNode(job, r.name) && typeOk(r));
-  const pinned = usable.filter((r) => required.has(r.name));
-  if (pinned.length < Math.min(required.size, share.nodes)) return null;
-  return !share.gpus && share.nodes > 1
-    ? spread(usable, pinned, required, job, share.nodes)
-    : packEven(usable, pinned, required, share);
-}
-
-/** The same share on every node, best fit: fewest spare GPUs, then cores,
- *  keeping the widest gaps open as Slurm's packing does. GPU jobs land this
- *  way: their --gres is per node. */
-function packEven(usable: Room[], pinned: Room[], required: Set<string>, share: Share): Placement[] | null {
-  const fits = (r: Room) => share.gpus <= r.gpus && share.cores <= r.cores && share.memMb <= r.memMb;
-  if (!pinned.every(fits)) return null;
-  const extra = usable
-    .filter((r) => !required.has(r.name) && fits(r))
-    .sort((a, b) => a.gpus - b.gpus || a.cores - b.cores || a.name.localeCompare(b.name))
-    .slice(0, Math.max(0, share.nodes - pinned.length));
-  const chosen = [...pinned.slice(0, share.nodes), ...extra];
-  const take = { gpus: share.gpus, cores: share.cores, memMb: share.memMb };
-  return chosen.length >= share.nodes ? chosen.map((room) => ({ room, take })) : null;
-}
-
-/** A CPU job over N nodes: Slurm spreads its tasks over the cores the nodes
- *  have, at least one per node, not an equal share each — a running SMALL
- *  job held 256 CPUs on 18 nodes (2026-10-07). Its memory follows the cores
- *  (the job's memory per CPU). It takes the roomiest nodes, filled in order. */
-function spread(usable: Room[], pinned: Room[], required: Set<string>, job: RawJob, nodes: number): Placement[] | null {
-  const total = Math.max(nodes, job.cpus || 0);
-  const memPerCore = (job.min_memory_mb || 0) / total;
-  const roomOf = (r: Room) => Math.min(r.cores, memPerCore ? Math.floor(r.memMb / memPerCore) : r.cores);
-  if (pinned.some((r) => roomOf(r) < 1)) return null;
-  const extra = usable
-    .filter((r) => !required.has(r.name) && roomOf(r) >= 1)
-    .sort((a, b) => roomOf(b) - roomOf(a) || a.name.localeCompare(b.name));
-  const chosen = [...pinned, ...extra].slice(0, nodes);
-  if (chosen.length < nodes || chosen.reduce((sum, r) => sum + roomOf(r), 0) < total) return null;
-  let left = total;
-  return chosen.map((r, i) => {
-    const cores = Math.min(roomOf(r), left - (nodes - i - 1));
-    left -= cores;
-    return { room: r, take: { gpus: 0, cores, memMb: Math.ceil(cores * memPerCore) } };
-  });
+/** A waiter's request as Slurm's node selection reads it. Snapshots from
+ *  before the shape fields existed fall back to an equal split per node. */
+export function requestOf(job: RawJob, gpuPartition: boolean, partitionMaxNodes?: number): NodeRequest {
+  const share = shareOf(job, gpuPartition);
+  const cpt = Math.max(1, job.cpus_per_task || 1);
+  const known = Boolean(job.mem_per_cpu_mb || job.mem_per_node_mb);
+  const maxNodes = [job.max_nodes || 0, partitionMaxNodes || 0].filter((n) => n > 0);
+  return {
+    minNodes: share.nodes,
+    maxNodes: maxNodes.length ? Math.min(...maxNodes) : 0,
+    tasks: job.tasks || 0,
+    cpus: Math.max(job.cpus || 0, share.nodes),
+    cpusPerTask: cpt,
+    tasksPerNode: job.tasks_per_node || 0,
+    minCpusNode: job.min_cpus_node || cpt,
+    memPerCpuMb: known ? job.mem_per_cpu_mb || 0 : 0,
+    memPerNodeMb: known ? job.mem_per_node_mb || 0 : share.memMb,
+    gpusPerNode: share.gpus,
+    gpuType: job.gpu_type || "",
+    required: expandHostlist(job.req_nodes || ""),
+    excluded: expandHostlist(job.exc_nodes || ""),
+  };
 }
