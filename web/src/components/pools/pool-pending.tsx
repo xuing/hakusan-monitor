@@ -1,5 +1,5 @@
 // A pool's pending jobs, in the order they get their turn (lib/queue).
-import { dayClockLabel } from "@/components/common/gpu-release-hint";
+import { dayClockLabel } from "@/components/common/verdict-text";
 import { jobSizeText } from "@/components/common/verdict-text";
 import { useLive } from "@/hooks/live-context";
 import { reasonLabel, type TFn } from "@/i18n";

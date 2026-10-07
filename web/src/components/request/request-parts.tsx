@@ -7,7 +7,6 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { type TFn } from "@/i18n";
 import { clusterClock } from "@/lib/cluster-time";
 import { slotContenders, type GpuBackfillTipData, type GpuFitInfo, type GpuFitNode } from "@/lib/gpu-fit";
-import { type GpuLayout } from "@/lib/gpu-layout";
 import { type Waiter } from "@/lib/queue";
 import { type Tone } from "@/lib/slurm";
 import { cn } from "@/lib/utils";
@@ -66,12 +65,6 @@ export function CommandVerdict({ tone, label }: { tone: Tone; label: string }) {
   );
 }
 
-export function layoutPlacementLabel(l: GpuLayout, t: TFn) {
-  if (l.nodes === 1) return t("pool.layoutOneNode", { n: l.gpus });
-  return l.packed
-    ? t("pool.layoutPackedN", { nodes: l.nodes, per: l.gpusPerNode })
-    : t("pool.layoutSpreadN", { nodes: l.nodes });
-}
 
 export function GpuBackfillQuickTip({
   tip,

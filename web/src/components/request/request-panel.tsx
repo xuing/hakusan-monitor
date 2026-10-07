@@ -6,7 +6,6 @@ import { useState } from "react";
 import { Link } from "react-router";
 import { ChevronRight } from "lucide-react";
 import { CopyButton } from "@/components/common/copy-button";
-import { dayClockLabel } from "@/components/common/gpu-release-hint";
 import {
   FieldLabel,
   FieldNote,
@@ -15,10 +14,11 @@ import {
   SliderValueInput,
 } from "@/components/common/range-slider";
 import { Segmented } from "@/components/common/segmented";
-import { aheadText, fmtMemRaw, gpuReasonText, gpuVerdictTag } from "@/components/common/verdict-text";
+import { aheadText, dayClockLabel, fmtMemRaw, gpuReasonText, gpuVerdictTag, layoutPlacementLabel } from "@/components/common/verdict-text";
 import { Tag } from "@/components/common/tag";
 import { PartitionTable, type PartitionAxis, type PartitionTableRow } from "@/components/request/partition-table";
 import { useLive } from "@/hooks/live-context";
+import { useNow } from "@/hooks/use-now";
 import { coresText, durText, tOptional, wallText, type TFn } from "@/i18n";
 import { clusterClock } from "@/lib/cluster-time";
 import { cpuPartitionStatus, cpuPartitionVerdict } from "@/lib/cpu-partition";
@@ -47,7 +47,7 @@ import { allowsMultiNode, interactiveForcedLabel, interactiveForcedSec, isLicens
 import { cn } from "@/lib/utils";
 import type { Partition, Pool, Snapshot } from "@/types/snapshot";
 import { DisclosureRow } from "@/components/pools/pool-card";
-import { CommandVerdict, GpuBackfillQuickTip, GpuFitExplanation, HintAction, MemLinkToggle, layoutPlacementLabel } from "@/components/request/request-parts";
+import { CommandVerdict, GpuBackfillQuickTip, GpuFitExplanation, HintAction, MemLinkToggle } from "@/components/request/request-parts";
 import { fmtGb, fmtGbNear, largestPassing, linearTicks, logTicks, niceCoreCount, normalizeMem, numberOptions, parseHumanTime, parseMemoryInputMb, quantizeWalltime, walltimeTicks, withinCapInt } from "@/lib/request-input";
 
 /** Collapsible starter request for this pool, in two steps: a table of its
@@ -57,6 +57,7 @@ import { fmtGb, fmtGbNear, largestPassing, linearTicks, logTicks, niceCoreCount,
  *  every field to that partition's defaults. */
 export function RequestPanel({ pool, t }: { pool: Pool; t: TFn }) {
   const { snap } = useLive();
+  const nowMs = useNow();
   // Minimal starter: the pool's sample partition (site file, else Slurm's
   // default partition) with no resource flags — the submit plugin and the
   // partition supply the defaults. Where they overflow a node,
@@ -191,7 +192,6 @@ export function RequestPanel({ pool, t }: { pool: Pool; t: TFn }) {
   // pty defaults to the walltime a plain interactive session would have had
   // (none pinned -> leave -t to Slurm) — pick a shorter -t to slip into a gap
   const ptyTime = timeSel || (pinnedSec ? minutesToSlurmTime(pinnedSec / 60) : "");
-  const nowMs = Date.now();
   // ---- the verdict: the same functions the partition table and the
   // Partitions page read (lib/gpu-partition, lib/cpu-partition) ----
   // the walltime the verdict judges (the pinned one for salloc)

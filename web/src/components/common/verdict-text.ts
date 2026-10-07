@@ -2,8 +2,10 @@
 // Partitions page: one label per state, one sentence per reason.
 import { coresText, type TFn } from "@/i18n";
 import type { TranslationKey } from "@/i18n/en";
-import { fmtMB, nf } from "@/lib/format";
+import { clusterDayOffset } from "@/lib/cluster-time";
+import { clockOf, fmtAt, fmtMB, nf } from "@/lib/format";
 import type { GpuFitInfo, GpuFitNeed, GpuFitNode } from "@/lib/gpu-fit";
+import type { GpuLayout } from "@/lib/gpu-layout";
 import { gpuVerdict, type GpuStatus, type GpuVerdict } from "@/lib/gpu-partition";
 import type { Tone } from "@/lib/slurm";
 
@@ -89,4 +91,19 @@ export function jobSizeText(job: { gpus: number; cpus: number; mem_mb?: number; 
   if (mem > 0) parts.push(fmtMB(mem));
   if (withNodes && (job.node_count ?? 0) > 0) parts.push(`${job.node_count} ${t("spec.nodes")}`);
   return parts.join(" · ") || "—";
+}
+
+/** "今天 02:39" / "明天 12:15" / a date: when a release happens, in words. */
+export function dayClockLabel(iso: string, t: TFn): string {
+  const offset = clusterDayOffset(iso);
+  if (offset === 0) return `${t("day.today")} ${clockOf(iso)}`;
+  if (offset === 1) return `${t("day.tomorrow")} ${clockOf(iso)}`;
+  return fmtAt(iso);
+}
+
+export function layoutPlacementLabel(l: GpuLayout, t: TFn) {
+  if (l.nodes === 1) return t("pool.layoutOneNode", { n: l.gpus });
+  return l.packed
+    ? t("pool.layoutPackedN", { nodes: l.nodes, per: l.gpusPerNode })
+    : t("pool.layoutSpreadN", { nodes: l.nodes });
 }

@@ -13,7 +13,9 @@ interface ApiState<T> {
 export function useApi<T>(fetcher: () => Promise<T>, depKey: unknown = null, pollMs = 0): ApiState<T> {
   const [state, setState] = useState<ApiState<T>>({ data: null, error: null, loading: true });
   const fetcherRef = useRef(fetcher);
-  fetcherRef.current = fetcher;
+  useEffect(() => {
+    fetcherRef.current = fetcher;
+  });
 
   useEffect(() => {
     let alive = true;

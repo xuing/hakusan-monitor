@@ -1,8 +1,8 @@
-import { useEffect, useState } from "react";
 import { Tag } from "./tag";
-import { clusterDayOffset } from "@/lib/cluster-time";
-import { clockOf, fmtAt, parseDur } from "@/lib/format";
-import { durText, useT, type TFn } from "@/i18n";
+import { dayClockLabel } from "./verdict-text";
+import { useNow } from "@/hooks/use-now";
+import { parseDur } from "@/lib/format";
+import { durText, useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 import type { NextFree } from "@/types/snapshot";
 
@@ -20,13 +20,7 @@ export function GpuReleaseHint({
   className?: string;
 }) {
   const t = useT();
-  const [now, setNow] = useState(() => Date.now() / 1000);
-  useEffect(() => {
-    if (!next) return;
-    setNow(Date.now() / 1000);
-    const id = setInterval(() => setNow(Date.now() / 1000), 30_000);
-    return () => clearInterval(id);
-  }, [next, generatedAt]);
+  const now = useNow() / 1000;
 
   if (!next) return null;
   const remaining = Math.max(0, parseDur(next.left) - (now - generatedAt));
@@ -42,11 +36,4 @@ export function GpuReleaseHint({
   );
 }
 
-/** "今天 02:39" / "明天 12:15" / a date: when a release happens, in words. */
-export function dayClockLabel(iso: string, t: TFn): string {
-  const offset = clusterDayOffset(iso);
-  if (offset === 0) return `${t("day.today")} ${clockOf(iso)}`;
-  if (offset === 1) return `${t("day.tomorrow")} ${clockOf(iso)}`;
-  return fmtAt(iso);
-}
 
