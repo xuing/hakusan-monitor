@@ -89,6 +89,16 @@ export type QueueInput = Pick<Snapshot, "jobs" | "nodes" | "pools" | "policy" | 
  *  job ends before its limit. */
 export const BACKFILL_MARGIN_MS = 10 * 60 * 1000;
 
+/** When a new job on this node must have ended (ms): its first booking less
+ *  the margin, as Slurm reserves a booked job's whole nodes; -Infinity for a
+ *  PLANNED node whose booking the snapshot does not show; undefined = not
+ *  booked. The one gap rule for CPU and GPU requests alike. */
+export function nodeOpenUntil(q: Pick<QueueModel, "bookings">, node: RawNode): number | undefined {
+  const booked = q.bookings.get(node.name)?.[0];
+  if (booked !== undefined) return booked - BACKFILL_MARGIN_MS;
+  return nodeIsSchedulable(node) ? undefined : Number.NEGATIVE_INFINITY;
+}
+
 const cache = new WeakMap<QueueInput, { zone: string | undefined; model: QueueModel }>();
 
 /** The queue model of one snapshot, built once and shared by every caller
@@ -109,21 +119,6 @@ export function poolContenders(snap: QueueInput, poolId: string): Waiter[] {
   const partPool = snap.part_pool ?? {};
   return queueModel(snap).waiters.filter((w) => w.kind === "next"
     && (w.placed ? partPool[w.placed] === poolId : w.open.some((p) => partPool[p] === poolId)));
-}
-
-/** How long a job may run on this pool's PLANNED nodes from now (s), until
- *  the first of them is booked (less the backfill margin); null when the
- *  snapshot shows no booking for them. One number for every "reserved" label. */
-export function heldWindowSec(snap: Snapshot, poolId: string): number | null {
-  const q = queueModel(snap);
-  const nowMs = snap.generated_at * 1000;
-  const starts = snap.nodes
-    .filter((n) => n.pool === poolId && nodeIsBackfillCandidate(n))
-    .map((n) => q.bookings.get(n.name)?.find((at) => at > nowMs))
-    .filter((at): at is number => at !== undefined);
-  if (!starts.length) return null;
-  const sec = (Math.min(...starts) - BACKFILL_MARGIN_MS - nowMs) / 1000;
-  return sec > 0 ? sec : null;
 }
 
 /** Every pending job listing a partition of this pool. */

@@ -51,8 +51,8 @@ login-node /proc, df, iostat, ps ─▶ login_nodes.py ─▶ store.py: login_sa
   - *offline* (`down`): the node needs an operator (down, drained,
     maintenance);
   - *reserved* (`reserved`): the node is booked for a queued job (PLANNED);
-    a job that ends before the booking may use it, and the pool card says
-    how long that is;
+    a job that ends before the booking may use it (the request panel's
+    walltime slider shows which walltimes do);
   - *free*: any job can take it now. An idle GPU on a node whose every core
     is allocated is `short`, not free: it waits for a core.
   Zero counts are not shown.
@@ -147,6 +147,11 @@ slots as it goes. A new job gets what is left:
   because its priority depends on the submitter's fair-share. Real jobs
   (2026-10-07): a 3-day SMALL job at priority 20675 started on nodes booked
   for a 20010 job; 1- and 2-day DEF and LONG-L jobs at ~15700 stayed pending.
+  The rule lives in one place (`nodeOpenUntil`) and CPU requests, single-GPU
+  slots and multi-GPU layouts all apply it: a booked node is never a clear
+  slot, only a gap. Real jobs (2026-10-07 10:37): `sbatch -p LARGE -n 384`
+  started in 14 s with `-t 17:00:00` and stayed pending with `-t 2-00:00:00`,
+  the walltime slider's green part ending at 17 h 11 min.
 - `poolContenders(pool)`: the waiters ahead of a new job in a pool; one that
   starts in another pool is not among them.
 

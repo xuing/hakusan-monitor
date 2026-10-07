@@ -1,6 +1,6 @@
 import { expandHostlist, nodeIsBackfillCandidate, nodeIsSchedulable } from "@/lib/derive";
 import { selectNodes, switchTable, type FreeNode, type NodeRequest, type Switch, type Take } from "@/lib/node-select";
-import { BACKFILL_MARGIN_MS, queueModel } from "@/lib/queue";
+import { nodeOpenUntil, queueModel } from "@/lib/queue";
 import { allowsMultiNode, defaultRequestSec, partitionCap } from "@/lib/slurm";
 import type { CpuSubmitProbe, Pool, Snapshot } from "@/types/snapshot";
 
@@ -94,13 +94,11 @@ function openNodes(snap: Snapshot, partition: string): FreeNode[] {
     .filter((n) => n.partitions.includes(partition) && (nodeIsSchedulable(n) || nodeIsBackfillCandidate(n)))
     .map((n) => {
       const claim = q.claims.get(n.name);
-      const booked = q.bookings.get(n.name)?.[0];
       return {
         name: n.name, gpus: 0, gpuType: "",
         cores: Math.max(0, n.cpus - n.alloc_cpus - (claim?.cores ?? 0)),
         memMb: Math.max(0, n.real_memory - n.alloc_memory - (claim?.memMb ?? 0)),
-        // a PLANNED node whose booking the snapshot does not show stays out
-        until: booked !== undefined ? booked - BACKFILL_MARGIN_MS : nodeIsSchedulable(n) ? undefined : Number.NEGATIVE_INFINITY,
+        until: nodeOpenUntil(q, n),
       };
     });
 }

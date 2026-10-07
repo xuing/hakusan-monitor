@@ -43,7 +43,7 @@ import { poolContenders, poolWaiters, queueModel } from "@/lib/queue";
 import { buildRequestCommand, shouldShowGapShell } from "@/lib/request-command";
 import { requestLimits, type PoolShape } from "@/lib/request-limits";
 import { getSite } from "@/lib/site";
-import { allowsMultiNode, interactiveForcedLabel, interactiveForcedSec, isLicensePartition, minutesToSlurmTime, parseWalltimeSec, partitionCap, partitionDefaultRequest, partitionDefaults, partitionDown, partitionPolicy, type Tone, wallLabelSec } from "@/lib/slurm";
+import { allowsMultiNode, defaultRequestSec, interactiveForcedLabel, interactiveForcedSec, isLicensePartition, minutesToSlurmTime, parseWalltimeSec, partitionCap, partitionDefaultRequest, partitionDefaults, partitionDown, partitionPolicy, type Tone, wallLabelSec } from "@/lib/slurm";
 import { cn } from "@/lib/utils";
 import type { Partition, Pool, Snapshot } from "@/types/snapshot";
 import { DisclosureRow } from "@/components/pools/pool-card";
@@ -194,8 +194,10 @@ export function RequestPanel({ pool, t }: { pool: Pool; t: TFn }) {
   const ptyTime = timeSel || (pinnedSec ? minutesToSlurmTime(pinnedSec / 60) : "");
   // ---- the verdict: the same functions the partition table and the
   // Partitions page read (lib/gpu-partition, lib/cpu-partition) ----
-  // the walltime the verdict judges (the pinned one for salloc)
-  const verdictSec = forcedSec ?? parseWalltimeSec(ptyActive ? ptyTime : timeSel);
+  // the walltime the job holds its nodes for, which decides whether it fits a
+  // gap before a booking: salloc's pinned one, the -t, else the QoS MaxWall
+  // Slurm gives a job without one (0 = none known)
+  const verdictSec = forcedSec ?? (parseWalltimeSec(ptyActive ? ptyTime : timeSel) || wallSec);
   const gpu = snap && isGpu ? gpuStatus(snap, pool, partition, { memMb: memOverrideMb, timeSec: verdictSec }, nowMs) : null;
   // the --mem bypass and the backfill gap name a value for the DEFAULT
   // request; a full group cap blocks every request, so neither exists there
@@ -218,16 +220,21 @@ export function RequestPanel({ pool, t }: { pool: Pool; t: TFn }) {
   const optionVerdictSec = mode === "interactive" && !ptyActive
     ? undefined
     : parseWalltimeSec(ptyActive ? ptyTime : timeSel);
-  // CPU: the default request reads the partition's status, as its table row
-  // does; set fields or a pinned -n are judged live as the command carries them
+  // CPU: the request as the command carries it (a pinned -n included) at a
+  // walltime — the verdict and the time slider's green part ask the same
+  const cpuLive = (sec: number | undefined) => snap ? liveCpuStart(snap, partition, {
+    cores: coreCount || (overflowPinned ? defCores : 0), nodes: nodeCount, memMb: memOverrideMb, timeSec: sec,
+  }) : null;
+  // the default request reads the partition's status, as its table row does
+  // (salloc's walltime); anything else is judged live
   const cpuState: CpuProbeState | null = !isGpu && snap
-    ? hasAdvancedOverrides || overflowPinned
-      ? liveCpuStart(snap, partition, { cores: coreCount || defCores, nodes: nodeCount, memMb: memOverrideMb, timeSec: verdictSec || undefined })
+    ? hasAdvancedOverrides || overflowPinned || (verdictSec || Infinity) !== defaultRequestSec(partition, snap.policy)
+      ? cpuLive(verdictSec || undefined)
       : cpuPartitionStatus(snap, partition).state
     : null;
   // A multi-GPU layout needs whole idle nodes (packed) or nodes with a free
   // GPU and a GPU's share of cores (spread) — judge exactly that.
-  const layoutCheck = multiGpu && layout && snap && !groupLimitReached ? layoutFit(snap, pool, partition, layout) : null;
+  const layoutCheck = multiGpu && layout && snap && !groupLimitReached ? layoutFit(snap, pool, partition, layout, verdictSec || undefined) : null;
   const startsLabel = (starts: boolean) => t(starts ? "verdict.now" : "verdict.queue");
   const shown: { tone: Tone; label: string; detail: string } | null = layoutCheck && layout
     ? {
@@ -340,7 +347,7 @@ export function RequestPanel({ pool, t }: { pool: Pool; t: TFn }) {
   const gpuGreen = isGpu && judged
     ? blockedAll ? 0 : gpuStartCount(snap!, pool, partition, { memMb: memOverrideMb, timeSec: verdictSec })
     : undefined;
-  const layoutStarts = (l: GpuLayout) => Boolean(snap) && layoutFit(snap!, pool, partition, l).starts;
+  const layoutStarts = (l: GpuLayout) => Boolean(snap) && layoutFit(snap!, pool, partition, l, verdictSec || undefined).starts;
   const setGpuCount = (n: number) => {
     const target = gpuCounts.reduce((best, c) => (Math.abs(c - n) < Math.abs(best - n) ? c : best), gpuCounts[0] ?? 1);
     if (target <= 1) {
@@ -436,33 +443,23 @@ export function RequestPanel({ pool, t }: { pool: Pool; t: TFn }) {
   const timeMin = Math.min(600, timeMax);
   const timeDefaultSec = timeLocked ? (forcedSec ?? timeMax) : ptyActive && pinnedSec ? pinnedSec : wallSec;
   const timeShownSec = timeLocked ? timeDefaultSec : timeSel ? parseWalltimeSec(timeSel) : timeDefaultSec;
-  // the longest walltime that still starts now: one GPU — the verdict
-  // searched over whole minutes (a backfill gap ends it); a CPU or
-  // multi-GPU start does not depend on it
+  // the longest walltime that still starts now, searched over whole minutes
+  // with every other field as set: a job may use a booked node only if it
+  // ends before the booking, so short walltimes can start where long ones
+  // queue. The verdict asks the same question at the walltime shown.
+  const startsWithin = (sec: number) => isGpu
+    ? multiGpu ? Boolean(layout && layoutFit(snap!, pool, partition, layout, sec).starts) : gpuStartsAt(memOverrideMb, sec)
+    : cpuLive(sec) === "now";
   const timeGreenSec = !judged || !showTimeSlider
     ? undefined
     : blockedAll
       ? 0
-      : isGpu && !multiGpu
-        ? largestPassing(Math.ceil(timeMin / 60), Math.floor(timeMax / 60), (m) => gpuStartsAt(memOverrideMb, m * 60)) * 60
-        : (isGpu ? layoutCheck?.starts : cpuState === "now") ? timeMax : 0;
+      : largestPassing(Math.ceil(timeMin / 60), Math.floor(timeMax / 60), (m) => startsWithin(m * 60)) * 60;
   const setTimeSec = (sec: number) => {
     setTimeText("");
     // only the default point itself means "no -t"
     setTime(Math.abs(sec - timeDefaultSec) < 1 ? "" : minutesToSlurmTime(Math.max(1, Math.round(sec / 60))));
   };
-  // salloc's pinned walltime is not the user's value: the backfill tip
-  // (a gap shell) is the fix there, not this hint
-  const timeHint = !timeLocked && timeGreenSec !== undefined && timeGreenSec >= timeMin && timeShownSec > timeGreenSec
-    ? (
-        <>
-          {bfTip
-            ? t("pool.hintTimeOver", { t: durText(t, timeGreenSec), node: bfTip.node, until: clusterClock(bfTip.untilMs) })
-            : t("pool.hintTimeOverPlain", { t: durText(t, timeGreenSec) })}
-          <HintAction label={t("pool.useTime", { t: durText(t, timeGreenSec) })} onClick={() => setTimeSec(timeGreenSec)} />
-        </>
-      )
-    : null;
   // from the pinned interactive walltime: a new -t is a batch job
   const switchToScriptTime = (sec: number) => {
     if (timeLocked && Math.abs(sec - timeShownSec) < 1) return;
@@ -470,6 +467,22 @@ export function RequestPanel({ pool, t }: { pool: Pool; t: TFn }) {
     setTimeText("");
     setTime(wallSec && Math.abs(sec - wallSec) < 1 ? "" : minutesToSlurmTime(Math.max(1, Math.round(sec / 60))));
   };
+  // past the green part: name its end and offer it. Under salloc's pinned
+  // walltime that means a batch job — unless the backfill tip below already
+  // offers the gap shell
+  const timeHint = (!timeLocked || !bfTip) && timeGreenSec !== undefined && timeGreenSec >= timeMin && timeShownSec > timeGreenSec
+    ? (
+        <>
+          {bfTip
+            ? t("pool.hintTimeOver", { t: durText(t, timeGreenSec), node: bfTip.node, until: clusterClock(bfTip.untilMs) })
+            : t("pool.hintTimeOverPlain", { t: durText(t, timeGreenSec) })}
+          <HintAction
+            label={t(timeLocked ? "pool.useTimeScript" : "pool.useTime", { t: durText(t, timeGreenSec) })}
+            onClick={() => (timeLocked ? switchToScriptTime(timeGreenSec) : setTimeSec(timeGreenSec))}
+          />
+        </>
+      )
+    : null;
   const typedSec = parseHumanTime(timeText);
   const timeError = timeText.trim()
     ? !typedSec
@@ -818,6 +831,7 @@ export function RequestPanel({ pool, t }: { pool: Pool; t: TFn }) {
                     />
                   )}
                   tip={t("pool.timeSwitchTip", { t: durText(t, timeShownSec) })}
+                  hint={timeHint}
                 />
               ) : (
                 <RangeSlider
