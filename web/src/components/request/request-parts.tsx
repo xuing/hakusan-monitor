@@ -14,8 +14,13 @@ import { cn } from "@/lib/utils";
 /** 🔗 between cores and --mem: linked, the memory is cores x the default
  *  per core and follows the core slider; a hand-set --mem unlinks it, and a
  *  click links it again (or pins the current value). */
-export function MemLinkToggle({ linked, per, onToggle, t }: { linked: boolean; per: string; onToggle: () => void; t: TFn }) {
+/** 🔗 on: no --mem, memory is cores × DefMemPerCPU; off: --mem pinned.
+ *  `gpuCores`: a GPU request, whose cores the plugin fixes per GPU. */
+export function MemLinkToggle({ linked, per, onToggle, t, gpuCores }: { linked: boolean; per: string; onToggle: () => void; t: TFn; gpuCores?: number }) {
   const Icon = linked ? Link2 : Link2Off;
+  const tip = gpuCores
+    ? linked ? t("pool.memLinkedTipGpu", { n: gpuCores, per }) : t("pool.memUnlinkedTipGpu", { n: gpuCores, per })
+    : linked ? t("pool.memLinkedTip", { per }) : t("pool.memUnlinkedTip");
   return (
     <Tooltip>
       <TooltipTrigger asChild>
@@ -23,7 +28,7 @@ export function MemLinkToggle({ linked, per, onToggle, t }: { linked: boolean; p
           type="button"
           onClick={onToggle}
           aria-pressed={linked}
-          aria-label={linked ? t("pool.memLinkedTip", { per }) : t("pool.memUnlinkedTip")}
+          aria-label={tip}
           className={cn(
             "ml-1 inline-flex h-5 w-5 items-center justify-center rounded transition-colors hover:bg-muted",
             linked ? "text-info-fg" : "text-muted-foreground",
@@ -33,7 +38,7 @@ export function MemLinkToggle({ linked, per, onToggle, t }: { linked: boolean; p
         </button>
       </TooltipTrigger>
       <TooltipContent className="max-w-xs leading-relaxed">
-        {linked ? t("pool.memLinkedTip", { per }) : t("pool.memUnlinkedTip")}
+        {tip}
       </TooltipContent>
     </Tooltip>
   );

@@ -433,8 +433,11 @@ export function RequestPanel({ pool, t }: { pool: Pool; t: TFn }) {
   // (GPU-1: 26 x 9845 MB = 249.97G under a 249G limit)
   const defMemLabel = fmtGbNear(effMemGb ? Math.min(defMemMb, effMemGb * 1024) : defMemMb);
   // only the default point itself means "no --mem": any other position is an
-  // explicit request (4 x 6000M rounds to 23G, but 23G is less than it asks)
-  const setMemGb = (gb: number) => setMem(Math.abs(gb * 1024 - defMemMb) < 1 ? "" : `${Math.round(gb)}G`);
+  // explicit request (4 x 6000M rounds to 23G, but 23G is less than it asks).
+  // The point sits where the track shows the default: at its end when the
+  // default passes the ceiling (GPU-1's 249.97G on a 249G track)
+  const defMemGb = effMemGb ? Math.min(effMemGb, defMemMb / 1024) : defMemMb / 1024;
+  const setMemGb = (gb: number) => setMem(Math.abs(gb - defMemGb) < 1 / 1024 ? "" : `${Math.round(gb)}G`);
 
   // -t: shown always; locked where the plugin pins the interactive walltime
   const timeLocked = forcedSec !== null;
@@ -753,12 +756,13 @@ export function RequestPanel({ pool, t }: { pool: Pool; t: TFn }) {
                   label={t("kpi.memory")}
                   flag="--mem"
                   qualifier={t("pool.perNode")}
-                  labelExtra={!isGpu && memPerCore > 0 && (
+                  labelExtra={memPerCore > 0 && (
                     <MemLinkToggle
                       linked={!memValue}
                       per={fmtMemRaw(memPerCore)}
                       onToggle={() => setMem(memValue ? "" : defMemLabel)}
                       t={t}
+                      gpuCores={isGpu ? coresNow : undefined}
                     />
                   )}
                   ariaLabel={t("kpi.memory")}
@@ -767,7 +771,7 @@ export function RequestPanel({ pool, t }: { pool: Pool; t: TFn }) {
                   max={effMemGb}
                   value={Math.min(effMemGb, Math.max(1, memShownMb / 1024))}
                   onChange={setMemGb}
-                  snaps={[...(memSpreadLinked ? [] : [defMemMb / 1024]), ...(memGreenMb && memGreenMb >= 1024 ? [Math.floor(memGreenMb / 1024)] : [])]}
+                  snaps={[...(memSpreadLinked ? [] : [defMemGb]), ...(memGreenMb && memGreenMb >= 1024 ? [Math.floor(memGreenMb / 1024)] : [])]}
                   green={memGreenMb !== undefined ? memGreenMb / 1024 : undefined}
                   greenLabel={memGreenMb !== undefined && memGreenMb >= 1024 && memGreenMb / 1024 < effMemGb ? fmtGb(memGreenMb) : undefined}
                   ticks={[{ value: 1, label: "1G" }, { value: effMemGb, label: `${effMemGb}G` }]}
