@@ -186,6 +186,8 @@ export const zh: Record<TranslationKey, string> = {
   "pool.memLockedTip": "多卡命令不写 --mem，内存按默认算：每台 {cores} 核 × 每核 {per} = {mem}。",
   "pool.gpuSlider": "GPU 张数",
   "pool.cores": "核数",
+  "pool.axisGpus": "张数",
+  "pool.axisCores": "核数",
   "pool.perNode": "每台",
   "pool.walltime": "时长上限",
   "pool.nodesLabel": "节点数",

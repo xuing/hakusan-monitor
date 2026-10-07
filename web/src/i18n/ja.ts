@@ -186,6 +186,8 @@ export const ja: Record<TranslationKey, string> = {
   "pool.memLockedTip": "複数 GPU のコマンドは --mem を付けず、メモリは既定値：1 台あたり {cores} コア × 1 コアあたり {per} = {mem}。",
   "pool.gpuSlider": "GPU 枚数",
   "pool.cores": "コア数",
+  "pool.axisGpus": "枚",
+  "pool.axisCores": "コア",
   "pool.perNode": "ノードあたり",
   "pool.walltime": "時間制限",
   "pool.nodesLabel": "ノード数",

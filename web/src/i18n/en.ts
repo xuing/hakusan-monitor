@@ -187,6 +187,8 @@ export const en = {
   "pool.memLockedTip": "The multi-GPU command sets no --mem; memory is the default: {cores} cores per node × {per} each = {mem}.",
   "pool.gpuSlider": "GPUs",
   "pool.cores": "Cores",
+  "pool.axisGpus": "GPUs",
+  "pool.axisCores": "cores",
   "pool.perNode": "per node",
   "pool.walltime": "Time limit",
   "pool.nodesLabel": "Nodes",

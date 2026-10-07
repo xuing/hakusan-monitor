@@ -542,6 +542,7 @@ export function RequestPanel({ pool, t }: { pool: Pool; t: TFn }) {
         name: p, title: desc, lo: 1, hi, now: snap && !fullP ? gpuStartCount(snap, pool, p, req) : 0, wall,
         perUser: perUserText(policyP.maxJobsPerUser), verdict: status ? gpuVerdictTag(status, t) : null, judged: Boolean(snap),
         selected: p === partition, marker: p === partition ? gpuCount : undefined,
+        def: partitionDefaults(p, snap?.policy).gpus_per_node || 1,
       };
     }
     const lo = capP.minCores ?? 1;
@@ -555,6 +556,7 @@ export function RequestPanel({ pool, t }: { pool: Pool; t: TFn }) {
       now: st?.maxCores ?? 0, wall, perUser: perUserText(policyP.maxJobsPerUser),
       verdict: st ? cpuPartitionVerdict(st, t) : { tone: cpuProbeTone("unknown"), label: cpuProbeLabel("unknown", t) }, judged: !refused,
       selected: p === partition, marker: p === partition ? coresNow : undefined,
+      def: partitionDefaults(p, snap?.policy).cores || undefined,
     };
   };
   const perUserText = (n?: number) => (n ? t(n === 1 ? "users.job1" : "users.jobs", { n }) : undefined);
@@ -580,7 +582,7 @@ export function RequestPanel({ pool, t }: { pool: Pool; t: TFn }) {
     : [];
   const axisMax = Math.max(1, ...tableRows.map((r) => r.hi));
   const axis: PartitionAxis = isGpu
-    ? { scale: "linear", min: 1, origin: 0, max: Math.max(2, axisMax), ticks: Array.from({ length: Math.max(2, axisMax) }, (_, i) => ({ value: i + 1, label: String(i + 1) })) }
+    ? { scale: "linear", min: 1, max: Math.max(2, axisMax), ticks: Array.from({ length: Math.max(2, axisMax) }, (_, i) => ({ value: i + 1, label: String(i + 1) })) }
     : { scale: "log", min: 1, max: Math.max(2, axisMax), ticks: logTicks(Math.max(2, axisMax)) };
 
   // Collapsed one-glance verdict for the row: the pool's most startable
@@ -617,8 +619,8 @@ export function RequestPanel({ pool, t }: { pool: Pool; t: TFn }) {
               onSelect={selectPartition}
               onPickValue={pickFromTable}
               quantize={isGpu ? Math.round : niceCoreCount}
-              headers={{ name: t("col.partition"), wall: t("pool.tableWall"), perUser: t("pool.tablePerUser"), verdict: t("pool.tableVerdict") }}
-              legend={{ range: t("pool.legendRange"), now: t("pool.legendNow") }}
+              headers={{ name: t("col.partition"), axis: t(isGpu ? "pool.axisGpus" : "pool.axisCores"), wall: t("pool.tableWall"), perUser: t("pool.tablePerUser"), verdict: t("pool.tableVerdict") }}
+              legend={{ range: t("pool.legendRange"), now: t("pool.legendNow"), def: t("pool.tableVerdict") }}
               rangeLabels={!isGpu}
               footer={msParts.length > 0 ? (
                 <button
