@@ -17,6 +17,7 @@ const AnalyticsPage = lazy(() => import("@/pages/analytics"));
 const LoginNodesPage = lazy(() => import("@/pages/login-nodes"));
 const NodesPage = lazy(() => import("@/pages/nodes"));
 const JobsPage = lazy(() => import("@/pages/jobs"));
+const GettingStartedPage = lazy(() => import("@/pages/getting-started"));
 const SlurmGuidePage = lazy(() => import("@/pages/slurm-guide"));
 const ContainersPage = lazy(() => import("@/pages/containers"));
 const ProjectGuidePage = lazy(() => import("@/pages/project-guide"));
@@ -79,6 +80,14 @@ export default function App() {
                   element={
                     <Suspense fallback={<PageFallback />}>
                       <JobsPage />
+                    </Suspense>
+                  }
+                />
+                <Route
+                  path="/start"
+                  element={
+                    <Suspense fallback={<PageFallback />}>
+                      <GettingStartedPage />
                     </Suspense>
                   }
                 />

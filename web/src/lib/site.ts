@@ -7,12 +7,24 @@ import { withBase } from "@/lib/base-path";
 import { fmtMB } from "@/lib/format";
 import type { Pool } from "@/types/snapshot";
 
+/** How people reach the cluster (the Getting started page). */
+export interface SiteAccess {
+  /** login nodes to ssh to; `id` matches the login-node monitor's ids */
+  login_hosts: { id: string; host: string }[];
+  /** a domain the local network appends to a short host name (DNS search
+   *  list): commands then use `hakusan1` for `hakusan1.example.ac.jp` */
+  search_domain?: string;
+  /** a user name of the site's form, shown until the reader types theirs */
+  user_example: string;
+}
+
 export interface SiteInfo {
   cluster: string;
   name: string;
   org: string;
   links: { home?: string; outside_hardware?: string };
-  pages: { slurm_guide: boolean; containers?: boolean };
+  pages: { slurm_guide: boolean; containers?: boolean; getting_started?: boolean };
+  access?: SiteAccess;
   partition_order: string[];
   /** partition of the Containers page's interactive example ("" = Slurm's default) */
   container_shell_partition?: string;

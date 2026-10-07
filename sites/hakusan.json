@@ -13,6 +13,20 @@
   "containers": {
     "shell_partition": "TINY"
   },
+  "access": {
+    "login_hosts": [
+      {
+        "id": "hakusan1",
+        "host": "hakusan1.jaist.ac.jp"
+      },
+      {
+        "id": "hakusan2",
+        "host": "hakusan2.jaist.ac.jp"
+      }
+    ],
+    "search_domain": "jaist.ac.jp",
+    "user_example": "s2xxxxxx"
+  },
   "pools": [
     {
       "id": "a40",
@@ -188,7 +202,8 @@
       "pooldesc.h100-20c": "H100 MIG slices (20 GB).",
       "pooldesc.h100-80": "NVIDIA H100 80 GB GPU nodes, {shape}.",
       "pooldesc.lm": "Large-memory nodes, {cores} cores and {mem} each, for jobs that need a lot of RAM.",
-      "pooldesc.vm-cpu": "Cloud VM nodes, {cores} cores and {mem} each. Small; submit with -p VM-CPU. Often idle, so usually no wait."
+      "pooldesc.vm-cpu": "Cloud VM nodes, {cores} cores and {mem} each. Small; submit with -p VM-CPU. Often idle, so usually no wait.",
+      "start.account.note": "Use the user name and password of your JAIST account. For a student, the user name is usually `s` and the student number."
     },
     "zh": {
       "app.subtitle": "JAIST 高性能计算集群",
@@ -257,7 +272,8 @@
       "pooldesc.h100-20c": "H100 MIG 切片（20GB）。",
       "pooldesc.h100-80": "NVIDIA H100 80GB GPU 节点，{shape}。",
       "pooldesc.lm": "大内存节点，每台 {cores} 核、{mem} 内存，给特别吃内存的作业用。",
-      "pooldesc.vm-cpu": "云上的虚拟机节点，每台 {cores} 核、{mem} 内存。规模小，要用 -p VM-CPU 指定。平时常空闲，基本不用排队。"
+      "pooldesc.vm-cpu": "云上的虚拟机节点，每台 {cores} 核、{mem} 内存。规模小，要用 -p VM-CPU 指定。平时常空闲，基本不用排队。",
+      "start.account.note": "使用你的 JAIST 账号的用户名和密码。学生的用户名一般是 `s` 加学号。"
     },
     "ja": {
       "app.subtitle": "JAIST HPC クラスタ",
@@ -326,7 +342,8 @@
       "pooldesc.h100-20c": "H100 MIG スライス（20GB）。",
       "pooldesc.h100-80": "NVIDIA H100 80GB GPU ノード。{shape}。",
       "pooldesc.lm": "大容量メモリノード。1 台あたり {cores} コア・メモリ {mem} で、メモリを特に多く使うジョブ向けです。",
-      "pooldesc.vm-cpu": "クラウド上の VM ノード。1 台あたり {cores} コア・メモリ {mem}。小規模で、-p VM-CPU で指定します。普段は空いていることが多く、ほとんど待ちません。"
+      "pooldesc.vm-cpu": "クラウド上の VM ノード。1 台あたり {cores} コア・メモリ {mem}。小規模で、-p VM-CPU で指定します。普段は空いていることが多く、ほとんど待ちません。",
+      "start.account.note": "JAIST アカウントのユーザー名とパスワードを使います。学生のユーザー名は通常、`s` と学籍番号です。"
     }
   }
 }

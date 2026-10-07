@@ -1,4 +1,5 @@
 import { analyticsZh } from "./analytics.zh";
+import { startZh } from "./start.zh";
 import type { TranslationKey } from "./en";
 
 export const zh: Record<TranslationKey, string> = {
@@ -11,6 +12,7 @@ export const zh: Record<TranslationKey, string> = {
   "nav.partitions": "分区",
   "nav.analytics": "分析",
   "nav.loginNodes": "登录节点负载",
+  "nav.start": "{siteName} 使用入门",
   "nav.slurm": "Slurm 指南",
   "nav.containers": "容器",
   "nav.project": "项目说明",
@@ -648,4 +650,5 @@ export const zh: Record<TranslationKey, string> = {
   "users.held": "已占用",
   "users.queued": "排队中",
   ...analyticsZh,
+  ...startZh,
 };

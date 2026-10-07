@@ -98,6 +98,15 @@ class HakusanSiteTests(unittest.TestCase):
         self.assertEqual(out["strings"]["ja"]["pool.a40"], "A40")
         self.assertTrue(out["pages"]["slurm_guide"])
 
+    def test_access_turns_on_the_basics_page(self):
+        out = site_config.load(HAKUSAN_PATH).public(None)
+        self.assertTrue(out["pages"]["getting_started"])
+        self.assertEqual(out["access"]["login_hosts"][0], {"id": "hakusan1", "host": "hakusan1.jaist.ac.jp"})
+        self.assertEqual(out["access"]["search_domain"], "jaist.ac.jp")
+        bare = site_config.Site({"access": {"login_hosts": [{"host": "login.example.edu"}, {"id": "x"}]}}).public(None)
+        self.assertEqual(bare["access"]["login_hosts"], [{"id": "login", "host": "login.example.edu"}])
+        self.assertFalse(site_config.Site().public(None)["pages"]["getting_started"])
+
 
 class ProbeAndRuntimeTests(unittest.TestCase):
     def test_without_a_submit_plugin_every_cpu_partition_is_probed(self):

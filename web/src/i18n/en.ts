@@ -1,6 +1,7 @@
 // English dictionary — the source of truth for translation keys.
 // `{n}` / `{t}` placeholders are filled by t(key, vars).
 import { analyticsEn } from "./analytics.en";
+import { startEn } from "./start.en";
 
 export const en = {
   "app.title": "{siteName} Monitor",
@@ -12,6 +13,7 @@ export const en = {
   "nav.partitions": "Partitions",
   "nav.analytics": "Analytics",
   "nav.loginNodes": "Login-node load",
+  "nav.start": "{siteName} basics",
   "nav.slurm": "Slurm guide",
   "nav.containers": "Containers",
   "nav.project": "About this monitor",
@@ -650,6 +652,7 @@ export const en = {
   "users.held": "held",
   "users.queued": "queued",
   ...analyticsEn,
+  ...startEn,
 } satisfies Record<string, string>;
 
 export type TranslationKey = keyof typeof en;

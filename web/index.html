@@ -8,7 +8,7 @@
       // URLs below resolve under it from any page; src/lib/base-path.ts reads
       // it back. Keep the route list in sync with src/lib/nav.ts (tested).
       (function () {
-        var routes = ["partitions", "analytics", "login-nodes", "nodes", "jobs", "slurm", "containers", "project"];
+        var routes = ["partitions", "analytics", "login-nodes", "nodes", "jobs", "start", "slurm", "containers", "project"];
         var segs = location.pathname.split("/").filter(Boolean);
         var i = segs.findIndex(function (s) { return routes.indexOf(s) >= 0; });
         var base = (i >= 0 ? segs.slice(0, i) : segs).join("/");

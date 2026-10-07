@@ -145,6 +145,21 @@ class Site:
     def cluster_name(self, policy):
         return self.cfg.get("cluster") or (policy or {}).get("cluster_name") or "slurm"
 
+    def access(self):
+        """How people reach the cluster, for the Getting started page: login
+        hosts (`id` matches HM_LOGIN_NODES, so the page can show their load),
+        the search domain that lets people drop the domain from a host name
+        (the campus network's DNS search list) and a sample user name. No
+        login hosts, no page."""
+        a = dict(self.cfg.get("access") or {})
+        hosts = [{"id": str(h.get("id") or h["host"].split(".")[0]), "host": str(h["host"])}
+                 for h in a.get("login_hosts") or [] if isinstance(h, dict) and h.get("host")]
+        return {
+            "login_hosts": hosts,
+            "search_domain": str(a.get("search_domain") or "").strip("."),
+            "user_example": str(a.get("user_example") or ""),
+        }
+
     def public(self, policy):
         """/api/site: names, links, page switches, partition order and the
         site's own strings (merged over the built-in ones per language)."""
@@ -160,7 +175,9 @@ class Site:
             "name": self.cfg.get("name") or cluster[:1].upper() + cluster[1:],
             "org": self.cfg.get("org") or "",
             "links": dict(self.cfg.get("links") or {}),
-            "pages": {"slurm_guide": bool((self.cfg.get("pages") or {}).get("slurm_guide"))},
+            "pages": {"slurm_guide": bool((self.cfg.get("pages") or {}).get("slurm_guide")),
+                      "getting_started": bool(self.access()["login_hosts"])},
+            "access": self.access(),
             # partition the Containers page's interactive example uses (none: Slurm's default)
             "container_shell_partition": (self.cfg.get("containers") or {}).get("shell_partition") or "",
             "partition_order": self.display_order(policy),

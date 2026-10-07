@@ -8,6 +8,7 @@ import {
   LayoutDashboard,
   ListTree,
   Server,
+  SquareTerminal,
   type LucideIcon,
 } from "lucide-react";
 import type { TranslationKey } from "@/i18n/en";
@@ -19,7 +20,7 @@ export interface NavItem {
   icon: LucideIcon;
   section: "monitor" | "raw" | "guide";
   /** shown only when the site turns this page on (GET /api/site `pages`) */
-  page?: "slurm_guide" | "containers";
+  page?: "slurm_guide" | "containers" | "getting_started";
 }
 
 export const NAV: NavItem[] = [
@@ -29,6 +30,7 @@ export const NAV: NavItem[] = [
   { path: "/login-nodes", labelKey: "nav.loginNodes", icon: Activity, section: "monitor" },
   { path: "/nodes", labelKey: "nav.nodes", icon: Server, section: "raw" },
   { path: "/jobs", labelKey: "nav.jobs", icon: ListTree, section: "raw" },
+  { path: "/start", labelKey: "nav.start", icon: SquareTerminal, section: "guide", page: "getting_started" },
   { path: "/slurm", labelKey: "nav.slurm", icon: BookOpen, section: "guide", page: "slurm_guide" },
   { path: "/containers", labelKey: "nav.containers", icon: Box, section: "guide", page: "containers" },
   { path: "/project", labelKey: "nav.project", icon: FileText, section: "guide" },

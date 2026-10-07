@@ -121,6 +121,7 @@ a host with the Slurm commands) and leave `HM_SITE` unset. Without a site file:
 | Limits | QoS (`sacctmgr`) and partition config (`scontrol`) |
 | Containers page | shown when `singularity --version` answers on the login node |
 | Slurm guide page | off (it is written for Hakusan) |
+| Basics page (ssh, keys, copying files) | shown when the site file lists login hosts |
 
 It uses only the standard client commands (`scontrol`, `squeue`, `sacct`,
 `sacctmgr`) and has been run on Slurm 25.05. Analytics needs `sacct` with a
@@ -156,6 +157,7 @@ A JSON file named by `HM_SITE` overrides any of these. Every key is optional;
 | `gpus` | label and memory per gres type, in display order |
 | `partition_order`, `cpu_probe_order` | partition display order; order of the CPU start checks |
 | `pages.slurm_guide` | show the Slurm guide page |
+| `access.login_hosts`, `access.search_domain`, `access.user_example` | the login nodes people ssh to (`id` as in `HM_LOGIN_NODES`, so the page shows their load), the domain the local network appends to a short host name, and a user name shown until the reader types theirs; login hosts turn on the basics page, and the site string `start.account.note` says what account to use |
 | `strings` | any UI string, per language (`en`, `zh`, `ja`); keys are in `web/src/i18n/en.ts`. Partition titles are `policy.<name>` and `policy.<name>.desc`, pool descriptions `pooldesc.<pool id>` |
 
 Pool ids are stored with the history, so pick them once and keep them.

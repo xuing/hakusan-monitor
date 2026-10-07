@@ -1,4 +1,5 @@
 import { analyticsJa } from "./analytics.ja";
+import { startJa } from "./start.ja";
 import type { TranslationKey } from "./en";
 
 export const ja: Record<TranslationKey, string> = {
@@ -11,6 +12,7 @@ export const ja: Record<TranslationKey, string> = {
   "nav.partitions": "パーティション",
   "nav.analytics": "分析",
   "nav.loginNodes": "ログインノード負荷",
+  "nav.start": "{siteName} 入門",
   "nav.slurm": "Slurm ガイド",
   "nav.containers": "コンテナ",
   "nav.project": "このモニターについて",
@@ -648,4 +650,5 @@ export const ja: Record<TranslationKey, string> = {
   "users.held": "確保済み",
   "users.queued": "実行待ち",
   ...analyticsJa,
+  ...startJa,
 };
