@@ -10,7 +10,7 @@ import {
   type GpuDefaultRequest,
   type GpuNodeFacts,
 } from "@/lib/gpu-availability";
-import { BACKFILL_MARGIN_MS, mayUseNode, queueModel, shareOf, type Claim, type QueueModel, type Waiter } from "@/lib/queue";
+import { BACKFILL_MARGIN_MS, mayUseNode, nodeOpenUntil, queueModel, shareOf, type Claim, type QueueModel, type Waiter } from "@/lib/queue";
 import { capPerGpu, minutesToSlurmTime, partitionCap, partitionDefaultRequest, type PartitionCap } from "@/lib/slurm";
 import type { Pool, RawJob, RawNode, Snapshot } from "@/types/snapshot";
 
@@ -272,9 +272,11 @@ const holdsNeed = (fit: GpuFitInfo, free: ReturnType<typeof freeAfterClaims>) =>
   free.gpus >= fit.need.gpus && free.cores >= fit.need.cores && free.memMb >= fit.need.memMb;
 
 /** Is a default-request slot still open once the queue has taken its share?
- *  Two waiters in front of nine idle nodes leave seven open — not zero. */
-export function fitHasClearSlot(fit: GpuFitInfo, claims: Map<string, Claim>): boolean {
-  return fit.fitNodes.some((row) => holdsNeed(fit, freeAfterClaims(row, claims)));
+ *  Two waiters in front of nine idle nodes leave seven open — not zero. A
+ *  booked node is no clear slot: only a job ending before the booking may
+ *  use it (withinBackfillWindow). */
+export function fitHasClearSlot(fit: GpuFitInfo, claims: Map<string, Claim>, bookings = new Map<string, number[]>()): boolean {
+  return fit.fitNodes.some((row) => !bookings.has(row.node.name) && holdsNeed(fit, freeAfterClaims(row, claims)));
 }
 
 // ---- backfill window ------------------------------------------------------
@@ -310,7 +312,7 @@ export interface GpuBackfillTipData {
 export function gpuBackfillTipCommand(fit: GpuFitInfo, pool: Pool, q: QueueModel, nowMs: number): GpuBackfillTipData | null {
   if (!pool.gpu) return null;
   // Slots exist but every one is spoken for — a short job can still sneak in.
-  if (fit.schedulable > 0 && fitHasClearSlot(fit, q.claims)) return null;
+  if (fit.schedulable > 0 && fitHasClearSlot(fit, q.claims, q.bookings)) return null;
   // Prefer the widest real scheduler window. PLANNED rows live in
   // reservedNodes (and remain excluded from ordinary free/schedulable totals).
   let bestTip: GpuBackfillTipData | null = null;
@@ -341,8 +343,9 @@ export function withinBackfillWindow(fit: GpuFitInfo, q: Pick<QueueModel, "claim
   if (userTimeSec <= 0) return false;
   return [...fit.fitNodes, ...fit.reservedNodes].some((row) => {
     if (!holdsNeed(fit, freeAfterClaims(row, q.claims))) return false;
-    const win = backfillWindow(row, q.bookings, nowMs);
-    return win !== null && userTimeSec <= win.suggestSec;
+    // the CPU rule exactly (nodeOpenUntil); the tip's rounded -t is only a suggestion
+    const until = nodeOpenUntil(q, row.node);
+    return until !== undefined && nowMs + userTimeSec * 1000 <= until;
   });
 }
 

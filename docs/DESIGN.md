@@ -147,10 +147,11 @@ slots as it goes. A new job gets what is left:
   because its priority depends on the submitter's fair-share. Real jobs
   (2026-10-07): a 3-day SMALL job at priority 20675 started on nodes booked
   for a 20010 job; 1- and 2-day DEF and LONG-L jobs at ~15700 stayed pending.
-  CPU requests apply it through `nodeOpenUntil`; GPU requests keep their
-  own check (a free slot counts whatever its node's booking; a gap counts
-  in 15-minute steps) — gaps on GPU nodes are rare and the rule is not
-  yet checked there with real jobs (`scripts/verify_gpu_gap.py`). Real jobs (2026-10-07 10:37): `sbatch -p LARGE -n 384`
+  One rule (`nodeOpenUntil`) for CPU requests, single-GPU slots and
+  multi-GPU layouts: a booked node is a gap, never a clear slot. A node
+  without a booking is judged as before; on GPU nodes a free GPU on a
+  booked node is rare, and the rule is not yet checked there with real
+  jobs (`scripts/verify_gpu_gap.py`). Real jobs (2026-10-07 10:37): `sbatch -p LARGE -n 384`
   started in 14 s with `-t 17:00:00` and stayed pending with `-t 2-00:00:00`,
   the walltime slider's green part ending at 17 h 11 min.
 - `poolContenders(pool)`: the waiters ahead of a new job in a pool; one that

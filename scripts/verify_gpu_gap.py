@@ -3,8 +3,8 @@
 real jobs (CPU has: docs/DESIGN.md section 4):
 
 1. gap: a GPU node booked for a queued job (squeue SchedNodes) may take a new
-   job only if it ends before the booking — the rule CPU requests follow
-   (lib/queue.ts nodeOpenUntil), not yet applied to GPU ones. Two
+   job only if it ends before the booking (lib/queue.ts nodeOpenUntil, the
+   rule CPU and GPU requests follow). Two
    real jobs pinned to such a node with -w: one ending after the booking
    (expected to stay pending), then one ending 15 min before it (expected to
    start). Each runs `sleep`, is cancelled after the check, and the script
