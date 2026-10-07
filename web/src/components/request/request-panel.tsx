@@ -48,7 +48,7 @@ import { cn } from "@/lib/utils";
 import type { Partition, Pool, Snapshot } from "@/types/snapshot";
 import { DisclosureRow } from "@/components/pools/pool-card";
 import { CommandVerdict, GpuBackfillQuickTip, GpuFitExplanation, HintAction, MemLinkToggle } from "@/components/request/request-parts";
-import { fmtGb, fmtGbNear, largestPassing, linearTicks, logTicks, niceCoreCount, normalizeMem, numberOptions, parseHumanTime, parseMemoryInputMb, quantizeWalltime, walltimeTicks, withinCapInt } from "@/lib/request-input";
+import { fmtGb, fmtGbNear, fmtSize, largestPassing, linearTicks, logTicks, niceCoreCount, normalizeMem, numberOptions, parseHumanTime, parseMemoryInputMb, quantizeWalltime, walltimeTicks, withinCapInt } from "@/lib/request-input";
 
 /** Collapsible starter request for this pool, in two steps: a table of its
  *  partitions on one axis (what a job may ask for, green = what starts now) to
@@ -391,7 +391,10 @@ export function RequestPanel({ pool, t }: { pool: Pool; t: TFn }) {
   const layoutMemMb = multiGpu && layout ? layout.coresPerGpu * layout.gpusPerNode * memPerCore : 0;
   // CPU, no -N and no --mem on a multi-node partition, and no node holds
   // all the cores: each node gets DefMemPerCPU x its share — no one value
-  const memSpreadLinked = Boolean(judged && !isGpu && !memValue && !nodeCount && cpuDefaultSpreads(snap!, partition, coresNow, verdictSec || undefined));
+  // the cores land on several nodes (no -N): a per-node --mem then applies
+  // to each of them, while no --mem gives each node its cores' share
+  const coresSpread = Boolean(judged && !isGpu && !nodeCount && cpuDefaultSpreads(snap!, partition, coresNow, verdictSec || undefined));
+  const memSpreadLinked = coresSpread && !memValue;
   // CPU: the exact --mem where liveCpuStart flips for the cores and -N as
   // set; GPU: the request's own verdict searched over whole GiB
   const memSearchMb = !judged || layoutMemMb > 0 || !effMemGb
@@ -753,6 +756,22 @@ export function RequestPanel({ pool, t }: { pool: Pool; t: TFn }) {
                   valueBox={<SliderValueFixed>{`${Math.min(Math.round(layoutMemMb / 1024), effMemGb)}G`}</SliderValueFixed>}
                   locked={t("pool.memLockedTip", { cores: layout!.coresPerGpu * layout!.gpusPerNode, per: fmtMemRaw(memPerCore), mem: `${Math.min(Math.round(layoutMemMb / 1024), effMemGb)}G` })}
                 />
+              ) : memSpreadLinked ? (
+                // no --mem on a multi-node request: memory is per core, not
+                // one per-node number, so no slider until the 🔗 is cut
+                <div className="flex min-w-0 flex-col gap-1.5">
+                  <FieldLabel label={t("kpi.memory")} flag="--mem">
+                    <MemLinkToggle
+                      linked
+                      per={fmtMemRaw(memPerCore)}
+                      onToggle={() => setMem(memGreenMb !== undefined && memGreenMb >= 1024 ? fmtGb(memGreenMb) : defMemLabel)}
+                      t={t}
+                    />
+                  </FieldLabel>
+                  <p className="text-sm text-foreground/85">
+                    {t("pool.memPerCoreTotal", { per: fmtMemRaw(memPerCore), total: fmtSize(coresNow * memPerCore) })}
+                  </p>
+                </div>
               ) : effMemGb ? (
                 <RangeSlider
                   label={t("kpi.memory")}
@@ -773,19 +792,18 @@ export function RequestPanel({ pool, t }: { pool: Pool; t: TFn }) {
                   max={effMemGb}
                   value={Math.min(effMemGb, Math.max(1, memShownMb / 1024))}
                   onChange={setMemGb}
-                  snaps={[...(memSpreadLinked ? [] : [defMemGb]), ...(memGreenMb && memGreenMb >= 1024 ? [Math.floor(memGreenMb / 1024)] : [])]}
+                  snaps={[defMemGb, ...(memGreenMb && memGreenMb >= 1024 ? [Math.floor(memGreenMb / 1024)] : [])]}
                   green={memGreenMb !== undefined ? memGreenMb / 1024 : undefined}
                   greenLabel={memGreenMb !== undefined && memGreenMb >= 1024 && memGreenMb / 1024 < effMemGb ? fmtGb(memGreenMb) : undefined}
-                  ticks={[{ value: 1, label: "1G" }, { value: effMemGb, label: `${effMemGb}G` }]}
-                  thumb={!memSpreadLinked}
-                  tip={memSpreadLinked ? t("pool.memSpreadTip", { per: fmtMemRaw(memPerCore) }) : undefined}
+                  ticks={[{ value: 1, label: "1G" }, { value: effMemGb, label: fmtSize(effMemGb * 1024) }]}
+                  tip={coresSpread ? t("pool.memPerNodeTip") : undefined}
                   valueBox={(
                     <SliderValueInput
                       value={mem}
-                      placeholder={memSpreadLinked ? t("pool.memPerCoreShort", { per: fmtMemRaw(memPerCore) }) : defMemLabel || t("pool.default")}
+                      placeholder={defMemLabel || t("pool.default")}
                       ariaLabel={t("kpi.memory")}
                       invalid={Boolean(memError)}
-                      width={memSpreadLinked ? "w-28" : "w-[4.5rem]"}
+                      width="w-[4.5rem]"
                       onChange={setMem}
                     />
                   )}

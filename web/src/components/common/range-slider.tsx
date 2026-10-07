@@ -193,10 +193,11 @@ export function RangeSlider({
         ))}
         {showGreenMark && greenLabel && (
           <span
-            className="absolute whitespace-nowrap font-semibold text-ok-fg"
+            className="absolute whitespace-nowrap text-ok-fg"
             style={{ left: `${greenPos * 100}%`, transform: "translateX(-50%)" }}
           >
-            {greenLabel}
+            {/* a limit, not the value: the value is in the box above */}
+            ≤{greenLabel}
           </span>
         )}
       </div>

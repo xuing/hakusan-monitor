@@ -13,6 +13,8 @@ export interface SliderTick {
 export const fmtGb = (mb: number) => (mb > 0 ? `${Math.floor(mb / 1024)}G` : "");
 
 /** A default in GiB as the slider shows it (rounded). */
+/** A size the way the sliders print it: "250G", "1.5T". */
+export const fmtSize = (mb: number) => (mb >= 1024 * 1024 ? `${+(mb / 1024 / 1024).toFixed(1)}T` : `${Math.round(mb / 1024)}G`);
 export const fmtGbNear = (mb: number) => (mb > 0 ? `${Math.round(mb / 1024)}G` : "");
 
 /** The largest integer in lo..hi a monotone test still passes (fewer
