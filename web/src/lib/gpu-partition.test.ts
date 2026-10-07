@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { gpuStartCount, gpuStatus, gpuVerdict, layoutFit } from "./gpu-partition";
+import { gpuStartCount, gpuStatus, gpuVerdict } from "./gpu-partition";
 import { poolPick, poolTone } from "./pool-status";
 import { POOLS, SNAPSHOT } from "./queue.fixtures";
 import type { Partition, Pool, RawJob, RawNode, Snapshot } from "@/types/snapshot";
@@ -115,31 +115,14 @@ describe("gpuStatus: one precedence for every page", () => {
     expect(gpuVerdict(s(30 * 3600))).toBe("gap");
   });
 
-  it("fits a multi-GPU layout into PLANNED nodes only when it ends before the booking", () => {
-    // g1, g2 idle but held for a three-node job booked 20 h out, when busy
-    // g3 frees up: two whole nodes for 12 h fit, for 30 h they do not
-    const planned = (name: string) => node(name, { state: ["IDLE", "PLANNED"], schedulable: false });
-    const busy = node("g3", { state: ["ALLOCATED"], state_bucket: "allocated", alloc_cpus: 52, alloc_memory: 515_306, gres_used: "gpu:nvidia_a40:2" });
-    const snap = snapOf([planned("g1"), planned("g2"), busy], [waiter(1, {
-      sched_nodes: "g[1-3]", start_est: new Date(1_791_200_000_000 + 20 * 3600_000).toISOString(),
-      node_count: 3, gpus: 6, cpus: 156, min_memory_mb: 1_545_918,
-    })]);
-    const packed = { key: "2x2", gpus: 4, nodes: 2, gpusPerNode: 2, packed: true, coresPerGpu: 26, flags: [] };
-    expect(layoutFit(snap, pool, "GPU-1", packed, 12 * 3600)).toEqual({ fits: 2, starts: true });
-    expect(layoutFit(snap, pool, "GPU-1", packed, 30 * 3600)).toEqual({ fits: 0, starts: false });
-  });
-
   it("finds no gap where a waiter that starts now takes the free GPU", () => {
     // g1 has one GPU free and is booked 20 h out for a two-GPU job; a
     // one-GPU waiter starts on that GPU now, so nothing is left to backfill
     const g1 = node("g1", { state: ["MIXED"], gres_used: "gpu:nvidia_a40:1", alloc_cpus: 26, alloc_memory: 255_970 });
     const booked = waiter(1, { sched_nodes: "g1", start_est: new Date(AT + 20 * 3600_000).toISOString(), gpus: 2, cpus: 52, min_memory_mb: 511_940 });
     const one = { available_nodes: 1, gpu: { total: 2, used: 1, free: 1, down: 0, reserved: 0 } } as never;
-    // alone it is a gap, not a clear slot: Slurm reserves the booked job's
-    // whole node, so only a job ending before the booking may use it
-    const alone = (timeSec?: number) => gpuStatus(snapOf([g1], [booked], one), pool, "GPU-1", { timeSec }, AT);
-    expect(alone().now).toBe("backfill");
-    expect(alone(30 * 3600).now).toBeNull();
+    const alone = gpuStatus(snapOf([g1], [booked], one), pool, "GPU-1", {}, AT);
+    expect(alone.now).toBe("clear");
     const taken = gpuStatus(snapOf([g1], [booked, waiter(2)], one), pool, "GPU-1", {}, AT);
     expect(taken.now).toBeNull();
     expect(taken.gapTip).toBeNull();

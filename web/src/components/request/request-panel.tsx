@@ -234,7 +234,7 @@ export function RequestPanel({ pool, t }: { pool: Pool; t: TFn }) {
     : null;
   // A multi-GPU layout needs whole idle nodes (packed) or nodes with a free
   // GPU and a GPU's share of cores (spread) — judge exactly that.
-  const layoutCheck = multiGpu && layout && snap && !groupLimitReached ? layoutFit(snap, pool, partition, layout, verdictSec || undefined) : null;
+  const layoutCheck = multiGpu && layout && snap && !groupLimitReached ? layoutFit(snap, pool, partition, layout) : null;
   const startsLabel = (starts: boolean) => t(starts ? "verdict.now" : "verdict.queue");
   const shown: { tone: Tone; label: string; detail: string } | null = layoutCheck && layout
     ? {
@@ -347,7 +347,7 @@ export function RequestPanel({ pool, t }: { pool: Pool; t: TFn }) {
   const gpuGreen = isGpu && judged
     ? blockedAll ? 0 : gpuStartCount(snap!, pool, partition, { memMb: memOverrideMb, timeSec: verdictSec })
     : undefined;
-  const layoutStarts = (l: GpuLayout) => Boolean(snap) && layoutFit(snap!, pool, partition, l, verdictSec || undefined).starts;
+  const layoutStarts = (l: GpuLayout) => Boolean(snap) && layoutFit(snap!, pool, partition, l).starts;
   const setGpuCount = (n: number) => {
     const target = gpuCounts.reduce((best, c) => (Math.abs(c - n) < Math.abs(best - n) ? c : best), gpuCounts[0] ?? 1);
     if (target <= 1) {
@@ -446,9 +446,10 @@ export function RequestPanel({ pool, t }: { pool: Pool; t: TFn }) {
   // the longest walltime that still starts now, searched over whole minutes
   // with every other field as set: a job may use a booked node only if it
   // ends before the booking, so short walltimes can start where long ones
-  // queue. The verdict asks the same question at the walltime shown.
+  // queue. The verdict asks the same question at the walltime shown. A
+  // multi-GPU layout does not depend on it (gaps on GPU nodes are rare).
   const startsWithin = (sec: number) => isGpu
-    ? multiGpu ? Boolean(layout && layoutFit(snap!, pool, partition, layout, sec).starts) : gpuStartsAt(memOverrideMb, sec)
+    ? multiGpu ? Boolean(layoutCheck?.starts) : gpuStartsAt(memOverrideMb, sec)
     : cpuLive(sec) === "now";
   const timeGreenSec = !judged || !showTimeSlider
     ? undefined
@@ -665,6 +666,7 @@ export function RequestPanel({ pool, t }: { pool: Pool; t: TFn }) {
                       flag="--gres"
                       ariaLabel={t("pool.gpuSlider")}
                       min={1}
+                      origin={0}
                       max={Math.max(2, gpuCounts[gpuCounts.length - 1] ?? 1)}
                       value={gpuCount}
                       onChange={setGpuCount}
@@ -713,6 +715,7 @@ export function RequestPanel({ pool, t }: { pool: Pool; t: TFn }) {
                   flag={multiNodePolicy ? "-n" : "-c"}
                   ariaLabel={t("pool.cores")}
                   min={coreMin}
+                  origin={0}
                   max={coreMax}
                   value={Math.min(coreMax, Math.max(coreMin, coresNow))}
                   onChange={(v) => setCores(v === defCores && !nodeCount ? "" : String(v))}
@@ -761,6 +764,7 @@ export function RequestPanel({ pool, t }: { pool: Pool; t: TFn }) {
                   )}
                   ariaLabel={t("kpi.memory")}
                   min={1}
+                  origin={0}
                   max={effMemGb}
                   value={Math.min(effMemGb, Math.max(1, memShownMb / 1024))}
                   onChange={setMemGb}

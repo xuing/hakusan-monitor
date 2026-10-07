@@ -147,9 +147,10 @@ slots as it goes. A new job gets what is left:
   because its priority depends on the submitter's fair-share. Real jobs
   (2026-10-07): a 3-day SMALL job at priority 20675 started on nodes booked
   for a 20010 job; 1- and 2-day DEF and LONG-L jobs at ~15700 stayed pending.
-  The rule lives in one place (`nodeOpenUntil`) and CPU requests, single-GPU
-  slots and multi-GPU layouts all apply it: a booked node is never a clear
-  slot, only a gap. Real jobs (2026-10-07 10:37): `sbatch -p LARGE -n 384`
+  CPU requests apply it through `nodeOpenUntil`; GPU requests keep their
+  own check (a free slot counts whatever its node's booking; a gap counts
+  in 15-minute steps) — gaps on GPU nodes are rare and the rule is not
+  yet checked there with real jobs (`scripts/verify_gpu_gap.py`). Real jobs (2026-10-07 10:37): `sbatch -p LARGE -n 384`
   started in 14 s with `-t 17:00:00` and stayed pending with `-t 2-00:00:00`,
   the walltime slider's green part ending at 17 h 11 min.
 - `poolContenders(pool)`: the waiters ahead of a new job in a pool; one that
@@ -215,7 +216,8 @@ Rules learned from shipped bugs, each pinned by a test:
 - **Hidden partitions are not shown.** `scontrol show` without `-a` omits
   Hidden=YES partitions and nodes that only they reach: on Hakusan RTX and
   SEMINAR on `lcpcc-rp6kg01` (16 RTX PRO 6000 slices). Their jobs still
-  appear in squeue, without a pool.
+  appear in squeue, without a pool. Kept so by decision (2026-10-07): an
+  ordinary account cannot use them.
 - **Reservations are not read** (`scontrol show res`); a reservation's
   nodes read as held for everyone. None exist today.
 - **A multi-partition job has one priority in squeue**, while Slurm ranks

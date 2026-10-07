@@ -43,6 +43,8 @@ export function FieldNote({ children, className }: { children: ReactNode; classN
  * queues; `green` below `min` paints all of it amber. No `green` = not
  * judged (no live data, or a command that is refused): a plain track. The
  * thumb turns amber past the green part, the moment the request queues.
+ * A count scale starts at `origin` (0) left of its `min` (1): when only the
+ * smallest request starts, its green part still shows.
  *
  * Dragging goes through a transparent native range input laid over the
  * drawn track (keyboard and screen readers keep working); values snap to
@@ -56,6 +58,7 @@ export function RangeSlider({
   labelExtra,
   min,
   max,
+  origin = min,
   value,
   onChange,
   scale = "linear",
@@ -81,6 +84,8 @@ export function RangeSlider({
   labelExtra?: ReactNode;
   min: number;
   max: number;
+  /** a linear track's left end, below `min` for a count (values stay ≥ min) */
+  origin?: number;
   value: number;
   onChange: (value: number) => void;
   scale?: "linear" | "log";
@@ -103,13 +108,14 @@ export function RangeSlider({
    *  track still sets one) */
   thumb?: boolean;
 }) {
-  const span = Math.max(max - min, 1e-9);
+  const start = scale === "log" ? min : Math.min(origin, min);
+  const span = Math.max(max - start, 1e-9);
   const logSpan = Math.log(Math.max(max, 1e-9) / Math.max(min, 1e-9)) || 1;
   const pos = (v: number) => {
     const c = Math.min(max, Math.max(min, v));
-    return scale === "log" ? Math.log(c / min) / logSpan : (c - min) / span;
+    return scale === "log" ? Math.log(c / min) / logSpan : (c - start) / span;
   };
-  const inv = (p: number) => (scale === "log" ? min * Math.exp(p * logSpan) : min + p * span);
+  const inv = (p: number) => (scale === "log" ? min * Math.exp(p * logSpan) : start + p * span);
   const pick = (p: number) => {
     const near = snaps
       .filter((s) => s >= min && s <= max)
