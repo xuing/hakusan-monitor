@@ -51,7 +51,7 @@ export function Topbar() {
           <SheetContent side="left" className="w-64 border-border bg-card">
             <SheetTitle className="sr-only">{t("app.title")}</SheetTitle>
             <div className="pt-2">
-              <Brand />
+              <Brand onNavigate={() => setMenuOpen(false)} />
               <div className="mt-6">
                 <SidebarNav onNavigate={() => setMenuOpen(false)} />
               </div>

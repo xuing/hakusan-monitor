@@ -1,14 +1,25 @@
 import { Mountain } from "lucide-react";
-import { NavLink } from "react-router";
+import { Link, NavLink } from "react-router";
 import { visibleNav } from "@/lib/nav";
 import { useT } from "@/i18n";
 import type { TranslationKey } from "@/i18n/en";
 import { cn } from "@/lib/utils";
 
-export function Brand({ compact = false }: { compact?: boolean }) {
+/** The logo and site name; a link to the overview. `onNavigate` closes the
+ *  phone menu, as the nav links do. */
+export function Brand({ compact = false, onNavigate }: { compact?: boolean; onNavigate?: () => void }) {
   const t = useT();
   return (
-    <div className={cn("flex items-center gap-2.5", compact ? "justify-center px-0" : "px-2")} title={compact ? t("app.title") : undefined}>
+    <Link
+      to="/"
+      onClick={onNavigate}
+      title={compact ? t("app.title") : undefined}
+      aria-label={compact ? t("app.title") : undefined}
+      className={cn(
+        "flex items-center gap-2.5 rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-primary/45",
+        compact ? "justify-center px-0" : "px-2",
+      )}
+    >
       <div className="grid h-8 w-8 place-items-center rounded-lg bg-gradient-to-br from-primary to-violet-500 text-background shadow-lg shadow-primary/20">
         <Mountain className="h-4 w-4" strokeWidth={2.5} />
       </div>
@@ -18,7 +29,7 @@ export function Brand({ compact = false }: { compact?: boolean }) {
           <div className="text-xs text-muted-foreground">{t("app.subtitle")}</div>
         </div>
       )}
-    </div>
+    </Link>
   );
 }
 
