@@ -28,15 +28,17 @@ export interface PartitionAxis {
   scale: "log" | "linear";
   min: number;
   max: number;
+  /** a linear axis's left end, below `min` for a count: a row whose green
+   *  part is only `min` (1 GPU) still shows it */
+  origin?: number;
   /** `minor` ticks drop out below the sm breakpoint, where the bar is narrow */
   ticks: { value: number; label: string; minor?: boolean }[];
 }
 
 // columns follow the table's own width (it sits in half-width cards too):
 // the time column from @md, the per-user column from @2xl
-// text columns get room to breathe; the bar takes what is left, and on a
-// wide card the gap grows instead of the bar
-const GRID = "grid grid-cols-[5.5rem_minmax(0,1fr)_5.5rem] items-center gap-x-4 px-4 @md:grid-cols-[5.75rem_minmax(0,1fr)_5.5rem_5.5rem] @2xl:grid-cols-[6rem_minmax(0,1fr)_5.5rem_6.5rem_5.5rem] @2xl:gap-x-8";
+// text columns as wide as their words; the bar takes the rest
+const GRID = "grid grid-cols-[5.5rem_minmax(0,1fr)_5.5rem] items-center gap-x-4 px-4 @md:grid-cols-[5.75rem_minmax(0,1fr)_4.5rem_5.5rem] @2xl:grid-cols-[6rem_minmax(0,1fr)_4.5rem_5.75rem_5.5rem] @2xl:gap-x-5";
 
 /** Partitions side by side on one axis: each row's bar is what a job there
  *  may ask for, its green part what starts now. Clicking a row picks it. */
@@ -64,17 +66,18 @@ export function PartitionTable({
   quantize?: (value: number) => number;
 }) {
   const logSpan = Math.log(axis.max / axis.min) || 1;
+  const start = axis.scale === "log" ? axis.min : Math.min(axis.origin ?? axis.min, axis.min);
   // with range labels the axis uses 80% of the cell: a label after a bar that
   // starts at the axis origin always has room, and one before a bar that
   // starts further in sits in the empty part on its left
   const reach = rangeLabels ? 0.8 : 1;
   const pos = (v: number) => {
     const c = Math.min(axis.max, Math.max(axis.min, v));
-    return reach * (axis.scale === "log" ? Math.log(c / axis.min) / logSpan : (c - axis.min) / Math.max(axis.max - axis.min, 1));
+    return reach * (axis.scale === "log" ? Math.log(c / axis.min) / logSpan : (c - start) / Math.max(axis.max - start, 1));
   };
   const inv = (p: number) => {
     const q = Math.min(1, Math.max(0, p / reach));
-    return axis.scale === "log" ? axis.min * Math.exp(q * logSpan) : axis.min + q * (axis.max - axis.min);
+    return axis.scale === "log" ? axis.min * Math.exp(q * logSpan) : start + q * (axis.max - start);
   };
   return (
     <div className="@container overflow-hidden rounded-lg border border-border bg-card">

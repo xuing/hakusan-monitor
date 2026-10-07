@@ -578,7 +578,7 @@ export function RequestPanel({ pool, t }: { pool: Pool; t: TFn }) {
     : [];
   const axisMax = Math.max(1, ...tableRows.map((r) => r.hi));
   const axis: PartitionAxis = isGpu
-    ? { scale: "linear", min: 1, max: Math.max(2, axisMax), ticks: Array.from({ length: Math.max(2, axisMax) }, (_, i) => ({ value: i + 1, label: String(i + 1) })) }
+    ? { scale: "linear", min: 1, origin: 0, max: Math.max(2, axisMax), ticks: Array.from({ length: Math.max(2, axisMax) }, (_, i) => ({ value: i + 1, label: String(i + 1) })) }
     : { scale: "log", min: 1, max: Math.max(2, axisMax), ticks: logTicks(Math.max(2, axisMax)) };
 
   // Collapsed one-glance verdict for the row: the pool's most startable

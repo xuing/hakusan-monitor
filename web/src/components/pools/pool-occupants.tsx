@@ -4,7 +4,7 @@ import { OccupancyMap, type OccupancyTile } from "@/components/common/occupancy-
 import { jobSizeText } from "@/components/common/verdict-text";
 import { useLive } from "@/hooks/live-context";
 import { coresText, type TFn } from "@/i18n";
-import { occupantsForPool, unschedulableCores } from "@/lib/derive";
+import { idleGpuBucket, occupantsForPool, parseGpuCount, unschedulableCores } from "@/lib/derive";
 import { fmtCountdown, fmtDur, fmtMB, nf, parseDur } from "@/lib/format";
 import { occupancyMode } from "@/lib/occupancy-mode";
 import { poolWaiters } from "@/lib/queue";
@@ -133,12 +133,45 @@ function poolOccupancyTiles(pool: Pool, snap: Snapshot, groups: OccupantUserGrou
     .sort((a, b) => b.value - a.value);
   const free = isGpu ? pool.gpu!.free : pool.cores.free;
   const held = isGpu ? { reserved: pool.gpu!.reserved ?? 0, down: pool.gpu!.down } : unschedulableCores(snap.nodes, pool.id);
+  // GPUs: one tile per node, so two free GPUs read as one node's pair or
+  // as two nodes' singles (the grid parts owners with a gap)
+  const perNode = isGpu ? idleGpuTiles(pool, snap, unit, t) : null;
+  if (perNode && perNode.free === free && perNode.reserved === held.reserved && perNode.down === held.down) {
+    return [...users, ...perNode.tiles];
+  }
   return [
     ...users,
     { key: "~free", value: free, kind: "free", amount: unit(free), sub: t("users.free"), details: [t("users.free")] },
     { key: "~reserved", value: held.reserved, kind: "reserved", amount: unit(held.reserved), sub: t("users.reserved"), details: [t("users.reservedDetail")] },
     { key: "~off", value: held.down, kind: "off", amount: unit(held.down), sub: t("users.offline"), details: [t("users.offline")] },
   ];
+}
+
+/** The pool's idle GPUs as one tile per node and kind (free, reserved,
+ *  offline), with the totals they add up to; the biggest first. */
+function idleGpuTiles(pool: Pool, snap: Snapshot, unit: (n: number) => string, t: TFn) {
+  const type = pool.gpu?.type ?? "";
+  const sums = { free: 0, reserved: 0, down: 0 };
+  const rows: { name: string; kind: "free" | "reserved" | "down"; n: number }[] = [];
+  for (const node of snap.nodes) {
+    if (node.pool !== pool.id) continue;
+    const n = Math.max(0, parseGpuCount(node.gres, type) - parseGpuCount(node.gres_used, type));
+    const kind = idleGpuBucket(node);
+    if (n <= 0 || kind === "short") continue;
+    sums[kind] += n;
+    rows.push({ name: node.name, kind, n });
+  }
+  const order = { free: 0, reserved: 1, down: 2 };
+  rows.sort((a, b) => order[a.kind] - order[b.kind] || b.n - a.n || a.name.localeCompare(b.name));
+  const tiles: OccupancyTile[] = rows.map((r) => ({
+    key: `~${r.kind}:${r.name}`,
+    value: r.n,
+    kind: r.kind === "down" ? "off" : r.kind,
+    amount: unit(r.n),
+    sub: t(r.kind === "free" ? "users.free" : r.kind === "reserved" ? "users.reserved" : "users.offline"),
+    details: [r.name, ...(r.kind === "reserved" ? [t("users.reservedDetail")] : [])],
+  }));
+  return { tiles, ...sums };
 }
 
 interface OccupantUserGroup {

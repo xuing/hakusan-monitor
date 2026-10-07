@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { poolNodeStates, unschedulableCores } from "@/lib/derive";
+import { idleGpuBucket, poolNodeStates, unschedulableCores } from "@/lib/derive";
 import type { RawNode, Snapshot } from "@/types/snapshot";
 
 const node = (name: string, state: string[], alloc: number, schedulable: boolean): RawNode =>
@@ -27,5 +27,15 @@ describe("poolNodeStates", () => {
       node("down", ["IDLE", "DRAIN"], 0, false),
     ] } as unknown as Snapshot;
     expect(poolNodeStates(snap, "cpu")).toEqual({ idle: 1, partial: 1, held: 1, full: 1, down: 1 });
+  });
+});
+
+describe("idleGpuBucket (backend/normalize.py idle_gpu_bucket)", () => {
+  it("puts a node's idle GPUs where the pool counts them", () => {
+    expect(idleGpuBucket(node("a", ["MIXED"], 26, true))).toBe("free");
+    expect(idleGpuBucket(node("b", ["IDLE", "DRAIN"], 0, false))).toBe("down");
+    expect(idleGpuBucket(node("c", ["IDLE", "PLANNED"], 0, false))).toBe("reserved");
+    // every core allocated: the GPU waits for a core
+    expect(idleGpuBucket(node("d", ["ALLOCATED"], 52, false))).toBe("short");
   });
 });

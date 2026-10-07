@@ -60,6 +60,15 @@ export function nodeIsSchedulerHeld(n: RawNode): boolean {
   return n.state.some((s) => BLOCKING_STATES.has(String(s).toUpperCase()));
 }
 
+/** Where a node's idle GPUs count: the pool's free, down, reserved or short
+ *  GPUs (keep in sync with backend/normalize.py idle_gpu_bucket). */
+export function idleGpuBucket(n: RawNode): "free" | "down" | "reserved" | "short" {
+  if (nodeIsSchedulable(n)) return "free";
+  if (nodeNeedsAttention(n)) return "down";
+  if (nodeIsSchedulerHeld(n)) return "reserved";
+  return n.state.some((s) => String(s).toUpperCase() === "ALLOCATED") ? "short" : "free";
+}
+
 /** Unallocated cores the pool's free count leaves out, split by why: on
  *  nodes an operator took out (down/drain) vs nodes the scheduler is holding
  *  for queued jobs (PLANNED…). Painting both as "down" called 366 healthy
