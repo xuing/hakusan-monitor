@@ -238,7 +238,7 @@ export const en = {
   "pool.defaultOverflowSplit": "Without -n {n} the job is split across {nodes} nodes.",
   "pool.defaultOverflowSplitGpu": "Without -n {n} the job is split across {nodes} nodes and takes {gpus} extra GPU(s).",
   "pool.defaultOverflowRefused": "This pool has a single node, so without -n {n} Slurm refuses the job.",
-  "pool.multiNodeHint": "Without -N, a multi-node partition may split these cores over several nodes.",
+  "pool.multiNodePlaced": "These cores land on {n} nodes.",
   "verdict.now": "Available",
   "verdict.queue": "Will queue",
   "pool.queueFactAhead": "the free {free} goes to {n} queued jobs ahead first",

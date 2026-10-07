@@ -27,6 +27,7 @@ import {
   cpuProbeRows,
   cpuStartLimits,
   cpuStartMemMb,
+  cpuPlacedNodes,
   liveCpuStart,
   type CpuProbeState,
 } from "@/lib/cpu-probes";
@@ -290,6 +291,10 @@ export function RequestPanel({ pool, t }: { pool: Pool; t: TFn }) {
   // the scatter note is about the implicit multi-node DEFAULT — once the
   // user pins -N themselves it describes a state they already left
   const multiNodeCpuPolicy = !isGpu && multiNodePolicy && !nodeCount;
+  // without -N: how many nodes the cores land on now, said only when several
+  const placedNodes = multiNodeCpuPolicy && snap
+    ? cpuPlacedNodes(snap, partition, { cores: coreCount || (overflowPinned ? defCores : 0), memMb: memOverrideMb, timeSec: verdictSec || undefined })
+    : 0;
   const nodeOptions = nodeLimit > 0 ? numberOptions(nodeLimit, [1, 2, 3, 4, 8, 16, 32]) : [];
 
   // ---- the request the sliders show (unset fields show their default) -------
@@ -937,8 +942,8 @@ export function RequestPanel({ pool, t }: { pool: Pool; t: TFn }) {
                   />
                 </div>
                 {/* what -N means here, for the state it is in */}
-                {(nodeCount || multiNodeCpuPolicy) && (
-                  <FieldNote>{nodeCount ? t("pool.nodeRequestHint") : t("pool.multiNodeHint")}</FieldNote>
+                {(nodeCount || placedNodes > 1) && (
+                  <FieldNote>{nodeCount ? t("pool.nodeRequestHint") : t("pool.multiNodePlaced", { n: placedNodes })}</FieldNote>
                 )}
               </div>
             )}

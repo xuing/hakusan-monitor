@@ -237,7 +237,7 @@ export const zh: Record<TranslationKey, string> = {
   "pool.defaultOverflowSplit": "不写 -n {n} 会被拆到 {nodes} 个节点上。",
   "pool.defaultOverflowSplitGpu": "不写 -n {n} 会被拆到 {nodes} 个节点上，并多占 {gpus} 张 GPU。",
   "pool.defaultOverflowRefused": "该池只有一个节点，不写 -n {n} 会被 Slurm 拒收。",
-  "pool.multiNodeHint": "不写 -N 时，多节点分区可能把这些核拆到多台节点上。",
+  "pool.multiNodePlaced": "这些核会分到 {n} 台节点上。",
   "verdict.now": "可申请",
   "verdict.queue": "会排队",
   "pool.queueFactAhead": "空闲的 {free} 会先分给前面 {n} 个排队作业",

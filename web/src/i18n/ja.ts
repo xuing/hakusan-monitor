@@ -237,7 +237,7 @@ export const ja: Record<TranslationKey, string> = {
   "pool.defaultOverflowSplit": "-n {n} を付けないと {nodes} ノードに分割されます。",
   "pool.defaultOverflowSplitGpu": "-n {n} を付けないと {nodes} ノードに分割され、GPU を {gpus} 枚余分に確保します。",
   "pool.defaultOverflowRefused": "このプールはノードが 1 台のみのため、-n {n} を付けないと Slurm に拒否されます。",
-  "pool.multiNodeHint": "-N を省くと、複数ノードのパーティションはコアを複数ノードに分けることがあります。",
+  "pool.multiNodePlaced": "このコアは {n} 台のノードに分かれます。",
   "verdict.now": "確保可",
   "verdict.queue": "待ちになる",
   "pool.queueFactAhead": "空いている {free} は先に待っている {n} 件に割り当てられます",

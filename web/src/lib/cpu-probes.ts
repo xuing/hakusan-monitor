@@ -196,6 +196,11 @@ export function cpuStartMemMb(snap: Snapshot, partition: string, cores: number, 
   return Math.max(0, mem);
 }
 
+/** How many nodes the request lands on now (0 = it queues). */
+export function cpuPlacedNodes(snap: Snapshot, partition: string, req: CpuRequest): number {
+  return placeNow(snap, partition, req)?.length ?? 0;
+}
+
 /** True when the default-memory request for `cores` (no -N, no --mem) would
  *  land on more than one node: each node then gets DefMemPerCPU x the cores
  *  placed there, and no one per-node --mem value describes it. */
