@@ -24,6 +24,8 @@ export interface PoolGpu {
   used: number;
   down: number;
   reserved?: number;
+  /** idle GPUs on a node whose every core is allocated: they wait for a core */
+  short?: number;
   free: number;
   maint: boolean;
   util: number;
@@ -54,7 +56,7 @@ export interface Partition {
   nodes: number;
   pool: string | null;
   cpus: { total: number; alloc: number; free: number; unavailable?: number; util: number };
-  gpu: { total: number; used: number; down: number; reserved?: number; free: number; util: number } | null;
+  gpu: { total: number; used: number; down: number; reserved?: number; short?: number; free: number; util: number } | null;
   /** a job queued to several partitions counts in each */
   jobs: { running: number; pending: number };
   spec: { cores_per_node: number; mem_per_node: number; gpu_per_node: number };

@@ -56,8 +56,8 @@ export const analyticsJa: Record<AnalyticsKey, string> = {
 
   "an.free.title.gpu": "GPU が空く時間帯",
   "an.free.title.node": "ノードが丸ごと空く時間帯",
-  "an.free.hint.gpu": "このサイトの定期サンプリングから。各マスは、その時間帯のサンプルのうち、未割当・稼働中・スケジューラの予約なしの GPU が 1 枚以上あった割合。そのノードに CPU コアとメモリが十分残っているかは判定していません。",
-  "an.free.hint.node": "このサイトの定期サンプリングから。各マスは、その時間帯のサンプルのうち、完全に空いたノードが 1 台以上あった割合。",
+  "an.free.hint.gpu": "このサイトの定期サンプリングから：その時間帯に、ジョブが使える GPU（未割当・稼働中・予約なし、ノードに空きコアあり）が 1 枚以上あったサンプルの割合。",
+  "an.free.hint.node": "このサイトの定期サンプリングから：その時間帯に、予約されていない完全に空いたノードが 1 台以上あったサンプルの割合。",
   "an.free.extra": "サイトのサンプル · {since} から",
   "an.free.finding": "{pool} は平日 {best}に{thing}がある時間が最も長く（{a}）、{worst}が最も短い（{b}）。週末の平均は {c}。",
   "an.free.thing.gpu": "空き GPU",

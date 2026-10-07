@@ -111,6 +111,21 @@ export function poolContenders(snap: QueueInput, poolId: string): Waiter[] {
     && (w.placed ? partPool[w.placed] === poolId : w.open.some((p) => partPool[p] === poolId)));
 }
 
+/** How long a job may run on this pool's PLANNED nodes from now (s), until
+ *  the first of them is booked (less the backfill margin); null when the
+ *  snapshot shows no booking for them. One number for every "reserved" label. */
+export function heldWindowSec(snap: Snapshot, poolId: string): number | null {
+  const q = queueModel(snap);
+  const nowMs = snap.generated_at * 1000;
+  const starts = snap.nodes
+    .filter((n) => n.pool === poolId && nodeIsBackfillCandidate(n))
+    .map((n) => q.bookings.get(n.name)?.find((at) => at > nowMs))
+    .filter((at): at is number => at !== undefined);
+  if (!starts.length) return null;
+  const sec = (Math.min(...starts) - BACKFILL_MARGIN_MS - nowMs) / 1000;
+  return sec > 0 ? sec : null;
+}
+
 /** Every pending job listing a partition of this pool. */
 export function poolWaiters(snap: QueueInput, poolId: string): Waiter[] {
   return queueModel(snap).waiters.filter((w) => partitionsOf(w.job).some((p) => snap.part_pool[p] === poolId));

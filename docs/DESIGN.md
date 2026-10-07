@@ -46,9 +46,16 @@ login-node /proc, df, iostat, ps ─▶ login_nodes.py ─▶ store.py: login_sa
   then busy states, then scheduler holds. An idle node under
   `PLANNED`/`RESERVED` is held, not free. `is_schedulable` is the one test
   for "a new job may land here".
-- **Idle is not free.** A GPU on a drained node or a scheduler-held node is
-  unused but not available: the backend reports such GPUs as `down` or
-  `reserved`, and only `free` is ever labelled free.
+- **Idle is not free.** Unused capacity is one of three things, the same
+  on every card, total and history:
+  - *offline* (`down`): the node needs an operator (down, drained,
+    maintenance);
+  - *reserved* (`reserved`): the node is booked for a queued job (PLANNED);
+    a job that ends before the booking may use it, and the pool card says
+    how long that is;
+  - *free*: any job can take it now. An idle GPU on a node whose every core
+    is allocated is `short`, not free: it waits for a core.
+  Zero counts are not shown.
 - **Times stay in the cluster's zone.** Slurm prints local times without an
   offset. The UI shows them as printed and computes with
   `lib/cluster-time.ts`, which reads them in `HM_CLUSTER_TZ` (sent with
@@ -204,14 +211,6 @@ Rules learned from shipped bugs, each pinned by a test:
   Hidden=YES partitions and nodes that only they reach: on Hakusan RTX and
   SEMINAR on `lcpcc-rp6kg01` (16 RTX PRO 6000 slices). Their jobs still
   appear in squeue, without a pool.
-- **Free totals count PLANNED capacity as held.** Pool and partition
-  aggregates (free cores, free GPUs, available and idle nodes, the
-  Analytics "free" history) leave out booked nodes, though a job that ends
-  before the booking or outranks the booked job can use them; the verdicts
-  apply that rule, the totals do not.
-- **An idle GPU on an ALLOCATED node counts as free** (`gpu.free`), though no
-  job can take it until a core frees up; the GPU blocks show it as short of
-  CPU. No such node exists today.
 - **Reservations are not read** (`scontrol show res`); a reservation's
   nodes read as held for everyone. None exist today.
 - **A multi-partition job has one priority in squeue**, while Slurm ranks

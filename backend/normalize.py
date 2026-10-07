@@ -84,13 +84,12 @@ def is_schedulable(states):
 
 
 def idle_gpu_bucket(states):
-    """Where a node's idle GPUs go when they are not free capacity.
+    """Where a node's idle GPUs go when no job can take them now.
 
     "down": an operator took the node out (needs_attention). "reserved": the
-    scheduler is holding an in-service node (PLANNED/RESERVED/...). None: the
-    GPUs count as free — either the node is schedulable, or it is merely
-    ALLOCATED/COMPLETING with no blocking flag, so its idle GPU is short on
-    CPU rather than held by a reservation that does not exist. Keep in sync
+    scheduler holds the node for a queued job (PLANNED/RESERVED/...).
+    "short": every core is allocated (ALLOCATED means CPUAlloc = CPUEfctv,
+    api/node_info.c), so the GPU waits for a core. None: free. Keep in sync
     with the frontend's nodeIsSchedulerHeld (web/src/lib/derive.ts).
     """
     if is_schedulable(states):
@@ -98,7 +97,9 @@ def idle_gpu_bucket(states):
     if needs_attention(states):
         return "down"
     s = {str(state).upper() for state in states}
-    return "reserved" if s & _BLOCKING_STATES else None
+    if s & _BLOCKING_STATES:
+        return "reserved"
+    return "short" if "ALLOCATED" in s else None
 
 
 def needs_attention(states):
@@ -188,7 +189,7 @@ def normalize(nodes_json, squeue_json, *, site, pool_of=None, cluster="slurm",
                                         nodes=0, cpus_total=0, cpus_alloc=0, other_cores=0,
                                         mem_per_node=0, states=Counter(),
                                         gpu_total=Counter(), gpu_used=Counter(),
-                                        gpu_down=Counter(), gpu_reserved=Counter(),
+                                        gpu_down=Counter(), gpu_reserved=Counter(), gpu_short=Counter(),
                                         available_nodes=0,
                                         down_nodes=0,
                                         parts=set()))
@@ -207,7 +208,7 @@ def normalize(nodes_json, squeue_json, *, site, pool_of=None, cluster="slurm",
             elif not g_tot and (cpus - acpu) > 0:
                 pa["available_nodes"] += 1
         if gpu_bucket_name:
-            gpu_bucket = pa["gpu_down"] if gpu_bucket_name == "down" else pa["gpu_reserved"]
+            gpu_bucket = pa[f"gpu_{gpu_bucket_name}"]
             gpu_bucket += Counter({k: max(v - g_use.get(k, 0), 0)
                                    for k, v in g_tot.items()})
         if not node_up:
@@ -335,6 +336,11 @@ def normalize(nodes_json, squeue_json, *, site, pool_of=None, cluster="slurm",
             for nd_m, _b, _cpus, _acpu, g_tot, g_use in members
             if idle_gpu_bucket(state_list(nd_m)) == "reserved"
         )
+        gpu_short_part = sum(
+            max(sum(g_tot.values()) - sum(g_use.values()), 0)
+            for nd_m, _b, _cpus, _acpu, g_tot, g_use in members
+            if idle_gpu_bucket(state_list(nd_m)) == "short"
+        )
         cpu_util = (ca / ct) if ct else 0.0
         gpu_util = (gu / gt) if gt else 0.0
         states = Counter(m[1] for m in members)              # bucketed node states
@@ -355,8 +361,8 @@ def normalize(nodes_json, squeue_json, *, site, pool_of=None, cluster="slurm",
             "cpus": {"total": ct, "alloc": ca, "free": max(ct - ca - other_c, 0),
                      "unavailable": other_c, "util": round(cpu_util, 3)},
             "gpu": ({"total": gt, "used": gu, "down": gpu_down_part,
-                     "reserved": gpu_reserved_part,
-                     "free": max(gt - gu - gpu_down_part - gpu_reserved_part, 0),
+                     "reserved": gpu_reserved_part, "short": gpu_short_part,
+                     "free": max(gt - gu - gpu_down_part - gpu_reserved_part - gpu_short_part, 0),
                      "util": round(gpu_util, 3)} if gt else None),
             "pool": part_pool.get(p),
             "jobs": {"running": run_by_part.get(p, 0), "pending": pend_by_part.get(p, 0)},
@@ -378,6 +384,7 @@ def normalize(nodes_json, squeue_json, *, site, pool_of=None, cluster="slurm",
         gu = sum(pa["gpu_used"].values())
         gd = sum(pa["gpu_down"].values())
         gr = sum(pa["gpu_reserved"].values())
+        gs = sum(pa["gpu_short"].values())
         st = pa["states"]
         ctot, calloc = pa["cpus_total"], pa["cpus_alloc"]
         is_gpu = pa["kind"] == "gpu"
@@ -385,9 +392,9 @@ def normalize(nodes_json, squeue_json, *, site, pool_of=None, cluster="slurm",
         if gt:
             gtype = pa["gpu_total"].most_common(1)[0][0]
             cat = site.gpu_info(gtype)
-            free_g = max(gt - gu - gd - gr, 0)
+            free_g = max(gt - gu - gd - gr - gs, 0)
             gpu = {"type": gtype, "label": cat["label"], "mem_gb": cat["mem_gb"],
-                   "total": gt, "used": gu, "down": gd, "reserved": gr,
+                   "total": gt, "used": gu, "down": gd, "reserved": gr, "short": gs,
                    "free": free_g,
                    "maint": gd >= gt, "util": round(gu / gt, 3),
                    "next_free": next_free.get(gtype) if gd < gt else None}

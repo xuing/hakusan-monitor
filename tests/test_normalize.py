@@ -121,9 +121,9 @@ class NodeAvailabilityTests(unittest.TestCase):
         self.assertEqual(gpu["free"], 0)
         self.assertEqual(snap["nodes_down"], [])
 
-    def test_idle_gpu_on_allocated_node_is_free_not_reserved(self):
-        # Every core taken, one GPU idle: nothing reserves that GPU, it is just
-        # CPU-short. "reserved" would send users looking for a reservation.
+    def test_idle_gpu_on_allocated_node_is_short_not_free_or_reserved(self):
+        # Every core taken, one GPU idle: no job can take it until a core frees
+        # up (ALLOCATED = CPUAlloc equals CPUEfctv), and nothing reserves it.
         snap = normalize(
             {"nodes": [raw_node(
                 state=["ALLOCATED"], cpus=52, alloc=52,
@@ -133,10 +133,9 @@ class NodeAvailabilityTests(unittest.TestCase):
         )
 
         gpu = snap["pools"][0]["gpu"]
-        self.assertEqual(gpu["reserved"], 0)
-        self.assertEqual(gpu["down"], 0)
-        self.assertEqual(gpu["free"], 1)
-        self.assertEqual(snap["partitions"][0]["gpu"]["reserved"], 0)
+        self.assertEqual((gpu["free"], gpu["short"], gpu["reserved"], gpu["down"]), (0, 1, 0, 0))
+        part = snap["partitions"][0]["gpu"]
+        self.assertEqual((part["free"], part["short"], part["reserved"]), (0, 1, 0))
 
     def test_cpu_breakdown_reconciles(self):
         snap = normalize(

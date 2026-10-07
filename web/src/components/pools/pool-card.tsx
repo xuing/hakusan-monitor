@@ -7,12 +7,13 @@ import { POOL_BORDER, POOL_DOT, POOL_RING, POOL_TEXT } from "@/components/common
 import { UnitBlocks } from "@/components/common/unit-blocks";
 import { barCells } from "@/lib/unit-cells";
 import { Card, CardContent } from "@/components/ui/card";
-import { poolTitle, type TFn } from "@/i18n";
+import { durText, poolTitle, type TFn } from "@/i18n";
 import { unschedulableCores } from "@/lib/derive";
 import { fmtMB, nf } from "@/lib/format";
 import type { GpuAvailabilitySegment } from "@/lib/gpu-availability";
 import { poolGpuAvailability } from "@/lib/gpu-fit";
 import { poolTone } from "@/lib/pool-status";
+import { heldWindowSec } from "@/lib/queue";
 import { cn } from "@/lib/utils";
 import type { Pool, PoolGpu, Snapshot } from "@/types/snapshot";
 import { gpuSegmentLabel, gpuSegmentTextClass } from "@/components/common/gpu-status";
@@ -43,6 +44,9 @@ export function PoolCard({ pool, snap, t }: { pool: Pool; snap: Snapshot; t: TFn
   const free = isGpu ? freeGpu : pool.cores.free;
   const total = isGpu && pool.gpu ? pool.gpu.total : pool.cores.total;
   const cpuHeld = isGpu ? { reserved: 0, down: 0 } : unschedulableCores(snap.nodes, pool.id);
+  // reserved capacity is usable by a job that ends before the booking
+  const window = heldWindowSec(snap, pool.id);
+  const reservedNote = window ? t("pool.reservedWindow", { dur: durText(t, window) }) : "";
 
   return (
     <Card
@@ -82,7 +86,7 @@ export function PoolCard({ pool, snap, t }: { pool: Pool; snap: Snapshot; t: TFn
             {maint ? (
               <span className="text-lg font-semibold text-muted-foreground">{t("pool.maint")}</span>
             ) : isGpu && avail ? (
-              <GpuAvailabilityBreakdown segments={avail.segments} t={t} />
+              <GpuAvailabilityBreakdown segments={avail.segments} reservedNote={reservedNote} t={t} />
             ) : (
               <>
                 <div className="flex flex-wrap items-baseline gap-x-3">
@@ -96,7 +100,9 @@ export function PoolCard({ pool, snap, t }: { pool: Pool; snap: Snapshot; t: TFn
                   {/* held cores are idle and may turn free at the next scheduling
                       pass — say so, or the free count seems to jump at random */}
                   {cpuHeld.reserved > 0 && (
-                    <span className="text-xs text-warn-fg">{t("pool.coresReserved", { n: nf(cpuHeld.reserved) })}</span>
+                    <span className="text-xs text-warn-fg">
+                      {[t("pool.coresReserved", { n: nf(cpuHeld.reserved) }), reservedNote].filter(Boolean).join(" · ")}
+                    </span>
                   )}
                 </div>
                 <div className="text-xs text-muted-foreground">{availableNodesLabel}</div>
@@ -216,9 +222,11 @@ export function DisclosureRow({
 
 function GpuAvailabilityBreakdown({
   segments,
+  reservedNote,
   t,
 }: {
   segments: GpuAvailabilitySegment[];
+  reservedNote: string;
   t: TFn;
 }) {
   return (
@@ -229,7 +237,9 @@ function GpuAvailabilityBreakdown({
             {t("pool.gpuCount", { n: nf(segment.count) })}
           </b>
           <span className="text-xs leading-snug text-muted-foreground">
-            {gpuSegmentLabel(segment.kind, t)}
+            {segment.kind === "reserved" && reservedNote
+              ? `${gpuSegmentLabel(segment.kind, t)} · ${reservedNote}`
+              : gpuSegmentLabel(segment.kind, t)}
           </span>
         </span>
       ))}
