@@ -21,15 +21,6 @@ export const en = {
   "nav.section.raw": "Raw data",
   "nav.section.guide": "Guide",
 
-  "page.overview.desc": "Live load, queue status, and where a job can start right away.",
-  "page.nodes.desc": "Every compute node and its live state.",
-  "page.jobs.desc": "Every job in the queue, running and pending.",
-  "page.partitions.desc": "How much each partition can give you, and whether a job starts right away or queues.",
-  "page.analytics.desc": "Job history: when people submit, how long jobs wait, what they request.",
-  "page.loginNodes.desc": "Login-node load, memory, disk and top processes.",
-  "page.slurm.desc": "You submit jobs on a login node; Slurm runs them on compute nodes.",
-  "page.containers.desc": "Running containers on {siteName} with Singularity.",
-  "page.project.desc": "Visits, how the data is collected, and the cluster policy the dashboard is built on.",
 
   "live.live": "Live",
   "live.polling": "Polling",

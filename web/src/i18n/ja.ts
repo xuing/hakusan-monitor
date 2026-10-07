@@ -20,15 +20,6 @@ export const ja: Record<TranslationKey, string> = {
   "nav.section.raw": "生データ",
   "nav.section.guide": "ガイド",
 
-  "page.overview.desc": "リアルタイムの負荷、キューの状況、すぐに実行できる場所。",
-  "page.nodes.desc": "全計算ノードとそのリアルタイム状態。",
-  "page.jobs.desc": "キュー内の全ジョブ（実行中・実行待ち）。",
-  "page.partitions.desc": "各パーティションで確保できる資源量と、ジョブがすぐに始まるか待ちになるか。",
-  "page.analytics.desc": "ジョブ履歴：いつ投入されるか、どれだけ待つか、何を申請しているか。",
-  "page.loginNodes.desc": "ログインノードの負荷、メモリ、ディスク、上位プロセス。",
-  "page.slurm.desc": "ログインノードでジョブを投入すると、Slurm が計算ノードで実行します。",
-  "page.containers.desc": "{siteName} でのコンテナ実行方法（Singularity）。",
-  "page.project.desc": "アクセス統計、データの取得方法、ダッシュボードが基づくクラスタポリシー。",
 
   "live.live": "ライブ",
   "live.polling": "ポーリング中",

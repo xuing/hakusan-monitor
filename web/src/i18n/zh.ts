@@ -20,15 +20,6 @@ export const zh: Record<TranslationKey, string> = {
   "nav.section.raw": "原始数据",
   "nav.section.guide": "指南",
 
-  "page.overview.desc": "实时负载、排队情况，以及哪里能直接跑。",
-  "page.nodes.desc": "每个计算节点及其实时状态。",
-  "page.jobs.desc": "队列中的所有作业（运行中与排队中）。",
-  "page.partitions.desc": "每个分区能给你多少资源，作业会直接运行还是排队。",
-  "page.analytics.desc": "作业历史：大家什么时候提交、要等多久、怎么申请资源。",
-  "page.loginNodes.desc": "登录节点的负载、内存、磁盘和高占用进程。",
-  "page.slurm.desc": "在登录节点上提交作业，Slurm 把它排到计算节点上运行。",
-  "page.containers.desc": "在 {siteName} 上运行容器的方法（Singularity）。",
-  "page.project.desc": "访问统计、数据怎么采集，以及面板依据的集群策略。",
 
   "live.live": "实时",
   "live.polling": "轮询中",

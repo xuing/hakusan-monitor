@@ -61,7 +61,6 @@ export function Topbar() {
 
         <div className="min-w-0">
           <h1 className="truncate text-base font-semibold">{pageTitle}</h1>
-          <p className="hidden truncate text-xs text-muted-foreground sm:block">{t(current.descKey)}</p>
         </div>
 
         <div className="ml-auto flex items-center gap-3">
