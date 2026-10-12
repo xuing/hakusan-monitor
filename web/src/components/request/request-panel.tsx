@@ -4,7 +4,7 @@
 // lib/cpu-partition, the same the Partitions page reads.
 import { useState } from "react";
 import { Link } from "react-router";
-import { ChevronRight } from "lucide-react";
+import { ChevronRight, CircleHelp } from "lucide-react";
 import { CopyButton } from "@/components/common/copy-button";
 import {
   FieldLabel,
@@ -65,6 +65,7 @@ export function RequestPanel({ pool, t }: { pool: Pool; t: TFn }) {
   // `defaultRequestFit` derives the `-n` that pins the job to one node.
   const base = pool.sample_partition ? { partition: pool.sample_partition } : null;
   const [open, setOpen] = useState(false);
+  const [whereOpen, setWhereOpen] = useState(false);
   const [partChoice, setPartChoice] = useState("");
   const [mode, setMode] = useState<"interactive" | "script">("interactive");
   // interactive has two command forms: plain salloc, or the batch-placeholder
@@ -955,8 +956,25 @@ export function RequestPanel({ pool, t }: { pool: Pool; t: TFn }) {
                 <span aria-hidden className="select-none self-start font-mono text-xs leading-5 text-zinc-500">$</span>
                 <code className={cn("min-w-0 flex-1 overflow-x-auto font-mono text-xs leading-5 text-zinc-100", ptyActive ? "whitespace-pre" : "whitespace-nowrap")}>{cmd}</code>
                 {verdict && <CommandVerdict tone={verdict.tone} label={verdict.label} />}
+                <button
+                  type="button"
+                  onClick={() => setWhereOpen(!whereOpen)}
+                  aria-expanded={whereOpen}
+                  aria-label={t("pool.cmdWhereToggle")}
+                  title={t("pool.cmdWhereToggle")}
+                  className={cn("shrink-0 rounded p-0.5 transition-colors hover:bg-white/10 hover:text-zinc-100", whereOpen ? "text-zinc-100" : "text-zinc-500")}
+                >
+                  <CircleHelp className="h-3.5 w-3.5" />
+                </button>
                 <CopyButton text={cmd} label className="text-zinc-400 hover:bg-white/10 hover:text-zinc-100" />
               </div>
+              {/* hidden by default: only newcomers need to be told where the command runs */}
+              {whereOpen && (
+                <p className="text-xs leading-relaxed text-muted-foreground">
+                  {t("pool.cmdWhere")}{" "}
+                  <Link to="/start#connect" className="whitespace-nowrap text-info-fg hover:underline">{t("pool.cmdWhereLink")}</Link>
+                </p>
+              )}
               {commandReason && <p className="text-xs leading-relaxed text-warn-fg">{commandReason}</p>}
               {probeFailed && <p className="text-xs leading-relaxed text-bad-fg">{probeFailed}</p>}
               {bfTip && bfVariant && (bfVariant !== "script" || bfTip.mem) && (
