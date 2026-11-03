@@ -46,10 +46,11 @@ export default function JobsPage() {
       label: t("jobs.filter.resource"),
       valueLabel: (v) => resourceLabel(v, snap, t),
       groups: poolKindGroups(snap, t),
+      hashKey: "pool",
     },
     { columnId: "state", label: t("jobs.filter.state"), valueLabel: (v) => stateLabel(v, t) },
     { columnId: "partition", label: t("col.partition"), valuesFromRow: (j) => String(j.partition || "").split(",").filter(Boolean) },
-    { columnId: "user_name", label: t("col.user") },
+    { columnId: "user_name", label: t("col.user"), hashKey: "user" },
   ];
 
   return (
@@ -59,6 +60,7 @@ export default function JobsPage() {
       facets={facets}
       initialHidden={[...JOB_HIDDEN, "resource_pool"]}
       pageSize={30}
+      hashState
     />
   );
 }

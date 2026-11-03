@@ -29,9 +29,9 @@ export default function App() {
     <ThemeProvider>
     <I18nProvider>
       <LiveProvider>
-        <ResourceFilterProvider>
         <TooltipProvider delayDuration={0}>
           <BrowserRouter basename={BASE_PATH || undefined}>
+            <ResourceFilterProvider>
             <AppErrorBoundary>
             <Routes>
               <Route element={<AppShell />}>
@@ -119,9 +119,9 @@ export default function App() {
               </Route>
             </Routes>
             </AppErrorBoundary>
+            </ResourceFilterProvider>
           </BrowserRouter>
         </TooltipProvider>
-        </ResourceFilterProvider>
       </LiveProvider>
     </I18nProvider>
     </ThemeProvider>

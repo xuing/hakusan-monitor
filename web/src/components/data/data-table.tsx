@@ -31,6 +31,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
+import { useHashSync } from "@/hooks/use-hash-sync";
 import {
   Table,
   TableBody,
@@ -40,6 +41,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { useT } from "@/i18n";
+import { readHash } from "@/lib/hash-params";
 import { cn } from "@/lib/utils";
 import { dataTableFeatures, type DataTableFeatures } from "./table-features";
 import { normalizeFilter } from "./table-filters";
@@ -51,6 +53,9 @@ export interface DataFacet<T extends RowData> {
   valuesFromRow?: (row: T) => string[];
   /** Quick-select bundles shown above the value list (e.g. "All GPU" -> every GPU pool). */
   groups?: { label: string; values: string[] }[];
+  /** URL hash key for this facet when the table keeps its filters in the hash
+   *  (defaults to columnId) — lets every page say `#pool=…` for the same thing. */
+  hashKey?: string;
 }
 
 interface DataTableProps<T extends RowData> {
@@ -60,6 +65,17 @@ interface DataTableProps<T extends RowData> {
   initialHidden?: string[];
   pageSize?: number;
   renderSubRow?: (row: T) => ReactNode;
+  /** keep the search text (`#q=`) and facet selections in the URL hash */
+  hashState?: boolean;
+}
+
+const SEARCH_KEY = "q";
+
+function filtersFromHash<T extends RowData>(params: URLSearchParams, facets: DataFacet<T>[]): ColumnFiltersState {
+  return facets.flatMap((f) => {
+    const values = params.getAll(f.hashKey ?? f.columnId).filter(Boolean);
+    return values.length ? [{ id: f.columnId, value: values }] : [];
+  });
 }
 
 export function DataTable<T extends RowData>({
@@ -69,11 +85,16 @@ export function DataTable<T extends RowData>({
   initialHidden = [],
   pageSize = 30,
   renderSubRow,
+  hashState = false,
 }: DataTableProps<T>) {
   const t = useT();
   const [sorting, setSorting] = useState<SortingState>([]);
-  const [globalFilter, setGlobalFilter] = useState("");
-  const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([]);
+  const [globalFilter, setGlobalFilter] = useState(() =>
+    hashState ? readHash(window.location.hash).get(SEARCH_KEY) ?? "" : "",
+  );
+  const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>(() =>
+    hashState ? filtersFromHash(readHash(window.location.hash), facets) : [],
+  );
   const [expanded, setExpanded] = useState<ExpandedState>({});
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize });
   const [columnVisibility, setColumnVisibility] = useState<ColumnVisibilityState>(
@@ -127,6 +148,21 @@ export function DataTable<T extends RowData>({
     autoResetPageIndex: false,
     autoResetExpanded: false,
   });
+
+  useHashSync(
+    hashState,
+    {
+      [SEARCH_KEY]: globalFilter.trim() ? globalFilter : null,
+      ...Object.fromEntries(
+        facets.map((f) => [f.hashKey ?? f.columnId, normalizeFilter(columnFilters.find((c) => c.id === f.columnId)?.value)]),
+      ),
+    },
+    (params) => {
+      setGlobalFilter(params.get(SEARCH_KEY) ?? "");
+      setColumnFilters(filtersFromHash(params, facets));
+      table.setPageIndex(0);
+    },
+  );
 
   const filteredCount = table.getFilteredRowModel().rows.length;
   const hasFilters = globalFilter.trim() || columnFilters.length > 0;

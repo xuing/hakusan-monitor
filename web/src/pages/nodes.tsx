@@ -29,7 +29,7 @@ export default function NodesPage() {
   const facets: DataFacet<RawNode>[] = [
     { columnId: "pool", label: t("jobs.filter.resource"), valueLabel: (v) => poolLabel(t, v), groups: poolKindGroups(snap, t) },
     { columnId: "state", label: t("col.state"), valuesFromRow: (node) => node.state },
-    { columnId: "partitions", label: t("col.partition"), valuesFromRow: (node) => node.partitions },
+    { columnId: "partitions", label: t("col.partition"), valuesFromRow: (node) => node.partitions, hashKey: "partition" },
   ];
 
   return (
@@ -40,6 +40,7 @@ export default function NodesPage() {
       initialHidden={NODE_HIDDEN}
       pageSize={30}
       renderSubRow={(node) => <NodeJobs snap={snap} node={node} t={t} />}
+      hashState
     />
   );
 }

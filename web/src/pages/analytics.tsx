@@ -1,6 +1,7 @@
 import { Fragment, useMemo, useState } from "react";
 import { Cpu, Gpu } from "lucide-react";
-import { useSearchParams } from "react-router";
+import { useLocation, useNavigate } from "react-router";
+import { readHash, writeHash } from "@/lib/hash-params";
 import "@/components/analytics/analytics.css";
 import { AnalyticsKpis } from "@/components/analytics/kpis";
 import { InteractiveSessions, JobShapes, LimitAccuracy, LimitVsStart } from "@/components/analytics/request-cards";
@@ -36,8 +37,12 @@ function metaOf(data: AnalyticsPayload): AnalyticsMeta {
 
 export default function AnalyticsPage() {
   const t = useT();
-  const [params, setParams] = useSearchParams();
-  const kind: AnalyticsKind = params.get("view") === "cpu" ? "cpu" : "gpu";
+  const { hash, search } = useLocation();
+  const navigate = useNavigate();
+  // `#view=cpu`, like the filters on the other pages; the GPU view is the default
+  // (older links used `?view=cpu`)
+  const view0 = readHash(hash).get("view") ?? new URLSearchParams(search).get("view");
+  const kind: AnalyticsKind = view0 === "cpu" ? "cpu" : "gpu";
   // poll quickly until the first payload is ready, then every 5 minutes
   const [ready, setReady] = useState(false);
   const { data, loading, error } = useApi(
@@ -118,7 +123,7 @@ export default function AnalyticsPage() {
           value={kind}
           // the scroll position stays: both views have the same cards in the
           // same order, so a switch compares the card you are looking at
-          onChange={(next) => setParams(next === "gpu" ? {} : { view: next }, { replace: true })}
+          onChange={(next) => navigate({ hash: writeHash(hash, { view: next === "gpu" ? null : next }) }, { replace: true })}
           options={[
             { value: "gpu", label: <><Gpu aria-hidden className="h-4 w-4" />{t("an.unit.gpu")}</> },
             { value: "cpu", label: <><Cpu aria-hidden className="h-4 w-4" />{t("an.unit.cpu")}</> },
