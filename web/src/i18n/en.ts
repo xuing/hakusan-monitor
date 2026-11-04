@@ -22,6 +22,7 @@ export const en = {
   "nav.section.monitor": "Monitor",
   "nav.section.raw": "Raw data",
   "nav.section.guide": "Guide",
+  "lang.auto": "Browser language",
 
 
   "live.live": "Live",

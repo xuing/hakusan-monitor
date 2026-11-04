@@ -72,6 +72,25 @@
       "Meiryo UI", "Meiryo", "Noto Sans CJK JP", "Source Han Sans JP", "Noto Sans JP", sans-serif;
   }
 
+  /* after :lang(zh), which zh-TW also matches */
+  html:lang(zh-TW) {
+    --font-sans: Inter, system-ui, "PingFang TC", "Microsoft JhengHei UI", "Microsoft JhengHei",
+      "Noto Sans CJK TC", "Source Han Sans TC", "Noto Sans TC", sans-serif;
+  }
+
+  html:lang(ko) {
+    --font-sans: Inter, system-ui, "Apple SD Gothic Neo", "Malgun Gothic", "Noto Sans CJK KR",
+      "Source Han Sans KR", "Noto Sans KR", sans-serif;
+  }
+
+  /* Arabic, Urdu: the page runs right to left; commands and paths stay
+     left to right inside it */
+  [dir="rtl"] :is(code, pre, kbd, samp) {
+    direction: ltr;
+    unicode-bidi: isolate;
+  }
+
+
   /* dark theme */
   .dark {
     color-scheme: dark;
@@ -152,13 +171,6 @@
   html:lang(zh) body {
     line-break: strict;
   }
-  /* letter-spacing is for Latin caps; it only pries Han characters apart */
-  html:lang(zh) .tracking-wide,
-  html:lang(ja) .tracking-wide,
-  html:lang(zh) .tracking-wider,
-  html:lang(ja) .tracking-wider {
-    letter-spacing: normal;
-  }
   ::-webkit-scrollbar {
     width: 10px;
     height: 10px;
@@ -191,5 +203,22 @@
   .subtle-scroll:hover::-webkit-scrollbar-thumb,
   .subtle-scroll:focus-within::-webkit-scrollbar-thumb {
     background: hsl(var(--border));
+  }
+}
+
+/* per-language overrides of utility classes: a rule in the base layer loses
+   to any utility, whatever its specificity */
+@layer utilities {
+  /* letter-spacing is for Latin caps; it pries Han, Hangul and Brahmic
+     letters apart and breaks the joins of Arabic script */
+  html:is(:lang(zh), :lang(ja), :lang(ko), :lang(ar), :lang(ur), :lang(th), :lang(hi), :lang(bn), :lang(si), :lang(my))
+    :is(.tracking-wide, .tracking-wider) {
+    letter-spacing: normal;
+  }
+  /* the generic monospace fallback (DejaVu Sans Mono on Linux) has Arabic
+     letters but does not join them: take Arabic from a text face */
+  html:is(:lang(ar), :lang(ur)) .font-mono {
+    font-family: ui-monospace, "JetBrains Mono", "SFMono-Regular", Menlo, Consolas, "Noto Sans Arabic",
+      "Noto Naskh Arabic", "Segoe UI", "Geeza Pro", Tahoma, "DejaVu Sans", sans-serif;
   }
 }

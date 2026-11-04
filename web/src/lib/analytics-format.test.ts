@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { DICTS, type TFn, type TranslationKey } from "@/i18n/core";
+import { beforeAll, describe, expect, it } from "vitest";
+import { DICTS, loadLang, type TFn, type TranslationKey } from "@/i18n/core";
 import {
   bestWindow,
   concentrationFinding,
@@ -16,10 +16,11 @@ import {
 import type { AnalyticsView } from "@/types/analytics";
 
 const tFor = (lang: "en" | "zh" | "ja"): TFn => (key: TranslationKey, vars) => {
-  let s = DICTS[lang][key] ?? key;
+  let s = DICTS[lang]![key] ?? key;
   for (const k in vars ?? {}) s = s.replaceAll(`{${k}}`, String(vars![k]));
   return s;
 };
+beforeAll(() => Promise.all([loadLang("zh"), loadLang("ja")]));
 const zh = tFor("zh");
 const en = tFor("en");
 
@@ -119,8 +120,8 @@ describe("dictionaries", () => {
     const holes = (s: string) => [...s.matchAll(/\{(\w+)\}/g)].map((m) => m[1]).sort().join(",");
     for (const lang of ["zh", "ja"] as const) {
       for (const k of keys) {
-        expect(DICTS[lang][k], `${lang} ${k}`).toBeTruthy();
-        expect(holes(DICTS[lang][k]), `${lang} ${k}`).toBe(holes(DICTS.en[k]));
+        expect(DICTS[lang]![k], `${lang} ${k}`).toBeTruthy();
+        expect(holes(DICTS[lang]![k]), `${lang} ${k}`).toBe(holes(DICTS.en[k]));
       }
     }
   });

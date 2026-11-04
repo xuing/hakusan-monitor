@@ -26,7 +26,7 @@ export function AnCard({
       title={
         <span className="inline-flex items-center">
           {title}
-          <HoverHint text={hint} className="ml-0.5" />
+          <HoverHint text={hint} className="ms-0.5" />
         </span>
       }
       extra={extra}
@@ -77,8 +77,8 @@ export function StackedBar({ segments, className }: { segments: Segment[]; class
             title={s.title}
             className={cn(
               "flex min-w-0 items-center justify-center whitespace-nowrap text-xs font-semibold",
-              i === 0 && "rounded-l-[4px]",
-              i === shown.length - 1 && "rounded-r-[4px]",
+              i === 0 && "rounded-s-[4px]",
+              i === shown.length - 1 && "rounded-e-[4px]",
             )}
             style={{ flex: `${s.value} 1 0px`, background: s.color, color: s.ink }}
           >

@@ -203,7 +203,7 @@ export function DisclosureRow({
       onClick={onToggle}
       aria-expanded={open}
       className={cn(
-        "flex min-h-8 w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-left text-xs text-muted-foreground outline-none transition-colors",
+        "flex min-h-8 w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-start text-xs text-muted-foreground outline-none transition-colors",
         "hover:bg-muted/60 hover:text-foreground focus-visible:ring-2 focus-visible:ring-primary/45",
         open && "text-foreground",
       )}
@@ -211,7 +211,7 @@ export function DisclosureRow({
       <ChevronRight className={cn("h-3.5 w-3.5 shrink-0 transition-transform duration-150", open && "rotate-90")} />
       <span className="font-medium text-foreground/85">{label}</span>
       {count !== undefined && <span className="tnum font-mono">{count}</span>}
-      {summary && <span className="ml-auto flex min-w-0 items-center gap-1.5 pl-2">{summary}</span>}
+      {summary && <span className="ms-auto flex min-w-0 items-center gap-1.5 ps-2">{summary}</span>}
     </button>
   );
 }

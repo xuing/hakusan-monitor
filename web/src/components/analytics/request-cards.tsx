@@ -65,7 +65,7 @@ export function LimitAccuracy({ view }: { view: AnalyticsView }) {
       </div>
       {lim.top.length > 0 && (
         <div className="mt-auto flex flex-wrap items-center gap-1.5">
-          <span className="mr-1 text-xs text-muted-foreground">{t("an.limit.top")}</span>
+          <span className="me-1 text-xs text-muted-foreground">{t("an.limit.top")}</span>
           {lim.top.map((x) => (
             <span key={x.minutes} className="inline-flex items-baseline gap-1.5 rounded-md border border-border bg-muted/50 px-2 py-0.5 text-[0.8125rem]">
               {durText(t, x.minutes * 60)}
@@ -98,9 +98,9 @@ export function LimitVsStart({ view, meta }: { view: AnalyticsView; meta: Analyt
         b: pctText(f.b),
       })}
     >
-      <div className="flex min-h-[188px] flex-1 flex-col">
+      <div dir="ltr" className="flex min-h-[188px] flex-1 flex-col">
         <div className="mb-2 text-xs text-muted-foreground">{t("an.ls.y")}</div>
-        <div className="relative ml-10 flex-1 border-b border-[var(--an-axis)]">
+        <div className="relative ms-10 flex-1 border-b border-[var(--an-axis)]">
           {GRID.map((g) => (
             <div key={g}>
               <div className="absolute inset-x-0 border-t border-[var(--an-grid)]" style={{ top: `${100 - g}%` }} />
@@ -130,12 +130,12 @@ export function LimitVsStart({ view, meta }: { view: AnalyticsView; meta: Analyt
             ))}
           </div>
         </div>
-        <div className="ml-10 flex pt-1.5">
+        <div className="ms-10 flex pt-1.5">
           {LS_KEYS.map((key) => (
             <span key={key} className="min-w-0 flex-1 text-center text-xs text-muted-foreground">{t(key)}</span>
           ))}
         </div>
-        <div className="ml-10 mt-0.5 text-center text-xs text-muted-foreground">{t("an.ls.x")}</div>
+        <div className="ms-10 mt-0.5 text-center text-xs text-muted-foreground">{t("an.ls.x")}</div>
       </div>
       <div className="flex flex-wrap gap-x-4 gap-y-1">
         {pools.map((p) => {
@@ -191,8 +191,8 @@ export function JobShapes({ view, meta }: { view: AnalyticsView; meta: Analytics
       <div className="grid items-center gap-x-3 gap-y-2.5" style={{ gridTemplateColumns: cols }}>
         <span className="text-xs text-muted-foreground">{t(gpu ? "an.col.pool.gpu" : "an.col.pool.cpu")}</span>
         <span className="text-xs text-muted-foreground">{t(gpu ? "an.shape.col.gpu" : "an.shape.col.cpu")}</span>
-        {gpu && <span className="text-right text-xs text-muted-foreground">{t("an.shape.col.cpg")}</span>}
-        <span className="text-right text-xs text-muted-foreground">{t(gpu ? "an.shape.col.mpg" : "an.shape.col.mpc")}</span>
+        {gpu && <span className="text-end text-xs text-muted-foreground">{t("an.shape.col.cpg")}</span>}
+        <span className="text-end text-xs text-muted-foreground">{t(gpu ? "an.shape.col.mpg" : "an.shape.col.mpc")}</span>
         {shapes.map((p) => (
           <ShapeRow key={p.id} view={view} p={p} labels={labels} steps={steps} gpu={gpu} />
         ))}
@@ -227,13 +227,13 @@ function ShapeRow({ view, p, labels, steps, gpu }: {
         }))}
       />
       {gpu && (
-        <span className="tnum text-right text-[0.8125rem] leading-4">
+        <span className="tnum text-end text-[0.8125rem] leading-4">
           {nf(p.cpus_per_unit?.[0] ?? 0)}
           <br />
           <span className="whitespace-nowrap text-xs text-muted-foreground">{t("an.shape.p90", { v: nf(p.cpus_per_unit?.[1] ?? 0) })}</span>
         </span>
       )}
-      <span className="tnum whitespace-nowrap text-right text-[0.8125rem] leading-4">
+      <span className="tnum whitespace-nowrap text-end text-[0.8125rem] leading-4">
         {memText(p.mem_gb_per_unit[0])}
         <br />
         <span className="whitespace-nowrap text-xs text-muted-foreground">{t("an.shape.p90", { v: memText(p.mem_gb_per_unit[1]) })}</span>
@@ -267,8 +267,8 @@ export function InteractiveSessions({ view, meta }: { view: AnalyticsView; meta:
       <div className="grid items-center gap-x-3 gap-y-2.5" style={{ gridTemplateColumns: "auto minmax(4rem, 1fr) 3.75rem 3.75rem" }}>
         <span className="self-end text-xs text-muted-foreground">{t(view.kind === "gpu" ? "an.col.pool.gpu" : "an.col.pool.cpu")}</span>
         <span className="self-end text-xs text-muted-foreground">{t("an.int.col.end")}</span>
-        <span className="self-end text-right text-xs leading-tight text-muted-foreground">{t("an.int.col.share")}</span>
-        <span className="self-end text-right text-xs leading-tight text-muted-foreground">{tUnit(t, "an.int.col.hours", { unitH: uh })}</span>
+        <span className="self-end text-end text-xs leading-tight text-muted-foreground">{t("an.int.col.share")}</span>
+        <span className="self-end text-end text-xs leading-tight text-muted-foreground">{tUnit(t, "an.int.col.hours", { unitH: uh })}</span>
         {pools.map((p) => (
           <InteractiveRow key={p.id} view={view} p={p} />
         ))}
@@ -295,8 +295,8 @@ function InteractiveRow({ view, p }: { view: AnalyticsView; p: AnalyticsView["in
           title: t("an.int.seg", { pool: poolLabel(t, p.id), end: t(END_KEYS[i]), p: pctText(v), s: nf(p.sessions) }),
         }))}
       />
-      <span className="tnum text-right text-[0.8125rem]">{pctText(p.share_submit)}</span>
-      <span className="tnum text-right text-[0.8125rem]">{pctText(p.share_hours)}</span>
+      <span className="tnum text-end text-[0.8125rem]">{pctText(p.share_submit)}</span>
+      <span className="tnum text-end text-[0.8125rem]">{pctText(p.share_hours)}</span>
     </>
   );
 }

@@ -21,6 +21,7 @@ export const zh: Record<TranslationKey, string> = {
   "nav.section.monitor": "监控",
   "nav.section.raw": "原始数据",
   "nav.section.guide": "指南",
+  "lang.auto": "跟随浏览器",
 
 
   "live.live": "实时",

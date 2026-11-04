@@ -62,7 +62,7 @@ export function QueueInsights() {
             {reasonEntries.map(([reason, n]) => (
               <div
                 key={reason}
-                className="h-full first:rounded-l-full last:rounded-r-full"
+                className="h-full first:rounded-s-full last:rounded-e-full"
                 style={{ width: `${(n / reasonTotal) * 100}%`, minWidth: "3px", backgroundColor: reasonColor(reason) }}
                 title={`${reasonLabel(t, reason)} · ${n}`}
               />
@@ -88,7 +88,7 @@ export function QueueInsights() {
           <div className="max-h-72 overflow-auto">
             <table className="w-full text-xs">
               <thead>
-                <tr className="sticky top-0 bg-card text-left text-muted-foreground">
+                <tr className="sticky top-0 bg-card text-start text-muted-foreground">
                   <Th>{t("col.partition")}</Th>
                   <Th>{t("col.job")}</Th>
                   <Th>{t("col.user")}</Th>
@@ -161,8 +161,8 @@ function Count({ dot, n, label }: { dot: string; n: number; label: string }) {
 }
 
 const Th = ({ children }: { children: ReactNode }) => (
-  <th className="whitespace-nowrap pb-1.5 pr-3 font-medium">{children}</th>
+  <th className="whitespace-nowrap pb-1.5 pe-3 font-medium">{children}</th>
 );
 const Td = ({ children, className }: { children: ReactNode; className?: string }) => (
-  <td className={cn("whitespace-nowrap py-1.5 pr-3", className)}>{children}</td>
+  <td className={cn("whitespace-nowrap py-1.5 pe-3", className)}>{children}</td>
 );

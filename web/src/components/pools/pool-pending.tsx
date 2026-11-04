@@ -14,7 +14,7 @@ export function PendingJobs({ pool, t }: { pool: Pool; t: TFn }) {
   const list = turnOrder(poolWaiters(snap, pool.id)).map((w) => w.job);
   if (list.length === 0) return null;
   return (
-    <div className="mt-2 max-h-64 space-y-1 overflow-y-auto pr-1">
+    <div className="mt-2 max-h-64 space-y-1 overflow-y-auto pe-1">
       {list.map((j) => (
         <PendingJobRow key={String(j.job_id)} job={j} t={t} />
       ))}

@@ -97,6 +97,8 @@ class HakusanSiteTests(unittest.TestCase):
         self.assertEqual(out["strings"]["zh"]["pool.vm-cpu"], "VM-CPU (云)")
         self.assertEqual(out["strings"]["ja"]["pool.a40"], "A40")
         self.assertTrue(out["pages"]["slurm_guide"])
+        self.assertEqual(out["strings"]["ko"]["pool.vm-cpu"], "VM-CPU (클라우드)")
+        self.assertEqual(out["strings"]["ar"]["app.subtitle"], "عنقود JAIST HPC")
 
     def test_access_turns_on_the_basics_page(self):
         out = site_config.load(HAKUSAN_PATH).public(None)

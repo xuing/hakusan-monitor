@@ -29,7 +29,7 @@ export default function JobsPage() {
             e.stopPropagation();
             setSingleFacet(table, "resource_pool", row.original.resource_pool);
           }}
-          className="rounded px-1 py-0.5 text-left text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+          className="rounded px-1 py-0.5 text-start text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
         >
           {resourceLabel(row.original.resource_pool, snap, t)}
         </button>

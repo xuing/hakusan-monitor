@@ -88,7 +88,7 @@ function RawBlock({ title, meta, text }: { title: string; meta?: ReactNode; text
       <summary className="flex cursor-pointer flex-wrap items-center gap-x-2 gap-y-0.5 px-3 py-2 text-sm marker:text-muted-foreground">
         <span className="font-mono text-xs font-semibold">{title}</span>
         {meta && <span className="font-mono text-xs text-muted-foreground">{meta}</span>}
-        <span className="ml-auto font-mono text-xs text-muted-foreground">{t("guide.policy.lines", { n: nf(lines) })}</span>
+        <span className="ms-auto font-mono text-xs text-muted-foreground">{t("guide.policy.lines", { n: nf(lines) })}</span>
       </summary>
       <div className="border-t border-border/60 px-3 pb-3 pt-2">
         <div className="mb-1 flex justify-end">
@@ -194,7 +194,7 @@ function CollapsedCard({ title, status, children }: { title: string; status: Rea
         <summary className="flex cursor-pointer list-none flex-wrap items-center gap-x-2 gap-y-1 px-4 py-3 [&::-webkit-details-marker]:hidden">
           <ChevronRight className="h-3.5 w-3.5 text-muted-foreground transition-transform group-open:rotate-90" />
           <h2 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{title}</h2>
-          <span className="ml-auto font-mono text-xs">{status}</span>
+          <span className="ms-auto font-mono text-xs">{status}</span>
         </summary>
         <div className="border-t border-border/60 px-4 pb-4 pt-3">{children}</div>
       </details>

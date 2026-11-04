@@ -114,7 +114,7 @@ export function ContainersPanel() {
       <div className="mb-4 grid gap-2 md:grid-cols-2">
         {WORKFLOW.map((key, i) => (
           <div key={key} className="rounded-lg border border-border bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
-            <span className="mr-2 font-mono text-xs text-info-fg">{i + 1}</span>
+            <span className="me-2 font-mono text-xs text-info-fg">{i + 1}</span>
             {t(key)}
           </div>
         ))}

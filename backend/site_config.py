@@ -164,9 +164,12 @@ class Site:
         """/api/site: names, links, page switches, partition order and the
         site's own strings (merged over the built-in ones per language)."""
         cluster = self.cluster_name(policy)
-        strings = {lang: dict(((self.cfg.get("strings") or {}).get(lang)) or {}) for lang in LANGS}
+        own = self.cfg.get("strings") or {}
+        label_langs = [lang for label in self.pool_labels.values() if isinstance(label, dict) for lang in label]
+        langs = list(dict.fromkeys([*LANGS, *own, *label_langs]))
+        strings = {lang: dict(own.get(lang) or {}) for lang in langs}
         for pid, label in self.pool_labels.items():
-            for lang in LANGS:
+            for lang in langs:
                 text = (label.get(lang) or label.get("en")) if isinstance(label, dict) else label
                 if text:
                     strings[lang].setdefault(f"pool.{pid}", text)

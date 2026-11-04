@@ -64,7 +64,7 @@ export function PoolDetail() {
       <div className="mb-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">
         {t("section.poolNodes")} ({nodes.length})
       </div>
-      <div className="max-h-80 space-y-1 overflow-y-auto pr-1">
+      <div className="max-h-80 space-y-1 overflow-y-auto pe-1">
         {nodes.map((n) => (
           <NodeRow key={n.name} n={n} />
         ))}
@@ -78,7 +78,7 @@ function NodeRow({ n }: { n: RawNode }) {
     <div className="flex items-center gap-3 rounded-md bg-muted/40 px-2.5 py-1.5 text-xs">
       <span className="w-32 shrink-0 truncate font-mono">{n.name}</span>
       <StateBadges states={n.state} />
-      <div className="ml-auto shrink-0">
+      <div className="ms-auto shrink-0">
         <AllocCell a={n.alloc_cpus} total={n.cpus} />
       </div>
     </div>

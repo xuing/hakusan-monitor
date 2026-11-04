@@ -82,7 +82,7 @@ function NodeJobCard({ job, t }: { job: Occupant; t: TFn }) {
           {fmtCountdown(parseDur(job.time_left))}
         </span>
       </div>
-      <div className="mt-0.5 flex items-center gap-1.5 pl-3 text-xs text-muted-foreground">
+      <div className="mt-0.5 flex items-center gap-1.5 ps-3 text-xs text-muted-foreground">
         <span className={cn("font-medium", fg)}>{nodeJobResources(job, t)}</span>
         <span className="text-muted-foreground/40">·</span>
         <span className="truncate">#{job.job_id}</span>

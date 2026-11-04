@@ -177,13 +177,13 @@ export function DataTable<T extends RowData>({
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-2">
         <div className="relative min-w-[14rem] flex-1 sm:max-w-xs">
-          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Search className="pointer-events-none absolute start-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input
             aria-label={t("table.search")}
             placeholder={t("table.search")}
             value={globalFilter}
             onChange={(e) => setGlobalFilter(e.target.value)}
-            className="h-8 pl-8 text-sm"
+            className="h-8 ps-8 text-sm"
           />
         </div>
 
@@ -198,7 +198,7 @@ export function DataTable<T extends RowData>({
           </Button>
         )}
 
-        <div className="ml-auto flex items-center gap-2">
+        <div className="ms-auto flex items-center gap-2">
           <span className="tnum text-xs text-muted-foreground">{t("table.showing", { n: filteredCount, total: data.length })}</span>
           <ColumnMenu table={table} />
         </div>
@@ -215,7 +215,7 @@ export function DataTable<T extends RowData>({
                       {header.isPlaceholder ? null : header.column.getCanSort() ? (
                         <button
                           type="button"
-                          className="inline-flex items-center gap-1 text-left hover:text-foreground"
+                          className="inline-flex items-center gap-1 text-start hover:text-foreground"
                           onClick={header.column.getToggleSortingHandler()}
                         >
                           <table.FlexRender header={header} />
@@ -266,7 +266,7 @@ export function DataTable<T extends RowData>({
 
       {table.getPageCount() > 1 && (
         <div className="flex items-center justify-end gap-1.5 text-xs text-muted-foreground">
-          <span className="tnum mr-1">
+          <span className="tnum me-1">
             {table.state.pagination.pageIndex + 1} / {table.getPageCount()}
           </span>
           <PageButton label="First page" onClick={() => table.firstPage()} disabled={!table.getCanPreviousPage()}>
@@ -381,7 +381,7 @@ function FacetDropdown<T extends RowData>({ table, facet }: { table: TanStackTab
                   className="text-xs font-medium"
                 >
                   <span className="min-w-0 flex-1 truncate">{group.label}</span>
-                  <span className="ml-3 font-mono text-xs text-muted-foreground">
+                  <span className="ms-3 font-mono text-xs text-muted-foreground">
                     {inGroup.reduce((n, o) => n + o.count, 0)}
                   </span>
                 </DropdownMenuCheckboxItem>
@@ -397,7 +397,7 @@ function FacetDropdown<T extends RowData>({ table, facet }: { table: TanStackTab
                 className="text-xs"
               >
                 <span className="min-w-0 flex-1 truncate">{valueLabel(option.value)}</span>
-                <span className="ml-3 font-mono text-xs text-muted-foreground">{option.count}</span>
+                <span className="ms-3 font-mono text-xs text-muted-foreground">{option.count}</span>
               </DropdownMenuCheckboxItem>
             ))}
           </>

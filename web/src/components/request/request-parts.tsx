@@ -30,7 +30,7 @@ export function MemLinkToggle({ linked, per, onToggle, t, gpuCores }: { linked: 
           aria-pressed={linked}
           aria-label={tip}
           className={cn(
-            "ml-1 inline-flex h-5 w-5 items-center justify-center rounded transition-colors hover:bg-muted",
+            "ms-1 inline-flex h-5 w-5 items-center justify-center rounded transition-colors hover:bg-muted",
             linked ? "text-info-fg" : "text-muted-foreground",
           )}
         >
@@ -47,7 +47,7 @@ export function MemLinkToggle({ linked, per, onToggle, t, gpuCores }: { linked: 
 /** The one-click fix after a hint: sets the value the hint names. */
 export function HintAction({ label, onClick }: { label: string; onClick: () => void }) {
   return (
-    <button type="button" onClick={onClick} className="ml-1.5 whitespace-nowrap font-medium text-info-fg underline-offset-2 hover:underline">
+    <button type="button" onClick={onClick} className="ms-1.5 whitespace-nowrap font-medium text-info-fg underline-offset-2 hover:underline">
       {label}
     </button>
   );

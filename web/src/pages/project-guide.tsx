@@ -69,17 +69,17 @@ export default function ProjectGuidePage() {
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="whitespace-nowrap border-b border-border text-left text-xs uppercase tracking-wide text-muted-foreground">
-                  <th className="py-1.5 pr-3 font-medium">{t("guide.project.cad.what")}</th>
-                  <th className="py-1.5 pr-3 font-medium">{t("guide.project.cad.every")}</th>
+                <tr className="whitespace-nowrap border-b border-border text-start text-xs uppercase tracking-wide text-muted-foreground">
+                  <th className="py-1.5 pe-3 font-medium">{t("guide.project.cad.what")}</th>
+                  <th className="py-1.5 pe-3 font-medium">{t("guide.project.cad.every")}</th>
                   <th className="py-1.5 font-medium">{t("guide.project.cad.cost")}</th>
                 </tr>
               </thead>
               <tbody>
                 {CADENCE_ROWS.map((row) => (
                   <tr key={row.what} className="border-b border-border/50 align-top last:border-0">
-                    <td className="py-2 pr-3">{t(row.what)}</td>
-                    <td className="whitespace-nowrap py-2 pr-3 font-mono text-xs text-muted-foreground">
+                    <td className="py-2 pe-3">{t(row.what)}</td>
+                    <td className="whitespace-nowrap py-2 pe-3 font-mono text-xs text-muted-foreground">
                       {row.every}<span className="hidden lg:inline"> · {row.env}</span>
                     </td>
                     <td className="py-2 text-muted-foreground">{t(row.cost)}</td>
@@ -174,7 +174,7 @@ function VisitsChart({ daily }: { daily: { day: string; visitors: number; hits: 
       </figcaption>
       <div className="flex gap-2">
         {/* y axis: three recessive ticks */}
-        <div className="flex h-36 flex-col justify-between py-px text-right font-mono text-xs leading-none text-muted-foreground/70">
+        <div className="flex h-36 flex-col justify-between py-px text-end font-mono text-xs leading-none text-muted-foreground/70">
           {ticks.map((v) => <span key={v}>{Math.round(v)}</span>)}
         </div>
         <div className="relative h-36 flex-1" onMouseLeave={() => setHover(null)}>
@@ -209,7 +209,7 @@ function VisitsChart({ daily }: { daily: { day: string; visitors: number; hits: 
         </div>
       </div>
       {daily.length > 0 && (
-        <div className="flex justify-between pl-6 font-mono text-xs text-muted-foreground/70">
+        <div className="flex justify-between ps-6 font-mono text-xs text-muted-foreground/70">
           <span>{daily[0].day.slice(5)}</span>
           <span>{daily[mid].day.slice(5)}</span>
           <span>{daily[daily.length - 1].day.slice(5)}</span>

@@ -952,7 +952,7 @@ export function RequestPanel({ pool, t }: { pool: Pool; t: TFn }) {
             <div className="space-y-1.5 px-3 pb-3">
               {/* terminal-styled on purpose (dark in both themes + $ prompt): with no
                   caption around it, the surface itself has to say "run this in a shell" */}
-              <div className="flex items-center gap-2 rounded-md border border-zinc-800 bg-zinc-950 py-1.5 pl-2.5 pr-1.5">
+              <div className="flex items-center gap-2 rounded-md border border-zinc-800 bg-zinc-950 py-1.5 ps-2.5 pe-1.5">
                 <span aria-hidden className="select-none self-start font-mono text-xs leading-5 text-zinc-500">$</span>
                 <code className={cn("min-w-0 flex-1 overflow-x-auto font-mono text-xs leading-5 text-zinc-100", ptyActive ? "whitespace-pre" : "whitespace-nowrap")}>{cmd}</code>
                 {verdict && <CommandVerdict tone={verdict.tone} label={verdict.label} />}

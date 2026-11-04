@@ -36,7 +36,7 @@ export function NodesDown() {
       {groups.length === 0 ? (
         <Empty>✓ {t("nodesdown.none")}</Empty>
       ) : (
-        <div className="max-h-72 divide-y divide-border overflow-y-auto pr-1 xl:max-h-none xl:min-h-0 xl:flex-1">
+        <div className="max-h-72 divide-y divide-border overflow-y-auto pe-1 xl:max-h-none xl:min-h-0 xl:flex-1">
           {groups.map((g) => (
             <DownEntry key={g.key} g={g} pools={snap.pools} t={t} />
           ))}

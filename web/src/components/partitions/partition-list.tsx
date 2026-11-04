@@ -403,7 +403,7 @@ function PartitionRow({ row, pool, snap, pendShared, t }: {
             <span className={cn("font-mono text-base font-semibold", heroTone)}>
               {heroText}
               {capped && cpu && (
-                <HoverHint text={t("part.capHint", { n: nf(cpu.maxCores), max: nf(cap.maxCores ?? 0) })} className="ml-0.5 align-super text-xs" />
+                <HoverHint text={t("part.capHint", { n: nf(cpu.maxCores), max: nf(cap.maxCores ?? 0) })} className="ms-0.5 align-super text-xs" />
               )}
             </span>
             <span className="font-mono text-xs text-muted-foreground">
@@ -413,7 +413,7 @@ function PartitionRow({ row, pool, snap, pendShared, t }: {
             <span className={cn("font-mono text-xs", p.jobs.pending > 0 ? "text-warn-fg" : "text-muted-foreground")}>
               {t("part.run")}{nf(p.jobs.running)} {t("part.pend")}{nf(p.jobs.pending)}
               {pendShared > 0 && (
-                <HoverHint text={t("part.pendShared", { n: pendShared })} className="ml-0.5 align-super text-xs" />
+                <HoverHint text={t("part.pendShared", { n: pendShared })} className="ms-0.5 align-super text-xs" />
               )}
             </span>
           </div>

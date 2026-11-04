@@ -67,7 +67,7 @@ export function Occupants({ pool, t }: { pool: Pool; t: TFn }) {
             </button>
           ))}
         </div>
-        <span className="tnum ml-auto text-xs text-muted-foreground">
+        <span className="tnum ms-auto text-xs text-muted-foreground">
           {shown}/{total}
         </span>
       </div>
@@ -82,7 +82,7 @@ export function Occupants({ pool, t }: { pool: Pool; t: TFn }) {
           {...occupancyMode(pool, snap)}
         />
       ) : (
-      <div className="max-h-72 space-y-1 overflow-y-auto pr-1">
+      <div className="max-h-72 space-y-1 overflow-y-auto pe-1">
         {groupByUser ? (
           userGroups.map((group) => (
             <OccupantUserRow key={group.user} group={group} isGpu={isGpu} t={t} />
@@ -251,9 +251,9 @@ function OccupantRow({
             colored = time left, grey = already spent (of this job's own request),
             bare track = headroom this job will never touch because it asked for less
             than the partition allows. */}
-        <div className="relative h-1.5 flex-1 overflow-hidden rounded-full bg-muted">
+        <div dir="ltr" className="relative h-1.5 flex-1 overflow-hidden rounded-full bg-muted">
           <div
-            className={cn("absolute inset-y-0 left-0 transition-all duration-1000 ease-linear", barColor)}
+            className={cn("absolute inset-y-0 start-0 transition-all duration-1000 ease-linear", barColor)}
             style={{ width: `${barWidth}%` }}
           />
           {requestedFrac * 100 > barWidth && (

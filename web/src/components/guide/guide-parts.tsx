@@ -122,7 +122,7 @@ export function Advanced({ id, title, hint, children }: { id: string; title: str
       <summary className="flex cursor-pointer list-none flex-wrap items-center gap-x-2 gap-y-0.5 px-4 py-3 [&::-webkit-details-marker]:hidden">
         <ChevronRight className="h-3.5 w-3.5 text-muted-foreground transition-transform group-open:rotate-90" />
         <h3 className="text-sm font-medium">{title}</h3>
-        <span className="ml-auto text-xs text-muted-foreground">{hint}</span>
+        <span className="ms-auto text-xs text-muted-foreground">{hint}</span>
       </summary>
       <div className="space-y-3 border-t border-border/60 px-4 pb-4 pt-3 text-sm leading-relaxed text-muted-foreground">
         {children}

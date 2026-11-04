@@ -146,7 +146,7 @@ export function RangeSlider({
         </FieldLabel>
         {valueBox}
       </div>
-      <div className="relative h-5">
+      <div dir="ltr" className="relative h-5">
         <div className="absolute inset-x-0 top-1/2 h-1 -translate-y-1/2 rounded-full bg-muted-foreground/15" />
         {/* past the green part, within bounds: allowed, but it queues */}
         {hasZone && greenPos < 1 && (
@@ -181,7 +181,7 @@ export function RangeSlider({
           />
         )}
       </div>
-      <div className="relative h-4 font-mono text-xs text-muted-foreground">
+      <div dir="ltr" className="relative h-4 font-mono text-xs text-muted-foreground">
         {placed.map((tk, i) => (
           <span
             key={`${tk.value}-${i}`}

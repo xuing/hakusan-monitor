@@ -174,6 +174,7 @@ function CellGrid({ tiles, ariaLabel, dashed, className }: { tiles: OccupancyTil
       role="img"
       aria-label={ariaLabel}
       onMouseLeave={() => setTip(null)}
+      dir="ltr"
       className={cn("relative grid aspect-[16/9] w-full overflow-hidden rounded-lg", className)}
       style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`, gridTemplateRows: `repeat(${rows}, minmax(0, 1fr))` }}
     >
@@ -300,6 +301,7 @@ export function OccupancyMap({ tiles, ariaLabel, restLabel, perRow, nodeWord = "
       ref={ref}
       role="img"
       aria-label={ariaLabel}
+      dir="ltr"
       className={cn("relative aspect-[16/9] w-full overflow-hidden rounded-lg", className)}
       onMouseLeave={() => setTip(null)}
     >

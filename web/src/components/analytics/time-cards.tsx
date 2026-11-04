@@ -66,7 +66,7 @@ export function SubmitRhythm({ view, meta }: { view: AnalyticsView; meta: Analyt
                 />
               </div>
             ))}
-            <span className="text-right text-xs text-muted-foreground">{t("an.submit.perDay")}</span>
+            <span className="text-end text-xs text-muted-foreground">{t("an.submit.perDay")}</span>
           </div>
           <div
             className="mt-1 grid gap-[2px]"
@@ -87,7 +87,7 @@ export function SubmitRhythm({ view, meta }: { view: AnalyticsView; meta: Analyt
                     style={{ background: heatColor("blue", v / max) }}
                   />
                 ))}
-                <span className="tnum text-right text-xs">{view.submit.by_weekday[d].toFixed(1)}</span>
+                <span className="tnum text-end text-xs">{view.submit.by_weekday[d].toFixed(1)}</span>
               </div>
             ))}
           </div>
@@ -179,7 +179,7 @@ export function FreeHours({ view }: { view: AnalyticsView }) {
                         </span>
                       )}
                     </span>
-                    <span className="text-right text-xs text-muted-foreground">{t("an.free.allDay")}</span>
+                    <span className="text-end text-xs text-muted-foreground">{t("an.free.allDay")}</span>
                   </div>
                   {([false, true] as const).map((we) => {
                     const series = we ? pool.weekend : pool.weekday;
@@ -187,7 +187,7 @@ export function FreeHours({ view }: { view: AnalyticsView }) {
                     const avg = vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : null;
                     return (
                       <div key={String(we)} className="grid items-center gap-x-[2px]" style={{ gridTemplateColumns: FREE_COLS }}>
-                        <span className="whitespace-nowrap pl-3.5 text-xs text-muted-foreground">{t(we ? "an.weekend" : "an.weekday")}</span>
+                        <span className="whitespace-nowrap ps-3.5 text-xs text-muted-foreground">{t(we ? "an.weekend" : "an.weekday")}</span>
                         {series.map((v, h) => (
                           <div
                             key={h}
@@ -203,7 +203,7 @@ export function FreeHours({ view }: { view: AnalyticsView }) {
                             style={{ background: heatColor("green", v) }}
                           />
                         ))}
-                        <span className="tnum text-right text-xs">{pctText(avg)}</span>
+                        <span className="tnum text-end text-xs">{pctText(avg)}</span>
                       </div>
                     );
                   })}

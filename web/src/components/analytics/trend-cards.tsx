@@ -72,7 +72,7 @@ function RuntimeRow({ label, jobs, hours, scale }: { label: string; jobs: number
       <div className="flex h-[18px] items-center justify-end gap-1.5">
         <span className="tnum text-xs">{pctText(jobs)}</span>
         <div
-          className="h-3.5 rounded-l-[4px] bg-[var(--an-neutral-soft)]"
+          className="h-3.5 rounded-s-[4px] bg-[var(--an-neutral-soft)]"
           title={t("an.rt.bar", { bucket: label, p: pctText(jobs) })}
           style={{ width: `${(jobs / scale) * 100}%` }}
         />
@@ -80,7 +80,7 @@ function RuntimeRow({ label, jobs, hours, scale }: { label: string; jobs: number
       <span className="whitespace-nowrap text-center text-xs text-muted-foreground">{label}</span>
       <div className="flex h-[18px] items-center gap-1.5">
         <div
-          className="h-3.5 rounded-r-[4px] bg-[var(--an-violet)]"
+          className="h-3.5 rounded-e-[4px] bg-[var(--an-violet)]"
           title={t("an.rt.bar", { bucket: label, p: pctText(hours) })}
           style={{ width: `${(hours / scale) * 100}%` }}
         />
@@ -150,7 +150,7 @@ export function WeeklyAllocation({ view, meta, className }: { view: AnalyticsVie
         ? rich(t, "an.wk.findingOutage", { n: w.util13.weeks, list, days: dayRun(latest) })
         : rich(t, "an.wk.finding", { n: w.util13.weeks, list })}
     >
-      <div className="relative min-h-[200px] flex-1">
+      <div dir="ltr" className="relative min-h-[200px] flex-1">
         <div className="absolute bottom-[26px] left-10 right-12 top-6">
           {GRID.map((g) => (
             <div key={g}>
@@ -355,7 +355,7 @@ export function ActiveUsers({ view, meta, className }: { view: AnalyticsView; me
       })}
     >
       <div className="flex flex-wrap items-end gap-6">
-        <div className="min-w-0 flex-[3_1_22rem]">
+        <div dir="ltr" className="min-w-0 flex-[3_1_22rem]">
           <div className="mb-1.5 text-xs text-muted-foreground">{t("an.users.weekly", { unit })}</div>
           <div className="flex h-[120px] items-end gap-[3px] border-b border-[var(--an-axis)]">
             {users.map((v, i) => (

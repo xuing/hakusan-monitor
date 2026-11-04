@@ -2,7 +2,7 @@
 // switches, partition order and its own text, merged over the built-in
 // dictionaries. Nothing here is required — a cluster without a site file gets
 // Slurm's ClusterName, slurm.conf partition order and the generic text.
-import { DICTS, LANGS, type Lang } from "@/i18n/core";
+import { DICTS, onDictLoaded, type Lang } from "@/i18n/core";
 import { withBase } from "@/lib/base-path";
 import { fmtMB } from "@/lib/format";
 import type { Pool } from "@/types/snapshot";
@@ -45,9 +45,8 @@ const DEFAULT_SITE: SiteInfo = {
 
 type Dict = Record<string, string>;
 // the dictionaries as built, so applying a site twice starts from the same text
-const BASE: Record<Lang, Dict> = Object.fromEntries(
-  LANGS.map((lang) => [lang, { ...(DICTS[lang] as Dict) }]),
-) as Record<Lang, Dict>;
+const BASE: Partial<Record<Lang, Dict>> = { en: { ...DICTS.en } };
+const loadedLangs = () => Object.keys(DICTS) as Lang[];
 
 let site: SiteInfo = DEFAULT_SITE;
 
@@ -61,20 +60,30 @@ export const getSite = () => site;
  *  {cluster} and {org} in every string. */
 export function applySite(next: SiteInfo) {
   site = { ...DEFAULT_SITE, ...next, links: next.links ?? {}, pages: { ...DEFAULT_SITE.pages, ...next.pages } };
-  for (const lang of LANGS) {
-    const merged: Dict = { ...BASE[lang], ...(site.strings[lang] ?? {}) };
-    for (const key in merged) {
-      merged[key] = merged[key]
-        .replaceAll("{siteName}", site.name)
-        .replaceAll("{cluster}", site.cluster)
-        .replaceAll("{org}", site.org);
-    }
-    const dict = DICTS[lang] as Dict;
-    for (const key of Object.keys(dict)) delete dict[key];
-    Object.assign(dict, merged);
-  }
+  for (const lang of loadedLangs()) applySiteText(lang);
   setPartitionOrder(site.partition_order);
 }
+
+function applySiteText(lang: Lang) {
+  const dict = DICTS[lang] as Dict;
+  BASE[lang] ??= { ...dict };
+  const merged: Dict = { ...BASE[lang], ...(site.strings[lang] ?? {}) };
+  for (const key in merged) {
+    merged[key] = merged[key]
+      .replaceAll("{siteName}", site.name)
+      .replaceAll("{cluster}", site.cluster)
+      .replaceAll("{org}", site.org);
+  }
+  for (const key of Object.keys(dict)) delete dict[key];
+  Object.assign(dict, merged);
+}
+
+let lastPools: Pool[] = [];
+// a dictionary that loads later gets the site's text and the pool names too
+onDictLoaded((lang) => {
+  applySiteText(lang);
+  registerPoolLabels(lastPools);
+});
 
 export function setPartitionOrder(order: string[] | undefined) {
   if (!order?.length) return;
@@ -91,6 +100,7 @@ export function partitionOrderRank(name: string | null | undefined) {
  *  by its node shape — just "CPU" when it is the only one, the core count
  *  when that tells it apart, else cores and memory. */
 export function registerPoolLabels(pools: Pool[]) {
+  lastPools = pools;
   const shapes = pools.flatMap((pool) => {
     const m = pool.id.match(/^cpu-(\d+)c-(\d+)g(?:-auto)?$/);
     return m ? [{ id: pool.id, cores: m[1] }] : [];
@@ -99,9 +109,9 @@ export function registerPoolLabels(pools: Pool[]) {
   for (const pool of pools) {
     const key = `pool.${pool.id}`;
     const shape = shapes.find((s) => s.id === pool.id);
-    for (const lang of LANGS) {
+    for (const lang of loadedLangs()) {
       const dict = DICTS[lang] as Dict;
-      if (key in dict && !autoLabels.has(key)) continue;
+      if (key in dict && !autoLabels.has(`${lang}:${key}`)) continue;
       const cores = shape && `${shape.cores} ${dict["unit.cores"] ?? "cores"}`;
       const label = shape
         ? shapes.length === 1 ? "CPU"
@@ -109,10 +119,11 @@ export function registerPoolLabels(pools: Pool[]) {
         : pool.gpu?.label;
       if (!label) continue;
       dict[key] = label;
-      autoLabels.add(key);
+      autoLabels.add(`${lang}:${key}`);
     }
   }
 }
+/** "<lang>:pool.<id>" labels made here, not by the site file */
 const autoLabels = new Set<string>();
 
 /** Load the site before the first render. After `timeoutMs` the page renders

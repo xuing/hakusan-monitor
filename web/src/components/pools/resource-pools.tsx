@@ -68,7 +68,7 @@ function PoolGroup({ label, pools, snap, t, outside = [] }: {
         type="button"
         onClick={toggle}
         aria-expanded={open}
-        className="flex w-full flex-wrap items-center gap-2 border-b border-border pb-1.5 text-left hover:text-foreground"
+        className="flex w-full flex-wrap items-center gap-2 border-b border-border pb-1.5 text-start hover:text-foreground"
       >
         <ChevronRight className={cn("h-3.5 w-3.5 text-muted-foreground transition-transform", open && "rotate-90")} />
         <span className={cn("h-2.5 w-2.5 rounded-full", POOL_DOT[groupTone])} />

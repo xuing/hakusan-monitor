@@ -34,7 +34,7 @@ export function nodeColumns(t: TFn): ColumnDef<DataTableFeatures, RawNode>[] {
             e.stopPropagation();
             setSingleFacet(table, "pool", row.original.pool);
           }}
-          className="rounded px-1 py-0.5 text-left text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+          className="rounded px-1 py-0.5 text-start text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
         >
           {poolLabel(t, row.original.pool)}
         </button>

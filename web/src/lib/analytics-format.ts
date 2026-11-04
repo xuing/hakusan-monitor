@@ -1,7 +1,7 @@
 // Formatting and "finding" extraction for the analytics page. Every card leads
 // with one sentence computed here from the payload, so the copy always states
 // what the current data says (no hand-written numbers).
-import type { Lang, TFn, TranslationKey } from "@/i18n";
+import { LANG_META, type Lang, type TFn, type TranslationKey } from "@/i18n";
 import { clusterTimeZone } from "@/lib/cluster-time";
 import type { AnalyticsView } from "@/types/analytics";
 
@@ -32,11 +32,10 @@ export function hourRange(t: TFn, from: number, len = 1): string {
   return t("an.hours", { from: pad(from), to: pad(to) });
 }
 
-const LOCALE: Record<Lang, string> = { en: "en", ja: "ja-JP", zh: "zh-CN" };
 
 /** 119098 -> "11.9万" / "119K"; 15099110 -> "1510万" / "15.1M". */
 export function compactNumber(n: number, lang: Lang): string {
-  return new Intl.NumberFormat(LOCALE[lang], { notation: "compact", maximumSignificantDigits: 3 }).format(n);
+  return new Intl.NumberFormat(LANG_META[lang].tag, { notation: "compact", maximumSignificantDigits: 3 }).format(n);
 }
 
 const CJK = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]/u;
@@ -65,7 +64,7 @@ export function tUnit(t: TFn, key: TranslationKey, vars: Record<string, string |
 /** "2026-04" -> "4月" / "Apr". */
 export function monthLabel(month: string, lang: Lang): string {
   const [y, m] = month.split("-").map(Number);
-  return new Intl.DateTimeFormat(LOCALE[lang], { month: "short", timeZone: "UTC" })
+  return new Intl.DateTimeFormat(LANG_META[lang].tag, { month: "short", timeZone: "UTC" })
     .format(new Date(Date.UTC(y, m - 1, 15)));
 }
 

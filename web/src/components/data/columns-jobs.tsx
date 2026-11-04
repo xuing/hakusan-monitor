@@ -8,7 +8,7 @@ import { JobStateBadge } from "./cells";
 import { commaArrayFilter, exactArrayFilter, setSingleFacet } from "./table-filters";
 
 const mono = (v: string, cls = "") => <span className={`font-mono text-xs ${cls}`}>{v || "—"}</span>;
-const clickText = "rounded px-1 py-0.5 text-left transition-colors hover:bg-accent hover:text-foreground";
+const clickText = "rounded px-1 py-0.5 text-start transition-colors hover:bg-accent hover:text-foreground";
 
 /** "759320_7" -> [759320, 7]; 761906 -> [761906, -1]. Job IDs mix numbers
  *  and array-task strings, so automatic sort detection orders them

@@ -32,7 +32,7 @@ export function AppShell() {
     <div className="min-h-svh">
       <aside
         className={cn(
-          "fixed inset-y-0 left-0 z-30 hidden flex-col border-r border-border bg-card/40 py-4 transition-[width] duration-200 lg:flex",
+          "fixed inset-y-0 start-0 z-30 hidden flex-col border-e border-border bg-card/40 py-4 transition-[width] duration-200 lg:flex",
           folded ? "w-16 px-2" : "w-60 px-3",
         )}
       >
@@ -54,7 +54,7 @@ export function AppShell() {
         </button>
       </aside>
 
-      <div className={cn("flex min-h-svh flex-col transition-[padding] duration-200", folded ? "lg:pl-16" : "lg:pl-60")}>
+      <div className={cn("flex min-h-svh flex-col transition-[padding] duration-200", folded ? "lg:ps-16" : "lg:ps-60")}>
         <Topbar />
         <main className="mx-auto w-full max-w-[1920px] flex-1 animate-fade-in px-4 py-6">
           <Outlet />

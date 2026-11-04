@@ -15,7 +15,7 @@ export function ReasonText({ reason, t, className }: { reason: string; t: TFn; c
         <button
           type="button"
           className={cn(
-            "cursor-help text-left outline-none",
+            "cursor-help text-start outline-none",
             "focus-visible:rounded-sm focus-visible:ring-2 focus-visible:ring-primary/45",
             className,
           )}

@@ -21,6 +21,7 @@ export const ja: Record<TranslationKey, string> = {
   "nav.section.monitor": "モニター",
   "nav.section.raw": "生データ",
   "nav.section.guide": "ガイド",
+  "lang.auto": "ブラウザの言語",
 
 
   "live.live": "ライブ",

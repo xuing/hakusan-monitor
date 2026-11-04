@@ -1,7 +1,9 @@
-import { describe, expect, it } from "vitest";
-import { DICTS, LANGS, reasonDescription, reasonLabel, type TFn, type TranslationKey } from "./core";
+import { beforeAll, describe, expect, it } from "vitest";
+import { DICTS, LANGS, loadLang, reasonDescription, reasonLabel, type TFn, type TranslationKey } from "./core";
 
-const tFor = (lang: (typeof LANGS)[number]): TFn => (key) => DICTS[lang][key] ?? key;
+const tFor = (lang: (typeof LANGS)[number]): TFn => (key) => DICTS[lang]![key] ?? key;
+
+beforeAll(() => Promise.all(LANGS.map(loadLang)));
 
 // pending reasons squeue reported on hakusan, 2026-10-05
 const LIVE = [
@@ -11,7 +13,7 @@ const LIVE = [
 ];
 
 describe("pending reasons", () => {
-  it("every reason seen live has a label and Slurm's meaning in all three languages", () => {
+  it("every reason seen live has a label and Slurm's meaning in every language", () => {
     for (const lang of LANGS) {
       const t = tFor(lang);
       for (const raw of LIVE) {
@@ -24,7 +26,7 @@ describe("pending reasons", () => {
   it("every labelled code carries a description", () => {
     const codes = Object.keys(DICTS.en).filter((k) => k.startsWith("reason.") && !k.endsWith(".desc"));
     for (const lang of LANGS) {
-      for (const k of codes) expect(DICTS[lang][`${k}.desc` as TranslationKey], `${lang} ${k}`).toBeTruthy();
+      for (const k of codes) expect(DICTS[lang]![`${k}.desc` as TranslationKey], `${lang} ${k}`).toBeTruthy();
     }
   });
 

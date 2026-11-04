@@ -49,11 +49,11 @@ export function PartitionWaits({ view, meta }: { view: AnalyticsView; meta: Anal
           <div className="grid items-center gap-x-4 border-b border-border py-1.5 text-xs text-muted-foreground" style={{ gridTemplateColumns: COLS }}>
             <span>{t("an.wait.col.part")}</span>
             <span>{t("an.wait.col.limit")}</span>
-            <span className="text-right">{t("an.wait.col.users")}</span>
+            <span className="text-end">{t("an.wait.col.users")}</span>
             <span>{unitHours(t, view)}</span>
             <span>{t("an.wait.col.dist")}</span>
-            <span className="text-right">{t("an.wait.col.p50")}</span>
-            <span className="text-right">{t("an.wait.col.p90")}</span>
+            <span className="text-end">{t("an.wait.col.p50")}</span>
+            <span className="text-end">{t("an.wait.col.p90")}</span>
           </div>
           {groups.map(({ pool, index, rows }) => (
             <Fragment key={pool.id}>
@@ -69,12 +69,12 @@ export function PartitionWaits({ view, meta }: { view: AnalyticsView; meta: Anal
                 <div key={p.name} className="grid items-center gap-x-4 border-b border-border/60 py-[7px] text-sm" style={{ gridTemplateColumns: COLS }}>
                   <span className="font-mono text-[0.8125rem] font-medium">{p.name}</span>
                   <span className="whitespace-nowrap text-[0.8125rem] text-muted-foreground">{specText(t, p)}</span>
-                  <span className="tnum text-right text-[0.8125rem]">{p.users}</span>
+                  <span className="tnum text-end text-[0.8125rem]">{p.users}</span>
                   <div className="flex items-center gap-2">
                     <div className="h-2 flex-1 rounded bg-[var(--an-track)]">
                       <div className="h-2 rounded bg-[var(--an-neutral)]" style={{ width: `${(p.unit_hours / maxHours) * 100}%` }} />
                     </div>
-                    <span className="tnum w-[4.5rem] whitespace-nowrap text-right text-[0.8125rem]">
+                    <span className="tnum w-[4.5rem] whitespace-nowrap text-end text-[0.8125rem]">
                       {p.unit_hours >= 100000 ? compactNumber(p.unit_hours, lang) : nf(p.unit_hours)}
                     </span>
                   </div>
@@ -88,8 +88,8 @@ export function PartitionWaits({ view, meta }: { view: AnalyticsView; meta: Anal
                       title: t("an.wait.seg", { part: p.name, bucket: t(WAIT_KEYS[i]), p: pctText(v) }),
                     }))}
                   />
-                  <span className="tnum text-right text-[0.8125rem]">{waitText(t, p.p50)}</span>
-                  <span className="tnum text-right text-[0.8125rem]">{waitText(t, p.p90)}</span>
+                  <span className="tnum text-end text-[0.8125rem]">{waitText(t, p.p50)}</span>
+                  <span className="tnum text-end text-[0.8125rem]">{waitText(t, p.p90)}</span>
                 </div>
               ))}
             </Fragment>

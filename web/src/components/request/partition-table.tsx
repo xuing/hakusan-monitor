@@ -96,12 +96,12 @@ export function PartitionTable({
     return axis.scale === "log" ? axis.min * Math.exp(q * logSpan) : axis.min + q * (axis.max - axis.min);
   };
   return (
-    <div className="@container overflow-hidden rounded-lg border border-border bg-card">
+    <div dir="ltr" className="@container overflow-hidden rounded-lg border border-border bg-card">
       <div className={cn(GRID, "border-b border-border bg-muted/40 py-2 text-xs text-muted-foreground")}>
         <span className="truncate">{headers.name}</span>
         <div className="relative h-4 font-mono">
           {/* what the ticks count, in the lead where the bars start */}
-          <span ref={labelRef} className="absolute left-0 whitespace-nowrap font-sans">
+          <span ref={labelRef} className="absolute start-0 whitespace-nowrap font-sans">
             {headers.axis}
           </span>
           {axis.ticks.map((tk, i) => {
@@ -119,7 +119,7 @@ export function PartitionTable({
             );
           })}
         </div>
-        <span className="hidden truncate text-right @md:block">{headers.wall}</span>
+        <span className="hidden truncate text-end @md:block">{headers.wall}</span>
         <span className="hidden whitespace-nowrap @2xl:block">{headers.perUser}</span>
         {/* one line: a long header (ja) runs into the gap on its left */}
         <span className="flex justify-end whitespace-nowrap">{headers.verdict}</span>
@@ -143,7 +143,7 @@ export function PartitionTable({
             title={r.title}
             className={cn(
               GRID,
-              "min-h-10 w-full border-b border-border/60 text-left outline-none transition-colors last:border-b-0",
+              "min-h-10 w-full border-b border-border/60 text-start outline-none transition-colors last:border-b-0",
               "hover:bg-muted/50 focus-visible:bg-muted/60",
               r.selected && "bg-info-soft/50 hover:bg-info-soft/60",
             )}
@@ -195,7 +195,7 @@ export function PartitionTable({
                 />
               )}
             </span>
-            <span className="hidden truncate text-right text-xs text-foreground/80 @md:block">{r.wall}</span>
+            <span className="hidden truncate text-end text-xs text-foreground/80 @md:block">{r.wall}</span>
             <span className="hidden whitespace-nowrap text-xs text-foreground/80 @2xl:block">{r.perUser ?? "—"}</span>
             <span className="flex justify-end">{r.verdict && <Tag tone={r.verdict.tone}>{r.verdict.label}</Tag>}</span>
           </button>

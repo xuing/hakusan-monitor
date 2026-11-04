@@ -93,7 +93,7 @@ export function LiveIndicator() {
           disabled={pending || wait > 0}
           title={refreshLabel}
           aria-label={refreshLabel}
-          className="-ml-1 rounded-full p-1 text-muted-foreground transition-colors hover:text-foreground disabled:cursor-default disabled:opacity-40 disabled:hover:text-muted-foreground"
+          className="-ms-1 rounded-full p-1 text-muted-foreground transition-colors hover:text-foreground disabled:cursor-default disabled:opacity-40 disabled:hover:text-muted-foreground"
         >
           <RotateCw aria-hidden className={cn("h-3.5 w-3.5", pending && "animate-spin")} />
         </button>

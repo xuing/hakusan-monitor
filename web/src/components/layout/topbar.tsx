@@ -4,7 +4,7 @@ import { useLocation } from "react-router";
 import { Badge } from "@/components/ui/badge";
 import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { useLive } from "@/hooks/live-context";
-import { useT } from "@/i18n";
+import { LANG_META, useI18n, useT } from "@/i18n";
 import { FILTERED_PATHS, NAV } from "@/lib/nav";
 import { LangSwitcher } from "./lang-switcher";
 import { LiveIndicator } from "./live-indicator";
@@ -15,6 +15,7 @@ import { ThemeToggle } from "./theme-toggle";
 export function Topbar() {
   const t = useT();
   const { snap } = useLive();
+  const { lang } = useI18n();
   const { pathname } = useLocation();
   const [menuOpen, setMenuOpen] = useState(false);
   const current = NAV.find((n) => n.path === pathname) ?? NAV[0];
@@ -44,11 +45,11 @@ export function Topbar() {
         <Sheet open={menuOpen} onOpenChange={setMenuOpen}>
           <SheetTrigger
             aria-label={t("app.title")}
-            className="-ml-1 rounded-md p-1 text-muted-foreground hover:text-foreground lg:hidden"
+            className="-ms-1 rounded-md p-1 text-muted-foreground hover:text-foreground lg:hidden"
           >
             <Menu className="h-5 w-5" />
           </SheetTrigger>
-          <SheetContent side="left" className="w-64 border-border bg-card">
+          <SheetContent side={LANG_META[lang].rtl ? "right" : "left"} className="w-64 border-border bg-card">
             <SheetTitle className="sr-only">{t("app.title")}</SheetTitle>
             <div className="pt-2">
               <Brand onNavigate={() => setMenuOpen(false)} />
@@ -63,7 +64,7 @@ export function Topbar() {
           <h1 className="truncate text-base font-semibold">{pageTitle}</h1>
         </div>
 
-        <div className="ml-auto flex items-center gap-3">
+        <div className="ms-auto flex items-center gap-3">
           {snap && (
             <Badge variant="outline" className="hidden font-mono text-xs font-normal text-muted-foreground md:inline-flex">
               {snap.cluster} · slurm {snap.slurm_version}

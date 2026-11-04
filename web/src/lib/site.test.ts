@@ -1,5 +1,5 @@
-import { afterEach, describe, expect, it } from "vitest";
-import { DICTS } from "@/i18n/core";
+import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import { DICTS, loadLang } from "@/i18n/core";
 import { fmtMB } from "@/lib/format";
 import { isLicensePartition } from "@/lib/slurm";
 import { applySite, partitionOrderRank, registerPoolLabels, type SiteInfo } from "@/lib/site";
@@ -11,6 +11,7 @@ const site = (over: Partial<SiteInfo> = {}): SiteInfo => ({
 });
 const dict = (lang: "en" | "zh" | "ja") => DICTS[lang] as Record<string, string>;
 
+beforeAll(() => Promise.all([loadLang("zh"), loadLang("ja")]));
 afterEach(() => applySite(site()));
 
 describe("site", () => {
@@ -45,6 +46,23 @@ describe("site", () => {
     expect(dict("en")["pool.cpu-128c-2048g"]).toBe(`CPU · 128 cores · ${fmtMB(2060000)}`);
     expect(dict("zh")["pool.cpu-64c-256g"]).toBe("CPU · 64 核");
     expect(dict("ja")["pool.l40s"]).toBe("L40S");
+  });
+
+  it("gives a dictionary that loads later the site's text and pool names", async () => {
+    applySite(site());
+    registerPoolLabels([{ id: "l40s", gpu: { label: "L40S" } } as unknown as Pool]);
+    await loadLang("ko");
+    const ko = DICTS.ko as Record<string, string>;
+    expect(ko["app.title"]).toContain("Mycluster");
+    expect(ko["pool.l40s"]).toBe("L40S");
+  });
+
+  it("keeps a late-loaded language's site label over the generated one", async () => {
+    applySite(site({ strings: { fr: { "pool.h100": "H100 (cloud)" } } }));
+    registerPoolLabels([{ id: "h100", gpu: { label: "H100" } } as unknown as Pool]);
+    expect(dict("en")["pool.h100"]).toBe("H100");
+    await loadLang("fr");
+    expect((DICTS.fr as Record<string, string>)["pool.h100"]).toBe("H100 (cloud)");
   });
 
   it("calls the only CPU shape just CPU", () => {

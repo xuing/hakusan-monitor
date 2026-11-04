@@ -26,7 +26,7 @@ export function GpuReleaseHint({
   const remaining = Math.max(0, parseDur(next.left) - (now - generatedAt));
   const releasingGpus = Math.max(1, next.gpus ?? 1);
   return (
-    <div className={cn("flex shrink-0 flex-col items-end gap-1 text-right text-xs", className)}>
+    <div className={cn("flex shrink-0 flex-col items-end gap-1 text-end text-xs", className)}>
       <span className="text-info-fg">
         {t("release.at", { time: dayClockLabel(next.at, t) })}
         <span className="text-muted-foreground"> · {t("release.left", { dur: durText(t, remaining) })}</span>

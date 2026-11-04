@@ -28,7 +28,7 @@ export function ReleasesPanel() {
       {releases.length === 0 ? (
         <Empty>{t("releases.none")}</Empty>
       ) : (
-        <div className="subtle-scroll min-h-0 flex-1 overflow-y-auto pr-1">
+        <div className="subtle-scroll min-h-0 flex-1 overflow-y-auto pe-1">
           <div className="grid grid-cols-[repeat(auto-fit,minmax(13rem,1fr))] gap-1.5">
             {releases.map((r) => (
               <ReleaseRow key={String(r.job_id)} release={r} now={now} generatedAt={snap.generated_at} />
@@ -68,7 +68,7 @@ function ReleaseRow({
           {fmtCountdown(remaining)}
         </span>
       </div>
-      <div className="mt-0.5 flex items-center gap-1.5 pl-3 text-xs text-muted-foreground">
+      <div className="mt-0.5 flex items-center gap-1.5 ps-3 text-xs text-muted-foreground">
         <span className={cn("font-medium", fg)}>{resource}</span>
         <span className="text-muted-foreground/40">·</span>
         <span className="truncate">{release.partition}</span>
