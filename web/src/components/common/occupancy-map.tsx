@@ -59,9 +59,9 @@ function Facts({ text, hue, className }: { text: string; hue: string; className?
   );
 }
 
-// one quiet slate for every user (the gaps between tiles separate them), so
-// the scarce states stand out: green free, amber held by the scheduler,
-// gray offline
+// one soft indigo for every user (the gaps between tiles separate them): a
+// hue of its own, apart from the blue of links and the green of free;
+// amber held by the scheduler, gray offline
 
 const STRIP_H = 34;
 const STRIP_MIN_W = 72;
@@ -276,7 +276,7 @@ function CellGrid({ tiles, ariaLabel, dashed, multiLabel, onPick, highlight, hei
             </>
           )
         )}
-        {t.queued && <span aria-hidden className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-warn ring-2 ring-[var(--slate-3)]" />}
+        {t.queued && <span aria-hidden className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-warn ring-2 ring-[var(--indigo-3)]" />}
       </div>,
     );
   }
@@ -298,7 +298,7 @@ function CellGrid({ tiles, ariaLabel, dashed, multiLabel, onPick, highlight, hei
       {/* the hatching is explained only where it shows */}
       {anyMulti && multiLabel && (
         <div className="mt-1.5 flex items-center gap-1.5 text-xs text-muted-foreground">
-          <span aria-hidden className="h-3.5 w-3.5 rounded-[3px] border border-[var(--slate-7)] bg-[var(--slate-3)]" style={{ backgroundImage: MULTI_HATCH[0] }} />
+          <span aria-hidden className="h-3.5 w-3.5 rounded-[3px] border border-[var(--indigo-7)] bg-[var(--indigo-3)]" style={{ backgroundImage: MULTI_HATCH[0] }} />
           {multiLabel}
         </div>
       )}
@@ -329,34 +329,34 @@ function TipCard({ tip }: { tip: Tip }) {
 // one job holding several GPUs of a node: the same held fill (a new one
 // would read as another user), hatched with thin diagonal lines, the two
 // directions telling neighbouring jobs apart
-const hatch = (deg: number) => `repeating-linear-gradient(${deg}deg, transparent 0 7px, color-mix(in oklab, var(--slate-8) 30%, transparent) 7px 8px)`;
+const hatch = (deg: number) => `repeating-linear-gradient(${deg}deg, transparent 0 7px, color-mix(in oklab, var(--indigo-8) 38%, transparent) 7px 8px)`;
 const MULTI_HATCH = [hatch(135), hatch(45)];
 
 // a tile outside the current filter steps back; it stays readable and
 // clickable, so the map still shows the whole pool
 const FADED = "opacity-35";
 
-// soft tints with dark text: held is the quiet base, so free (green),
-// scheduler-held (amber) and offline (a darker gray) stand out; blue stays
-// for what can be clicked. Radix flips them in dark mode
+// soft tints with dark text: large areas stay calm. Held is indigo (blue
+// stays for what can be clicked), free green, scheduler-held amber, offline
+// a darker gray. Radix flips them in dark mode
 const TONE = {
-  user: "bg-[var(--slate-3)] text-[var(--slate-12)]",
+  user: "bg-[var(--indigo-3)] text-[var(--indigo-12)]",
   free: "bg-[var(--green-4)] text-[var(--green-12)]",
   reserved: "bg-[var(--amber-4)] text-[var(--amber-12)]",
   off: "bg-[var(--gray-5)] text-[var(--gray-11)]",
 } as const;
 const HOVER = {
-  user: "hover:bg-[var(--slate-4)]",
+  user: "hover:bg-[var(--indigo-4)]",
   free: "hover:bg-[var(--green-5)]",
   reserved: "hover:bg-[var(--amber-5)]",
   off: "hover:bg-[var(--gray-6)]",
 } as const;
-const HUE = { user: "slate", free: "green", reserved: "amber", off: "gray" } as const;
+const HUE = { user: "indigo", free: "green", reserved: "amber", off: "gray" } as const;
 /** each kind's fill, for the text halo that must match it */
-const FILL = { user: "var(--slate-3)", free: "var(--green-4)", reserved: "var(--amber-4)", off: "var(--gray-5)" } as const;
+const FILL = { user: "var(--indigo-3)", free: "var(--green-4)", reserved: "var(--amber-4)", off: "var(--gray-5)" } as const;
 // cores are many and small: a dashed hairline on the right and bottom edges
 const CELL_DASH = {
-  user: "border-b border-r border-dashed border-[var(--slate-7)]",
+  user: "border-b border-r border-dashed border-[var(--indigo-7)]",
   free: "border-b border-r border-dashed border-[var(--green-7)]",
   reserved: "border-b border-r border-dashed border-[var(--amber-7)]",
   off: "border-b border-r border-dashed border-[var(--gray-7)]",
@@ -506,7 +506,7 @@ export function OccupancyMap({ tiles, ariaLabel, restLabel, perRow, nodeWord = "
                 )}
               </>
             )}
-            {t.queued && <span aria-hidden className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-warn ring-2 ring-[var(--slate-3)]" />}
+            {t.queued && <span aria-hidden className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-warn ring-2 ring-[var(--indigo-3)]" />}
           </div>
         );
       })}
