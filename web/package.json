@@ -12,6 +12,8 @@
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "test": "vitest run",
+    "verify": "vitest run --config vitest.verify.config.ts",
+    "verify:mutants": "node scripts/verify-mutants.mjs",
     "preview": "vite preview"
   },
   "dependencies": {
@@ -39,6 +41,7 @@
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.3.0",
     "autoprefixer": "^10.6.2",
+    "fast-check": "4.10.2",
     "oxlint": "^1.94.0",
     "postcss": "^8.5.33",
     "tailwindcss": "^4.3.5",
