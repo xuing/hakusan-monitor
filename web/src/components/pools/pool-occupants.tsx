@@ -1,12 +1,15 @@
 // Who is using a pool: per job (time left) or per user (an occupancy map).
 import { useEffect, useState } from "react";
+import { Clock, LayoutGrid } from "lucide-react";
 import { OccupancyMap, type OccupancyTile } from "@/components/common/occupancy-map";
+import { Segmented } from "@/components/common/segmented";
 import { jobSizeText } from "@/components/common/verdict-text";
 import { useLive } from "@/hooks/live-context";
 import { coresText, type TFn } from "@/i18n";
-import { idleGpuBucket, occupantsForPool, parseGpuCount, unschedulableCores } from "@/lib/derive";
+import { expandHostlist, gpuNodeParts, occupantsForPool, unschedulableCores } from "@/lib/derive";
 import { fmtCountdown, fmtDur, fmtMB, nf, parseDur } from "@/lib/format";
 import { occupancyMode } from "@/lib/occupancy-mode";
+import { idleGpuTiles, nodeParts } from "@/lib/occupancy-tiles";
 import { poolWaiters } from "@/lib/queue";
 import { partitionCap, wallLabelSec } from "@/lib/slurm";
 import { cn } from "@/lib/utils";
@@ -45,28 +48,25 @@ export function Occupants({ pool, t }: { pool: Pool; t: TFn }) {
   return (
     <div className="mt-2">
       <div className="mb-2 flex flex-wrap items-center gap-2">
+        {/* two views, not two sorts: jobs by time left, or users as a map */}
+        <Segmented
+          value={sort}
+          onChange={setSort}
+          ariaLabel={t("pool.occupants")}
+          className="h-8"
+          itemClassName="inline-flex items-center gap-1.5 px-3"
+          options={[
+            { value: "ending", label: <><Clock aria-hidden className="size-3.5" />{t("pool.sortEnding")}</> },
+            { value: "usage", label: <><LayoutGrid aria-hidden className="size-3.5" />{t("pool.sortUsage")}</> },
+          ]}
+        />
         <input
           value={q}
           onChange={(e) => setQ(e.target.value)}
           placeholder={t("table.search")}
           aria-label={t("table.search")}
-          className="h-7 w-40 rounded-md border border-border bg-background px-2 text-xs outline-none focus:border-primary"
+          className="h-8 w-40 rounded-md border border-border bg-background px-2 text-xs outline-none focus:border-primary"
         />
-        <div className="flex items-center rounded-md border border-border p-0.5">
-          {(["ending", "usage"] as const).map((s) => (
-            <button
-              key={s}
-              type="button"
-              onClick={() => setSort(s)}
-              className={cn(
-                "rounded px-2 py-0.5 text-xs transition-colors",
-                sort === s ? "bg-accent text-foreground" : "text-muted-foreground hover:text-foreground",
-              )}
-            >
-              {t(s === "usage" ? "pool.sortUsage" : "pool.sortEnding")}
-            </button>
-          ))}
-        </div>
         <span className="tnum ms-auto text-xs text-muted-foreground">
           {shown}/{total}
         </span>
@@ -110,6 +110,7 @@ function poolOccupancyTiles(pool: Pool, snap: Snapshot, groups: OccupantUserGrou
   for (const { job } of poolWaiters(snap, pool.id)) {
     waiting.set(job.user_name, (waiting.get(job.user_name) ?? 0) + 1);
   }
+  const perNode = isGpu ? gpuNodeParts(snap, pool.id) : null;
   const users: OccupancyTile[] = groups
     .map((g) => {
       const value = isGpu ? g.gpus : g.cpus;
@@ -123,6 +124,7 @@ function poolOccupancyTiles(pool: Pool, snap: Snapshot, groups: OccupantUserGrou
         sub: `${g.nodes} ${t("spec.nodes")}`,
         // the row layout prints one line: who, how much, how many nodes
         queued: queued > 0,
+        parts: nodeParts(perNode?.get(g.user), value),
         details: [
           `${g.nodes} ${t("spec.nodes")} · ${t(g.jobs === 1 ? "users.job1" : "users.jobs", { n: g.jobs })}`,
           [isGpu ? coresText(t, g.cpus) : "", `${t("kpi.memory")} ${fmtMB(g.mem_mb)}`].filter(Boolean).join(" · "),
@@ -135,9 +137,9 @@ function poolOccupancyTiles(pool: Pool, snap: Snapshot, groups: OccupantUserGrou
   const held = isGpu ? { reserved: pool.gpu!.reserved ?? 0, down: pool.gpu!.down } : unschedulableCores(snap.nodes, pool.id);
   // GPUs: one tile per node, so two free GPUs read as one node's pair or
   // as two nodes' singles (the grid parts owners with a gap)
-  const perNode = isGpu ? idleGpuTiles(pool, snap, unit, t) : null;
-  if (perNode && perNode.free === free && perNode.reserved === held.reserved && perNode.down === held.down) {
-    return [...users, ...perNode.tiles];
+  const idle = isGpu ? idleGpuTiles(pool, snap, unit, t) : null;
+  if (idle && idle.free === free && idle.reserved === held.reserved && idle.down === held.down) {
+    return [...users, ...idle.tiles];
   }
   return [
     ...users,
@@ -145,33 +147,6 @@ function poolOccupancyTiles(pool: Pool, snap: Snapshot, groups: OccupantUserGrou
     { key: "~reserved", value: held.reserved, kind: "reserved", amount: unit(held.reserved), sub: t("users.reserved"), details: [t("users.reservedDetail")] },
     { key: "~off", value: held.down, kind: "off", amount: unit(held.down), sub: t("users.offline"), details: [t("users.offline")] },
   ];
-}
-
-/** The pool's idle GPUs as one tile per node and kind (free, reserved,
- *  offline), with the totals they add up to; the biggest first. */
-function idleGpuTiles(pool: Pool, snap: Snapshot, unit: (n: number) => string, t: TFn) {
-  const type = pool.gpu?.type ?? "";
-  const sums = { free: 0, reserved: 0, down: 0 };
-  const rows: { name: string; kind: "free" | "reserved" | "down"; n: number }[] = [];
-  for (const node of snap.nodes) {
-    if (node.pool !== pool.id) continue;
-    const n = Math.max(0, parseGpuCount(node.gres, type) - parseGpuCount(node.gres_used, type));
-    const kind = idleGpuBucket(node);
-    if (n <= 0 || kind === "short") continue;
-    sums[kind] += n;
-    rows.push({ name: node.name, kind, n });
-  }
-  const order = { free: 0, reserved: 1, down: 2 };
-  rows.sort((a, b) => order[a.kind] - order[b.kind] || b.n - a.n || a.name.localeCompare(b.name));
-  const tiles: OccupancyTile[] = rows.map((r) => ({
-    key: `~${r.kind}:${r.name}`,
-    value: r.n,
-    kind: r.kind === "down" ? "off" : r.kind,
-    amount: unit(r.n),
-    sub: t(r.kind === "free" ? "users.free" : r.kind === "reserved" ? "users.reserved" : "users.offline"),
-    details: [r.name, ...(r.kind === "reserved" ? [t("users.reservedDetail")] : [])],
-  }));
-  return { tiles, ...sums };
 }
 
 interface OccupantUserGroup {
@@ -185,6 +160,8 @@ interface OccupantUserGroup {
 
 function occupantUserGroups(list: Occupant[]): OccupantUserGroup[] {
   const map = new Map<string, OccupantUserGroup>();
+  // two jobs on one node hold one node, not two
+  const hosts = new Map<string, Set<string>>();
   for (const o of list) {
     const g = map.get(o.user) ?? {
       user: o.user,
@@ -198,7 +175,10 @@ function occupantUserGroups(list: Occupant[]): OccupantUserGroup[] {
     g.gpus += o.gpus;
     g.cpus += o.cpus;
     g.mem_mb += o.mem_mb;
-    g.nodes += o.nodes;
+    const mine = hosts.get(o.user) ?? new Set<string>();
+    hosts.set(o.user, mine);
+    for (const h of expandHostlist(o.nodelist)) mine.add(h);
+    g.nodes = mine.size || g.nodes + o.nodes;
     map.set(o.user, g);
   }
   return [...map.values()].sort(

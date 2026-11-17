@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { gridDims, packColumns } from "./gpu-grid";
+import { cellParts, gridDims, packColumns } from "./gpu-grid";
 
 describe("gridDims", () => {
   it("picks the factor pair nearest 16:9", () => {
@@ -52,5 +52,58 @@ describe("packRects", () => {
     const out = packRects([{ key: "a", n: 3 }, { key: "free", n: 1, filler: true }], 2, 2)!;
     expect(out.grid.flat().filter((c) => c?.key === "free")).toHaveLength(1);
     expect(out.grid.flat().filter((c) => c?.key === "a")).toHaveLength(3);
+  });
+});
+
+describe("cellParts (A40, 2026-11-17 17:12)", () => {
+  // each part's cells form one connected piece in the grid
+  const connected = (cells: [number, number][], ids: number[]) => {
+    for (const id of new Set(ids)) {
+      const mine = cells.filter((_, i) => ids[i] === id);
+      const reach = new Set([0]);
+      for (let grew = true; grew;) {
+        grew = false;
+        mine.forEach((c, i) => {
+          if (reach.has(i)) return;
+          if ([...reach].some((j) => Math.abs(mine[j][0] - c[0]) + Math.abs(mine[j][1] - c[1]) === 1)) {
+            reach.add(i);
+            grew = true;
+          }
+        });
+      }
+      if (reach.size !== mine.length) return false;
+    }
+    return true;
+  };
+
+  it("keeps a node's pair together beside two single GPUs (s2610205: 4 GPU on 3 nodes)", () => {
+    const cells: [number, number][] = [[0, 0], [1, 0], [0, 1], [1, 1]];
+    const ids = cellParts(cells, [1, 1, 2]);
+    expect(new Set(ids).size).toBe(3);
+    expect(connected(cells, ids)).toBe(true);
+    // the pair lies in one row
+    const pair = cells.filter((_, i) => ids.filter((x) => x === ids[i]).length === 2);
+    expect(pair[0][1]).toBe(pair[1][1]);
+  });
+
+  it("lays three whole nodes in a 3 × 2 block as three straight pairs", () => {
+    const cells: [number, number][] = [];
+    for (let r = 0; r < 2; r++) for (let c = 0; c < 3; c++) cells.push([c, r]);
+    const ids = cellParts(cells, [2, 2, 2]);
+    expect(new Set(ids).size).toBe(3);
+    expect(connected(cells, ids)).toBe(true);
+  });
+
+  it("walks a rectangle with a tail row", () => {
+    // three across, then two under the left: 7 = 2 + 2 + 2 + 1
+    const cells: [number, number][] = [[0, 0], [1, 0], [2, 0], [0, 1], [1, 1], [2, 1], [0, 2]];
+    const ids = cellParts(cells, [2, 2, 2, 1]);
+    expect(new Set(ids).size).toBe(4);
+    expect(connected(cells, ids)).toBe(true);
+  });
+
+  it("gives cells past the parts' total one part each", () => {
+    const ids = cellParts([[0, 0], [1, 0], [2, 0]], [2]);
+    expect(new Set(ids).size).toBe(2);
   });
 });

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { gridDims, packRects } from "@/lib/gpu-grid";
+import { cellParts, gridDims, packRects } from "@/lib/gpu-grid";
 import { squarify } from "@/lib/treemap";
 import { cn } from "@/lib/utils";
 
@@ -18,6 +18,9 @@ export interface OccupancyTile {
   queued?: boolean;
   /** shown on hover / tap */
   details: string[];
+  /** units per node, where the tile spans nodes: on a grid one node's
+   *  cells are drawn as one piece, a faint line only between nodes */
+  parts?: number[];
 }
 
 // one blue for every user (the gaps between tiles separate them), green
@@ -63,9 +66,6 @@ function layoutTiles(tiles: OccupancyTile[], w: number, h: number,
   return [...top, ...strip];
 }
 
-/** One cell per GPU in a columns × rows grid; a user's cells form one block
- *  (whole columns plus a step), thick gaps between owners, faint lines between
- *  cells of the same owner. The name and count sit in the block's first cell. */
 /** The grid for these tiles, or null where a grid does not apply (no whole
  *  units, too many cells, users that do not fit). */
 function gridLayout(tiles: OccupancyTile[]) {
@@ -82,7 +82,7 @@ function gridLayout(tiles: OccupancyTile[]) {
 
 /** One cell per GPU in a columns × rows grid; each owner a rectangle where
  *  the counts allow it, thick gaps between owners, faint lines between one
- *  owner's cells. The text sits over the block's rectangle and says as much
+ *  owner's nodes (a node's GPUs read as one piece). The text sits over the block's rectangle and says as much
  *  as fits: name, count, nodes, then the hover card's lines. */
 function CellGrid({ tiles, ariaLabel, dashed, className }: { tiles: OccupancyTile[]; ariaLabel: string; dashed?: boolean; className?: string }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -98,6 +98,17 @@ function CellGrid({ tiles, ariaLabel, dashed, className }: { tiles: OccupancyTil
   const layout = gridLayout(tiles);
   if (!layout) return null;
   const { grid, blocks, cols, rows } = layout;
+  // the node each cell sits on: a tile with parts keeps a node's cells
+  // together; one without has every cell on its own
+  const part: number[][] = Array.from({ length: cols }, () => Array<number>(rows).fill(-1));
+  let nextPart = 0;
+  for (const t of tiles) {
+    const mine: [number, number][] = [];
+    for (let c = 0; c < cols; c++) for (let r = 0; r < rows; r++) if (grid[c][r]?.key === t.key) mine.push([c, r]);
+    const ids = t.parts ? cellParts(mine, t.parts) : mine.map((_, i) => i);
+    mine.forEach(([c, r], i) => (part[c][r] = nextPart + ids[i]));
+    nextPart += mine.length;
+  }
   const cw = size.w / cols;
   const ch = size.h / rows;
   const cells: ReactNode[] = [];
@@ -106,6 +117,9 @@ function CellGrid({ tiles, ariaLabel, dashed, className }: { tiles: OccupancyTil
       const it = grid[c][r];
       if (!it) continue;
       const show = (e: { clientX: number; clientY: number }) => setTip({ tile: it, x: e.clientX, y: e.clientY });
+      // a faint line where the cell meets another node of the same owner
+      const lineL = c > 0 && grid[c - 1][r]?.key === it.key && part[c - 1][r] !== part[c][r];
+      const lineT = r > 0 && grid[c][r - 1]?.key === it.key && part[c][r - 1] !== part[c][r];
       cells.push(
         <div
           key={`${c}-${r}`}
@@ -114,11 +128,15 @@ function CellGrid({ tiles, ariaLabel, dashed, className }: { tiles: OccupancyTil
           className={cn(
             "min-w-0",
             TONE[it.kind],
-            dashed ? CELL_DASH[it.kind] : CELL_LINE[it.kind],
+            dashed && CELL_DASH[it.kind],
             c > 0 && grid[c - 1][r]?.key !== it.key && "border-l-4 border-l-card",
             r > 0 && grid[c][r - 1]?.key !== it.key && "border-t-4 border-t-card",
           )}
-          style={{ gridColumn: c + 1, gridRow: r + 1 }}
+          style={{
+            gridColumn: c + 1,
+            gridRow: r + 1,
+            boxShadow: !dashed && (lineL || lineT) ? `inset ${lineL ? 1 : 0}px ${lineT ? 1 : 0}px 0 var(--${HUE[it.kind]}-7)` : undefined,
+          }}
         />,
       );
     }
@@ -214,14 +232,6 @@ const HOVER = {
   off: "hover:bg-[var(--gray-5)]",
 } as const;
 const HUE = { user: "blue", free: "green", reserved: "amber", off: "gray" } as const;
-// faint lines between one owner's cells, in its own hue
-const CELL_LINE = {
-  user: "shadow-[inset_1px_1px_0_var(--blue-6)]",
-  free: "shadow-[inset_1px_1px_0_var(--green-6)]",
-  reserved: "shadow-[inset_1px_1px_0_var(--amber-6)]",
-  off: "shadow-[inset_1px_1px_0_var(--gray-6)]",
-} as const;
-
 // cores are many and small: a dashed hairline on the right and bottom edges
 const CELL_DASH = {
   user: "border-b border-r border-dashed border-[var(--blue-7)]",

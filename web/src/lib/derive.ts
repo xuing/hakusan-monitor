@@ -153,6 +153,30 @@ export function occupantsForPool(snap: Snapshot, poolId: string): Occupant[] {
   return out.sort((a, b) => b.gpus - a.gpus || b.cpus - a.cpus || b.nodes - a.nodes);
 }
 
+/** The GPUs each user holds in a pool, one count per node they hold them on,
+ *  from the running jobs: user → counts. The snapshot has no per-node split
+ *  for a job over several nodes (--gpus=4 on two nodes may be 3 + 1), so such
+ *  a job counts per node only when it fills every node it is on; otherwise
+ *  each of its GPUs counts alone. */
+export function gpuNodeParts(snap: Snapshot, poolId: string): Map<string, number[]> {
+  const type = snap.pools.find((p) => p.id === poolId)?.gpu?.type ?? "";
+  const cap = new Map(snap.nodes.filter((n) => n.pool === poolId).map((n) => [n.name, parseGpuCount(n.gres, type)]));
+  const per = new Map<string, Map<string, number>>();
+  for (const j of snap.jobs) {
+    if (j.job_state !== "RUNNING" || !j.gpus) continue;
+    if (snap.part_pool[String(j.partition).split(",")[0]] !== poolId) continue;
+    const hosts = expandHostlist(j.nodelist);
+    if (!hosts.length) continue;
+    const held = per.get(j.user_name) ?? new Map<string, number>();
+    per.set(j.user_name, held);
+    const add = (key: string, n: number) => held.set(key, (held.get(key) ?? 0) + n);
+    if (hosts.length === 1) add(hosts[0], j.gpus);
+    else if (hosts.reduce((a, h) => a + (cap.get(h) ?? 0), 0) === j.gpus) for (const h of hosts) add(h, cap.get(h)!);
+    else for (let k = 0; k < j.gpus; k++) add(`${j.job_id}#${k}`, 1);
+  }
+  return new Map([...per].map(([user, held]) => [user, [...held.values()]]));
+}
+
 /** Expand a Slurm hostlist: "lcpcc-[001-003,005]" -> [lcpcc-001, lcpcc-002, lcpcc-003, lcpcc-005]. */
 export function expandHostlist(s: string): string[] {
   if (!s) return [];

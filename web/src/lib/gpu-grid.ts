@@ -196,3 +196,85 @@ export function packRects<T extends GridItem>(items: T[], cols: number, rows: nu
   }
   return { grid, blocks };
 }
+
+
+const touching = (a: [number, number], b: [number, number]) => Math.abs(a[0] - b[0]) + Math.abs(a[1] - b[1]) === 1;
+
+/** The cells walked as a snake along rows (or columns): each line in turn,
+ *  every other one reversed, `flip` choosing the first line's direction. */
+function snake(cells: [number, number][], byCol: boolean, flip: boolean): number[] {
+  const lines = new Map<number, number[]>();
+  cells.forEach(([c, r], i) => {
+    const k = byCol ? c : r;
+    lines.set(k, [...(lines.get(k) ?? []), i]);
+  });
+  const along = (i: number) => (byCol ? cells[i][1] : cells[i][0]);
+  return [...lines.keys()].sort((a, b) => a - b).flatMap((k, n) => {
+    const line = lines.get(k)!.sort((a, b) => along(a) - along(b));
+    return (n % 2 === 1) !== flip ? line.reverse() : line;
+  });
+}
+
+/** A walk through the cells that steps to the neighbour with the fewest
+ *  ways on (Warnsdorff), jumping to the next cell in reading order when it
+ *  is stuck. */
+function greedyWalk(cells: [number, number][]): number[] {
+  const at = new Map(cells.map(([c, r], i) => [`${c},${r}`, i]));
+  const seen = cells.map(() => false);
+  const next = (i: number) => {
+    const [c, r] = cells[i];
+    return ([[c + 1, r], [c, r + 1], [c - 1, r], [c, r - 1]] as const)
+      .map(([x, y]) => at.get(`${x},${y}`))
+      .filter((j): j is number => j !== undefined && !seen[j]);
+  };
+  const reading = cells.map((_, i) => i).sort((a, b) => cells[a][1] - cells[b][1] || cells[a][0] - cells[b][0]);
+  const order: number[] = [];
+  let cur: number | undefined;
+  while (order.length < cells.length) {
+    cur ??= reading.find((i) => !seen[i])!;
+    seen[cur] = true;
+    order.push(cur);
+    const ns = next(cur);
+    cur = ns.length ? ns.reduce((best, j) => (next(j).length < next(best).length ? j : best)) : undefined;
+  }
+  return order;
+}
+
+/**
+ * Which part (a node) each of one owner's cells belongs to, so the cells of
+ * a part touch: the owner's cells are walked as a snake, by rows or by
+ * columns, whichever keeps the most parts in a straight line, and cut into
+ * runs, the biggest parts first. Cells past the parts' total are one part
+ * each. Returns a part id per cell, in the order given.
+ */
+export function cellParts(cells: [number, number][], parts: number[]): number[] {
+  const sizes = parts.filter((p) => p > 0).sort((a, b) => b - a);
+  const cut = (order: number[]) => {
+    const out = new Array<number>(cells.length).fill(0);
+    let id = 0;
+    let left = sizes[0] ?? 1;
+    for (const i of order) {
+      if (left === 0) {
+        id += 1;
+        left = sizes[id] ?? 1;
+      }
+      out[i] = id;
+      left -= 1;
+    }
+    return out;
+  };
+  const straight = (ids: number[]) => {
+    const groups = new Map<number, [number, number][]>();
+    ids.forEach((id, i) => groups.set(id, [...(groups.get(id) ?? []), cells[i]]));
+    return [...groups.values()].filter((g) => g.every(([c]) => c === g[0][0]) || g.every(([, r]) => r === g[0][1])).length;
+  };
+  let best: { ids: number[]; score: number } | null = null;
+  for (const [byCol, flip] of [[false, false], [false, true], [true, false], [true, true]] as const) {
+    const order = snake(cells, byCol, flip);
+    if (!order.every((i, k) => k === 0 || touching(cells[order[k - 1]], cells[i]))) continue;
+    const ids = cut(order);
+    const score = straight(ids);
+    if (!best || score > best.score) best = { ids, score };
+  }
+  return best?.ids ?? cut(greedyWalk(cells));
+}

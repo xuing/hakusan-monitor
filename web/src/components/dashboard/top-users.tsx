@@ -5,8 +5,9 @@ import { useLive } from "@/hooks/live-context";
 import { useResourceFilter } from "@/hooks/resource-filter-context";
 import { coresText, poolTitle, useT, type TFn } from "@/i18n";
 import { fmtMB, nf } from "@/lib/format";
-import { unschedulableCores } from "@/lib/derive";
+import { gpuNodeParts, unschedulableCores } from "@/lib/derive";
 import { occupancyMode } from "@/lib/occupancy-mode";
+import { idleGpuTiles, nodeParts } from "@/lib/occupancy-tiles";
 import { groupUsage, poolUsage, type PoolUsage } from "@/lib/user-usage";
 import { cn } from "@/lib/utils";
 import type { Snapshot } from "@/types/snapshot";
@@ -101,6 +102,9 @@ const unitText = (unit: "gpus" | "cores", n: number, t: TFn) =>
 /** One tile per user, sized in the panel's unit, then free and offline. */
 function usageTiles(usage: PoolUsage, snap: Snapshot, t: TFn): OccupancyTile[] {
   const { unit, pools } = usage;
+  // one GPU pool alone is drawn as a grid: its nodes show, as on the pool card
+  const single = pools.length === 1 && unit === "gpus" && pools[0].gpu ? pools[0] : null;
+  const perNode = single ? gpuNodeParts(snap, single.id) : null;
   const users: OccupancyTile[] = usage.users
     .map((u) => {
       const value = unit === "gpus" ? u.held.gpus : u.held.cores;
@@ -116,6 +120,7 @@ function usageTiles(usage: PoolUsage, snap: Snapshot, t: TFn): OccupancyTile[] {
         label: u.user,
         amount: unitText(unit, value, t),
         queued: u.pending > 0,
+        parts: nodeParts(perNode?.get(u.user), value),
         details: [
           t(u.running === 1 ? "users.job1" : "users.jobs", { n: u.running }),
           ...(models ? [models] : []),
@@ -141,6 +146,8 @@ function usageTiles(usage: PoolUsage, snap: Snapshot, t: TFn): OccupancyTile[] {
       off += held.down;
     }
   }
+  const idle = single ? idleGpuTiles(single, snap, (n) => unitText(unit, n, t), t) : null;
+  if (idle && idle.free === free && idle.reserved === reserved && idle.down === off) return [...users, ...idle.tiles];
   return [
     ...users,
     { key: "~free", value: free, kind: "free", amount: unitText(unit, free, t), sub: t("users.free"), details: [t("users.free")] },
