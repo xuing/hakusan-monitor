@@ -1,5 +1,6 @@
 /** Columns × rows for n cells: the factor pair whose shape is closest to the
- *  map's 16:9 (40 → 8 × 5, 20 → 5 × 4, 4 → 2 × 2). */
+ *  map's (16:9 by default: 40 → 8 × 5, 20 → 5 × 4, 4 → 2 × 2; a 620 × 220
+ *  map: 40 → 10 × 4). */
 export function gridDims(n: number, aspect = 16 / 9): [number, number] {
   let best: [number, number] = [Math.max(1, n), 1];
   let score = Number.POSITIVE_INFINITY;

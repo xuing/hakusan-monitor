@@ -59,8 +59,9 @@ function Facts({ text, hue, className }: { text: string; hue: string; className?
   );
 }
 
-// one blue for every user (the gaps between tiles separate them), green
-// free, gray offline — the same meanings as every bar on the page
+// one quiet slate for every user (the gaps between tiles separate them), so
+// the scarce states stand out: green free, amber held by the scheduler,
+// gray offline
 
 const STRIP_H = 34;
 const STRIP_MIN_W = 72;
@@ -104,7 +105,7 @@ function layoutTiles(tiles: OccupancyTile[], w: number, h: number,
 
 /** The grid for these tiles, or null where a grid does not apply (no whole
  *  units, too many cells, users that do not fit). */
-function gridLayout(tiles: OccupancyTile[]) {
+function gridLayout(tiles: OccupancyTile[], aspect?: number) {
   const items = tiles
     .filter((t) => t.value > 0)
     // one node's idle GPUs stay in one piece
@@ -112,7 +113,7 @@ function gridLayout(tiles: OccupancyTile[]) {
   if (items.some((t) => !Number.isInteger(t.n))) return null;
   const total = items.reduce((a, t) => a + t.n, 0);
   if (total === 0 || total > 400) return null;
-  const [cols, rows] = gridDims(total);
+  const [cols, rows] = gridDims(total, aspect);
   const packed = packRects(items, cols, rows);
   return packed ? { ...packed, cols, rows } : null;
 }
@@ -123,9 +124,9 @@ function gridLayout(tiles: OccupancyTile[]) {
  *  holds several GPUs of a node. The text sits over the block's
  *  rectangle and says as much as fits: name, count, nodes, then the hover
  *  card's lines. */
-function CellGrid({ tiles, ariaLabel, dashed, multiLabel, onPick, highlight, className }: {
+function CellGrid({ tiles, ariaLabel, dashed, multiLabel, onPick, highlight, height, className }: {
   tiles: OccupancyTile[]; ariaLabel: string; dashed?: boolean; multiLabel?: string; onPick?: (t: OccupancyTile) => void;
-  highlight?: (t: OccupancyTile) => boolean; className?: string;
+  highlight?: (t: OccupancyTile) => boolean; height?: number; className?: string;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ w: 0, h: 0 });
@@ -137,7 +138,9 @@ function CellGrid({ tiles, ariaLabel, dashed, multiLabel, onPick, highlight, cla
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
-  const layout = gridLayout(tiles);
+  // cells close to square in the box as measured; the 16:9 cut when the
+  // counts do not pack that way
+  const layout = (size.w > 0 && size.h > 0 ? gridLayout(tiles, size.w / size.h) : null) ?? gridLayout(tiles);
   if (!layout) return null;
   const { grid, blocks, cols, rows } = layout;
   // the node each cell sits on: a tile with parts keeps a node's cells
@@ -208,7 +211,8 @@ function CellGrid({ tiles, ariaLabel, dashed, multiLabel, onPick, highlight, cla
             ...(multi[c][r] >= 0 && size.w > 0
               ? { backgroundImage: MULTI_HATCH[multi[c][r]], backgroundSize: `${size.w}px ${size.h}px`, backgroundPosition: `${-c * cw}px ${-r * ch}px`, backgroundOrigin: "border-box" }
               : {}),
-            boxShadow: !dashed && (lineL || lineT) ? `inset ${lineL ? 1 : 0}px ${lineT ? 1 : 0}px 0 var(--${HUE[it.kind]}-7)` : undefined,
+            // step 6: quieter than the gap between owners, in dark mode too
+            boxShadow: !dashed && (lineL || lineT) ? `inset ${lineL ? 1 : 0}px ${lineT ? 1 : 0}px 0 var(--${HUE[it.kind]}-6)` : undefined,
           }}
         />,
       );
@@ -249,7 +253,7 @@ function CellGrid({ tiles, ariaLabel, dashed, multiLabel, onPick, highlight, cla
           gridColumn: `${b.c + 1} / span ${b.w}`,
           gridRow: `${b.r + 1} / span ${b.h}`,
           // a halo in the tile's fill keeps the text clear of hatching and lines
-          textShadow: `0 0 6px var(--${HUE[t.kind]}-4), 0 0 2px var(--${HUE[t.kind]}-4)`,
+          textShadow: `0 0 6px ${FILL[t.kind]}, 0 0 2px ${FILL[t.kind]}`,
         }}
       >
         {t.kind === "user" ? (
@@ -272,7 +276,7 @@ function CellGrid({ tiles, ariaLabel, dashed, multiLabel, onPick, highlight, cla
             </>
           )
         )}
-        {t.queued && <span aria-hidden className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-warn ring-2 ring-[var(--blue-4)]" />}
+        {t.queued && <span aria-hidden className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-warn ring-2 ring-[var(--slate-3)]" />}
       </div>,
     );
   }
@@ -284,8 +288,8 @@ function CellGrid({ tiles, ariaLabel, dashed, multiLabel, onPick, highlight, cla
         aria-label={ariaLabel}
         onMouseLeave={() => setTip(null)}
         dir="ltr"
-        className={cn("relative grid aspect-[16/9] w-full overflow-hidden rounded-lg", className)}
-        style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`, gridTemplateRows: `repeat(${rows}, minmax(0, 1fr))` }}
+        className={cn("relative grid w-full overflow-hidden rounded-lg", !height && "aspect-[16/9]", className)}
+        style={{ height, gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`, gridTemplateRows: `repeat(${rows}, minmax(0, 1fr))` }}
       >
         {cells}
         {labels}
@@ -294,7 +298,7 @@ function CellGrid({ tiles, ariaLabel, dashed, multiLabel, onPick, highlight, cla
       {/* the hatching is explained only where it shows */}
       {anyMulti && multiLabel && (
         <div className="mt-1.5 flex items-center gap-1.5 text-xs text-muted-foreground">
-          <span aria-hidden className="h-3.5 w-3.5 rounded-[3px] border border-[var(--blue-7)] bg-[var(--blue-4)]" style={{ backgroundImage: MULTI_HATCH[0] }} />
+          <span aria-hidden className="h-3.5 w-3.5 rounded-[3px] border border-[var(--slate-7)] bg-[var(--slate-3)]" style={{ backgroundImage: MULTI_HATCH[0] }} />
           {multiLabel}
         </div>
       )}
@@ -322,35 +326,37 @@ function TipCard({ tip }: { tip: Tip }) {
   );
 }
 
-// one job holding several GPUs of a node: the same held blue (a new fill
+// one job holding several GPUs of a node: the same held fill (a new one
 // would read as another user), hatched with thin diagonal lines, the two
 // directions telling neighbouring jobs apart
-const hatch = (deg: number) => `repeating-linear-gradient(${deg}deg, transparent 0 7px, color-mix(in oklab, var(--blue-7) 26%, transparent) 7px 8px)`;
+const hatch = (deg: number) => `repeating-linear-gradient(${deg}deg, transparent 0 7px, color-mix(in oklab, var(--slate-8) 30%, transparent) 7px 8px)`;
 const MULTI_HATCH = [hatch(135), hatch(45)];
 
 // a tile outside the current filter steps back; it stays readable and
 // clickable, so the map still shows the whole pool
 const FADED = "opacity-35";
 
-// soft tints with dark text: large areas stay calm; the hue keeps its
-// meaning (blue held, green free, amber held by the scheduler, gray offline)
-// and Radix flips it in dark mode
+// soft tints with dark text: held is the quiet base, so free (green),
+// scheduler-held (amber) and offline (a darker gray) stand out; blue stays
+// for what can be clicked. Radix flips them in dark mode
 const TONE = {
-  user: "bg-[var(--blue-4)] text-[var(--blue-12)]",
+  user: "bg-[var(--slate-3)] text-[var(--slate-12)]",
   free: "bg-[var(--green-4)] text-[var(--green-12)]",
   reserved: "bg-[var(--amber-4)] text-[var(--amber-12)]",
-  off: "bg-[var(--gray-4)] text-[var(--gray-11)]",
+  off: "bg-[var(--gray-5)] text-[var(--gray-11)]",
 } as const;
 const HOVER = {
-  user: "hover:bg-[var(--blue-5)]",
+  user: "hover:bg-[var(--slate-4)]",
   free: "hover:bg-[var(--green-5)]",
   reserved: "hover:bg-[var(--amber-5)]",
-  off: "hover:bg-[var(--gray-5)]",
+  off: "hover:bg-[var(--gray-6)]",
 } as const;
-const HUE = { user: "blue", free: "green", reserved: "amber", off: "gray" } as const;
+const HUE = { user: "slate", free: "green", reserved: "amber", off: "gray" } as const;
+/** each kind's fill, for the text halo that must match it */
+const FILL = { user: "var(--slate-3)", free: "var(--green-4)", reserved: "var(--amber-4)", off: "var(--gray-5)" } as const;
 // cores are many and small: a dashed hairline on the right and bottom edges
 const CELL_DASH = {
-  user: "border-b border-r border-dashed border-[var(--blue-7)]",
+  user: "border-b border-r border-dashed border-[var(--slate-7)]",
   free: "border-b border-r border-dashed border-[var(--green-7)]",
   reserved: "border-b border-r border-dashed border-[var(--amber-7)]",
   off: "border-b border-r border-dashed border-[var(--gray-7)]",
@@ -394,7 +400,7 @@ function layoutRows(tiles: OccupancyTile[], w: number, h: number, perRow: number
  * The pool as one box, each tile's area its share: who holds how much is the
  * first thing seen; cores, memory and jobs come up on hover (or a tap).
  */
-export function OccupancyMap({ tiles, ariaLabel, restLabel, perRow, nodeWord = "", grid, dashed, multiLabel, onPick, highlight, className }: {
+export function OccupancyMap({ tiles, ariaLabel, restLabel, perRow, nodeWord = "", grid, dashed, multiLabel, onPick, highlight, height, className }: {
   tiles: OccupancyTile[];
   ariaLabel: string;
   /** cores of one node, where every job holds whole nodes: then one row per
@@ -414,6 +420,8 @@ export function OccupancyMap({ tiles, ariaLabel, restLabel, perRow, nodeWord = "
   onPick?: (t: OccupancyTile) => void;
   /** when set, the tiles it turns down fade (a filter the map stands for) */
   highlight?: (t: OccupancyTile) => boolean;
+  /** px; without it the map keeps a 16:9 box */
+  height?: number;
   className?: string;
 }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -426,7 +434,7 @@ export function OccupancyMap({ tiles, ariaLabel, restLabel, perRow, nodeWord = "
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
-  if (grid && gridLayout(tiles)) return <CellGrid tiles={tiles} ariaLabel={ariaLabel} dashed={dashed} multiLabel={multiLabel} onPick={onPick} highlight={highlight} className={className} />;
+  if (grid && gridLayout(tiles)) return <CellGrid tiles={tiles} ariaLabel={ariaLabel} dashed={dashed} multiLabel={multiLabel} onPick={onPick} highlight={highlight} height={height} className={className} />;
   const rects = perRow ? layoutRows(tiles, size.w, size.h, perRow) : layoutTiles(tiles, size.w, size.h, restLabel);
   return (
     <div
@@ -434,7 +442,8 @@ export function OccupancyMap({ tiles, ariaLabel, restLabel, perRow, nodeWord = "
       role="img"
       aria-label={ariaLabel}
       dir="ltr"
-      className={cn("relative aspect-[16/9] w-full overflow-hidden rounded-lg", className)}
+      className={cn("relative w-full overflow-hidden rounded-lg", !height && "aspect-[16/9]", className)}
+      style={height ? { height } : undefined}
       onMouseLeave={() => setTip(null)}
     >
       {rects.map(({ item: t, x, y, w, h }) => {
@@ -497,7 +506,7 @@ export function OccupancyMap({ tiles, ariaLabel, restLabel, perRow, nodeWord = "
                 )}
               </>
             )}
-            {t.queued && <span aria-hidden className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-warn ring-2 ring-[var(--blue-4)]" />}
+            {t.queued && <span aria-hidden className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-warn ring-2 ring-[var(--slate-3)]" />}
           </div>
         );
       })}

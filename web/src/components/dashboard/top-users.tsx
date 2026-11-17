@@ -53,10 +53,10 @@ function Legend({ t, reserved }: { t: TFn; reserved: boolean }) {
   );
   return (
     <span className="flex flex-wrap items-center gap-x-3 gap-y-1 whitespace-nowrap">
-      {item("bg-[var(--blue-4)] ring-1 ring-inset ring-[var(--blue-7)]", t("users.held"))}
+      {item("bg-[var(--slate-3)] ring-1 ring-inset ring-[var(--slate-7)]", t("users.held"))}
       {item("bg-[var(--green-4)] ring-1 ring-inset ring-[var(--green-7)]", t("users.free"))}
       {reserved && item("bg-[var(--amber-4)] ring-1 ring-inset ring-[var(--amber-7)]", t("users.reserved"))}
-      {item("bg-[var(--gray-4)] ring-1 ring-inset ring-[var(--gray-7)]", t("users.offline"))}
+      {item("bg-[var(--gray-5)] ring-1 ring-inset ring-[var(--gray-7)]", t("users.offline"))}
       <span className="flex items-center gap-1.5">
         <span className="h-2 w-2 rounded-full bg-warn" />
         {t("users.queued")}
