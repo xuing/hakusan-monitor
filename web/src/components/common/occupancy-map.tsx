@@ -23,6 +23,8 @@ export interface OccupancyTile {
   parts?: NodePart[];
   /** "排队 3 个作业": the user still has jobs waiting (with queued) */
   queuedText?: string;
+  /** the tiles a merged "others" tile stands for */
+  members?: OccupancyTile[];
 }
 
 /** One node's share of a tile. */
@@ -36,6 +38,11 @@ export interface NodePart {
 }
 
 type Tip = { tile: OccupancyTile; lines?: string[]; x: number; y: number };
+
+/** Does a filter fade this tile? A merged "others" tile stays lit while any
+ *  user in it passes. */
+const faded = (t: OccupancyTile, highlight?: (t: OccupancyTile) => boolean) =>
+  !!highlight && !(t.members ?? [t]).some(highlight);
 
 /** A user's own tile, not the strip's merged "others". */
 const pickable = (t: OccupancyTile) => t.kind === "user" && t.key !== "~rest";
@@ -81,7 +88,7 @@ function layoutTiles(tiles: OccupancyTile[], w: number, h: number,
     const tail = small.slice(fit - 1);
     const sum = tail.reduce((a, t) => a + t.value, 0);
     const { label, amount } = restLabel(tail.length, sum);
-    small = [...kept, { key: "~rest", value: sum, kind: "user", label, amount, details: tail.map((t) => `${t.label ?? t.amount} ${t.label ? t.amount : ""}`.trim()) }];
+    small = [...kept, { key: "~rest", value: sum, kind: "user", label, amount, members: tail, details: tail.map((t) => `${t.label ?? t.amount} ${t.label ? t.amount : ""}`.trim()) }];
   }
   const sum = small.reduce((a, t) => a + t.value, 0);
   const free = w - STRIP_MIN_W * small.length;
@@ -116,8 +123,9 @@ function gridLayout(tiles: OccupancyTile[]) {
  *  holds several GPUs of a node. The text sits over the block's
  *  rectangle and says as much as fits: name, count, nodes, then the hover
  *  card's lines. */
-function CellGrid({ tiles, ariaLabel, dashed, multiLabel, onPick, className }: {
-  tiles: OccupancyTile[]; ariaLabel: string; dashed?: boolean; multiLabel?: string; onPick?: (t: OccupancyTile) => void; className?: string;
+function CellGrid({ tiles, ariaLabel, dashed, multiLabel, onPick, highlight, className }: {
+  tiles: OccupancyTile[]; ariaLabel: string; dashed?: boolean; multiLabel?: string; onPick?: (t: OccupancyTile) => void;
+  highlight?: (t: OccupancyTile) => boolean; className?: string;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ w: 0, h: 0 });
@@ -184,8 +192,9 @@ function CellGrid({ tiles, ariaLabel, dashed, multiLabel, onPick, className }: {
           onMouseMove={show}
           onClick={(e) => (onPick && pickable(it) ? onPick(it) : show(e))}
           className={cn(
-            "min-w-0",
+            "min-w-0 transition-opacity",
             onPick && pickable(it) && "cursor-pointer",
+            faded(it, highlight) && FADED,
             TONE[it.kind],
             dashed && CELL_DASH[it.kind],
             c > 0 && grid[c - 1][r]?.key !== it.key && "border-l-4 border-l-card",
@@ -232,8 +241,9 @@ function CellGrid({ tiles, ariaLabel, dashed, multiLabel, onPick, className }: {
           }
         }}
         className={cn(
-          "pointer-events-none relative z-[1] min-w-0 overflow-hidden px-2 py-1.5 text-xs leading-tight outline-none focus-visible:ring-2 focus-visible:ring-primary/60",
+          "pointer-events-none relative z-[1] min-w-0 overflow-hidden px-2 py-1.5 text-xs leading-tight outline-none transition-opacity focus-visible:ring-2 focus-visible:ring-primary/60",
           TONE[t.kind].split(" ")[1],
+          faded(t, highlight) && FADED,
         )}
         style={{
           gridColumn: `${b.c + 1} / span ${b.w}`,
@@ -318,6 +328,10 @@ function TipCard({ tip }: { tip: Tip }) {
 const hatch = (deg: number) => `repeating-linear-gradient(${deg}deg, transparent 0 7px, color-mix(in oklab, var(--blue-7) 26%, transparent) 7px 8px)`;
 const MULTI_HATCH = [hatch(135), hatch(45)];
 
+// a tile outside the current filter steps back; it stays readable and
+// clickable, so the map still shows the whole pool
+const FADED = "opacity-35";
+
 // soft tints with dark text: large areas stay calm; the hue keeps its
 // meaning (blue held, green free, amber held by the scheduler, gray offline)
 // and Radix flips it in dark mode
@@ -380,7 +394,7 @@ function layoutRows(tiles: OccupancyTile[], w: number, h: number, perRow: number
  * The pool as one box, each tile's area its share: who holds how much is the
  * first thing seen; cores, memory and jobs come up on hover (or a tap).
  */
-export function OccupancyMap({ tiles, ariaLabel, restLabel, perRow, nodeWord = "", grid, dashed, multiLabel, onPick, className }: {
+export function OccupancyMap({ tiles, ariaLabel, restLabel, perRow, nodeWord = "", grid, dashed, multiLabel, onPick, highlight, className }: {
   tiles: OccupancyTile[];
   ariaLabel: string;
   /** cores of one node, where every job holds whole nodes: then one row per
@@ -398,6 +412,8 @@ export function OccupancyMap({ tiles, ariaLabel, restLabel, perRow, nodeWord = "
   multiLabel?: string;
   /** a click (or Enter) on a user's tile, in place of the hover card */
   onPick?: (t: OccupancyTile) => void;
+  /** when set, the tiles it turns down fade (a filter the map stands for) */
+  highlight?: (t: OccupancyTile) => boolean;
   className?: string;
 }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -410,7 +426,7 @@ export function OccupancyMap({ tiles, ariaLabel, restLabel, perRow, nodeWord = "
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
-  if (grid && gridLayout(tiles)) return <CellGrid tiles={tiles} ariaLabel={ariaLabel} dashed={dashed} multiLabel={multiLabel} onPick={onPick} className={className} />;
+  if (grid && gridLayout(tiles)) return <CellGrid tiles={tiles} ariaLabel={ariaLabel} dashed={dashed} multiLabel={multiLabel} onPick={onPick} highlight={highlight} className={className} />;
   const rects = perRow ? layoutRows(tiles, size.w, size.h, perRow) : layoutTiles(tiles, size.w, size.h, restLabel);
   return (
     <div
@@ -452,10 +468,11 @@ export function OccupancyMap({ tiles, ariaLabel, restLabel, perRow, nodeWord = "
             }}
             onBlur={() => setTip(null)}
             className={cn(
-              "absolute overflow-hidden rounded-md border-2 border-card px-2 py-1.5 text-xs leading-snug outline-none transition-[filter]",
+              "absolute overflow-hidden rounded-md border-2 border-card px-2 py-1.5 text-xs leading-snug outline-none transition-[filter,opacity]",
               TONE[t.kind],
               HOVER[t.kind],
               onPick && pickable(t) && "cursor-pointer",
+              faded(t, highlight) && FADED,
             )}
             style={{ left: x, top: y, width: w, height: h, ...lines }}
           >

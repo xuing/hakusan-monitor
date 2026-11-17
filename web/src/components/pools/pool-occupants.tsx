@@ -1,8 +1,8 @@
-// Who is using a pool: per job (time left) or per user (an occupancy map).
+// Who is using a pool: the occupancy map (who holds how much), then the jobs
+// that free resources first (time left), filtered by a search or a click.
 import { useEffect, useState } from "react";
-import { Clock, LayoutGrid, X } from "lucide-react";
+import { ChevronDown, Clock, X } from "lucide-react";
 import { OccupancyMap, type OccupancyTile } from "@/components/common/occupancy-map";
-import { Segmented } from "@/components/common/segmented";
 import { jobSizeText } from "@/components/common/verdict-text";
 import { useLive } from "@/hooks/live-context";
 import { coresText, type TFn } from "@/i18n";
@@ -15,10 +15,13 @@ import { partitionCap, wallLabelSec } from "@/lib/slurm";
 import { cn } from "@/lib/utils";
 import type { Occupant, Pool, Snapshot } from "@/types/snapshot";
 
+/** Jobs listed before "all N": the few that free resources first. */
+const PREVIEW = 3;
+
 export function Occupants({ pool, t }: { pool: Pool; t: TFn }) {
   const { snap } = useLive();
   const [q, setQ] = useState("");
-  const [sort, setSort] = useState<"usage" | "ending">("ending");
+  const [open, setOpen] = useState(false);
   const [now, setNow] = useState(() => Date.now() / 1000); // ticks the live countdown
   useEffect(() => {
     const id = setInterval(() => setNow(Date.now() / 1000), 1000);
@@ -37,92 +40,79 @@ export function Occupants({ pool, t }: { pool: Pool; t: TFn }) {
       ? o.user.toLowerCase() === needle
       : o.user.toLowerCase().includes(needle) || o.nodelist.toLowerCase().includes(needle)))
     : all;
-  let list = filtered;
-  if (sort === "ending") {
-    list = [...list].sort((a, b) => (a.end_time || "~").localeCompare(b.end_time || "~"));
-  }
-  const groupByUser = sort === "usage";
-  const userGroups = groupByUser ? occupantUserGroups(filtered) : [];
-  const totalUsers = occupantUserGroups(all).length;
-  const shown = groupByUser ? userGroups.length : list.length;
-  const total = groupByUser ? totalUsers : all.length;
-  const count = (n: number) => <span className="tnum font-normal text-muted-foreground">{n}</span>;
+  // soonest ending first: when the pool's resources free up
+  const list = [...filtered].sort((a, b) => (a.end_time || "~").localeCompare(b.end_time || "~"));
+  // a search shows every match; otherwise the first few, unless one more
+  // would be all of them
+  const folded = !needle && !open && list.length > PREVIEW + 1;
+  const rows = folded ? list.slice(0, PREVIEW) : list;
+  // the users the filter leaves, for the map to keep in front
+  const matched = new Set(filtered.map((o) => o.user));
   // One shared ruler for every row in this pool — the longest wall-time cap among the
   // partitions sharing this hardware. Otherwise a job that maxes out its own (shorter)
   // partition policy looks "full" even though a sibling partition allows much longer.
   const poolCapSeconds = Math.max(0, ...pool.partitions.map((p) => partitionWallSeconds(p, snap.policy)));
   return (
-    <div className="mt-2">
-      <div className="mb-2 flex flex-wrap items-center gap-2">
-        {/* two views, not two sorts: the jobs (when GPUs free up) or the
-            users (who holds how much), each with its count */}
-        <Segmented
-          value={sort}
-          onChange={setSort}
-          ariaLabel={t("pool.occupants")}
-          className="h-8"
-          itemClassName="inline-flex items-center gap-1.5 px-3"
-          options={[
-            { value: "ending", label: <><Clock aria-hidden className="size-3.5" />{t("pool.viewJobs")}{count(all.length)}</> },
-            { value: "usage", label: <><LayoutGrid aria-hidden className="size-3.5" />{t("pool.viewUsers")}{count(totalUsers)}</> },
-          ]}
-        />
-        <div className="relative min-w-32 flex-1">
-          <input
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            placeholder={t("table.search")}
-            aria-label={t("table.search")}
-            className={cn("h-8 w-full rounded-md border border-border bg-background ps-2 text-xs outline-none focus:border-primary", needle ? "pe-20" : "pe-2")}
-          />
-          {/* the count only while a search narrows the view: the tabs carry the totals */}
-          {needle && (
-            <div className="absolute inset-y-0 end-1 flex items-center gap-1">
-              <span className="tnum text-xs text-muted-foreground">{shown}/{total}</span>
+    <div className="mt-2 space-y-3">
+      {/* who holds the pool: a click on a user's block shows their jobs below,
+          a second click shows everyone again */}
+      <OccupancyMap
+        tiles={poolOccupancyTiles(pool, snap, occupantUserGroups(all), t)}
+        ariaLabel={t("pool.viewUsers")}
+        onPick={(tile) => setQ((prev) => (prev.trim().toLowerCase() === tile.label?.toLowerCase() ? "" : tile.label ?? ""))}
+        highlight={needle ? (tile) => tile.kind === "user" && matched.has(tile.label ?? "") : undefined}
+        restLabel={(k, amount) => ({ label: t("users.others", { n: k }), amount: isGpu ? `${nf(amount)} ${t("unit.gpu")}` : coresText(t, amount) })}
+        nodeWord={t("spec.nodes")}
+        multiLabel={t("users.multiGpu")}
+        {...occupancyMode(pool, snap)}
+      />
+      <div>
+        <div className="mb-1.5 flex flex-wrap items-center gap-2">
+          <h4 className="flex min-w-0 items-center gap-1.5 text-xs font-medium">
+            <Clock aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
+            <span className="truncate">{t("section.releases")}</span>
+            <span className="tnum font-normal text-muted-foreground">{needle ? `${list.length}/${all.length}` : all.length}</span>
+          </h4>
+          <div className="relative ms-auto w-40 min-w-0">
+            <input
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              placeholder={t("table.search")}
+              aria-label={t("table.search")}
+              className={cn("h-7 w-full rounded-md border border-border bg-background ps-2 text-xs outline-none focus:border-primary", needle ? "pe-7" : "pe-2")}
+            />
+            {needle && (
               <button
                 type="button"
                 onClick={() => setQ("")}
                 aria-label={t("table.clear")}
-                className="rounded p-1 text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-primary/45"
+                className="absolute inset-y-0 end-1 my-auto h-5 rounded p-0.5 text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-primary/45"
               >
                 <X aria-hidden className="size-3.5" />
               </button>
-            </div>
+            )}
+          </div>
+        </div>
+        <div className={cn("space-y-1", !folded && list.length > PREVIEW + 1 && "max-h-72 overflow-y-auto pe-1")}>
+          {rows.map((o) => (
+            <OccupantRow key={String(o.job_id)} o={o} now={now} generatedAt={snap.generated_at} poolCap={poolCapSeconds} t={t} />
+          ))}
+          {list.length === 0 && (
+            <div className="py-3 text-center text-xs text-muted-foreground">{t("table.noresults")}</div>
           )}
         </div>
-      </div>
-      {/* by usage: the pool as one map, each user's tile its share; a search
-          narrows it to a list of the matching users */}
-      {groupByUser && !needle ? (
-        <OccupancyMap
-          tiles={poolOccupancyTiles(pool, snap, userGroups, t)}
-          ariaLabel={t("pool.viewUsers")}
-          // a user's block opens their jobs, soonest ending first
-          onPick={(tile) => {
-            setSort("ending");
-            setQ(tile.label ?? "");
-          }}
-          restLabel={(k, amount) => ({ label: t("users.others", { n: k }), amount: isGpu ? `${nf(amount)} ${t("unit.gpu")}` : coresText(t, amount) })}
-          nodeWord={t("spec.nodes")}
-          multiLabel={t("users.multiGpu")}
-          {...occupancyMode(pool, snap)}
-        />
-      ) : (
-      <div className="max-h-72 space-y-1 overflow-y-auto pe-1">
-        {groupByUser ? (
-          userGroups.map((group) => (
-            <OccupantUserRow key={group.user} group={group} isGpu={isGpu} t={t} />
-          ))
-        ) : (
-          list.map((o) => (
-            <OccupantRow key={String(o.job_id)} o={o} now={now} generatedAt={snap.generated_at} poolCap={poolCapSeconds} t={t} />
-          ))
-        )}
-        {shown === 0 && (
-          <div className="py-3 text-center text-xs text-muted-foreground">{t("table.noresults")}</div>
+        {!needle && list.length > PREVIEW + 1 && (
+          <button
+            type="button"
+            onClick={() => setOpen((v) => !v)}
+            aria-expanded={open}
+            className="mt-1 flex h-7 w-full items-center justify-center gap-1 rounded-md text-xs text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-primary/45"
+          >
+            {open ? t("pool.fewerJobs") : t("pool.allJobs", { n: list.length })}
+            <ChevronDown aria-hidden className={cn("size-3.5 transition-transform", open && "rotate-180")} />
+          </button>
         )}
       </div>
-      )}
     </div>
   );
 }
@@ -272,37 +262,6 @@ function OccupantRow({
         <span className="tnum shrink-0 font-mono text-xs">
           <span className="text-foreground">{fmtCountdown(remaining)}</span>
           {requested > 0 && <span className="text-muted-foreground"> / {fmtDur(requested)}</span>}
-        </span>
-      </div>
-    </div>
-  );
-}
-
-function OccupantUserRow({
-  group,
-  isGpu,
-  t,
-}: {
-  group: OccupantUserGroup;
-  isGpu: boolean;
-  t: TFn;
-}) {
-  const primary = isGpu ? `${group.gpus} ${t("unit.gpu")}` : coresText(t, group.cpus);
-  return (
-    <div className="rounded-md bg-muted/40 px-2.5 py-1.5 text-xs">
-      <div className="flex items-center justify-between gap-2">
-        <span className="font-mono text-info-fg">{group.user}</span>
-        <span className="tnum rounded bg-info-soft px-1.5 py-0.5 font-mono text-xs font-semibold text-info-fg">
-          {primary}
-        </span>
-      </div>
-      <div className="mt-1 flex min-w-0 items-center justify-between gap-2 text-xs text-muted-foreground">
-        <span className="truncate">
-          {group.jobs} {t("topusers.jobs")}
-          {/* the chip above has the headline; the line repeats it among the rest */}
-          {isGpu && <> · {group.gpus} {t("unit.gpu")}</>}
-          {isGpu && <> · {coresText(t, group.cpus)}</>} · {fmtMB(group.mem_mb)}
-          {group.nodes > 0 && <> · {group.nodes} {t("spec.nodes")}</>}
         </span>
       </div>
     </div>
