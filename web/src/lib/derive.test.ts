@@ -69,9 +69,14 @@ describe("gpuNodeParts (A40, 2026-11-17 17:12)", () => {
 
   it("counts each user's GPUs per node", () => {
     const parts = gpuNodeParts(snap, "a40");
-    expect(parts.get("s2510464")!.sort()).toEqual([1, 2]);
-    expect(parts.get("s2610205")!.sort()).toEqual([1, 1, 2]);
-    expect(parts.get("multi")).toEqual([2, 2]);
-    expect(parts.get("uneven")).toEqual([1, 1, 1]);
+    const counts = (u: string) => parts.get(u)!.map((p) => p.n).sort();
+    expect(counts("s2510464")).toEqual([1, 2]);
+    expect(counts("s2610205")).toEqual([1, 1, 2]);
+    expect(counts("multi")).toEqual([2, 2]);
+    expect(counts("uneven")).toEqual([1, 1, 1]);
+    // which jobs hold a node's GPUs: two singles on a40g13, one pair on a40g05
+    expect(parts.get("s2510464")!.find((p) => p.node === "spcc-a40g13")!.jobs).toEqual([{ id: 991685, n: 1 }, { id: 991686, n: 1 }]);
+    expect(parts.get("s2610205")!.find((p) => p.node === "spcc-a40g05")!.jobs).toEqual([{ id: 1000167, n: 2 }]);
+    expect(parts.get("uneven")!.every((p) => p.node === null)).toBe(true);
   });
 });

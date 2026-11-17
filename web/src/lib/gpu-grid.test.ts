@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { cellParts, gridDims, packColumns } from "./gpu-grid";
+import { cellParts, gridDims, packColumns, packRects } from "./gpu-grid";
 
 describe("gridDims", () => {
   it("picks the factor pair nearest 16:9", () => {
@@ -78,18 +78,21 @@ describe("cellParts (A40, 2026-11-17 17:12)", () => {
 
   it("keeps a node's pair together beside two single GPUs (s2610205: 4 GPU on 3 nodes)", () => {
     const cells: [number, number][] = [[0, 0], [1, 0], [0, 1], [1, 1]];
-    const ids = cellParts(cells, [1, 1, 2]);
+    const { part: ids, rank } = cellParts(cells, [1, 1, 2]);
     expect(new Set(ids).size).toBe(3);
     expect(connected(cells, ids)).toBe(true);
     // the pair lies in one row
     const pair = cells.filter((_, i) => ids.filter((x) => x === ids[i]).length === 2);
     expect(pair[0][1]).toBe(pair[1][1]);
+    // ids name the parts given: the pair is part 2, its cells ranked 0 and 1
+    expect(ids.filter((x) => x === 2).length).toBe(2);
+    expect(cells.map((_, i) => i).filter((i) => ids[i] === 2).map((i) => rank[i]).sort()).toEqual([0, 1]);
   });
 
   it("lays three whole nodes in a 3 × 2 block as three straight pairs", () => {
     const cells: [number, number][] = [];
     for (let r = 0; r < 2; r++) for (let c = 0; c < 3; c++) cells.push([c, r]);
-    const ids = cellParts(cells, [2, 2, 2]);
+    const ids = cellParts(cells, [2, 2, 2]).part;
     expect(new Set(ids).size).toBe(3);
     expect(connected(cells, ids)).toBe(true);
   });
@@ -97,13 +100,47 @@ describe("cellParts (A40, 2026-11-17 17:12)", () => {
   it("walks a rectangle with a tail row", () => {
     // three across, then two under the left: 7 = 2 + 2 + 2 + 1
     const cells: [number, number][] = [[0, 0], [1, 0], [2, 0], [0, 1], [1, 1], [2, 1], [0, 2]];
-    const ids = cellParts(cells, [2, 2, 2, 1]);
+    const ids = cellParts(cells, [2, 2, 2, 1]).part;
     expect(new Set(ids).size).toBe(4);
     expect(connected(cells, ids)).toBe(true);
   });
 
   it("gives cells past the parts' total one part each", () => {
-    const ids = cellParts([[0, 0], [1, 0], [2, 0]], [2]);
+    const ids = cellParts([[0, 0], [1, 0], [2, 0]], [2]).part;
     expect(new Set(ids).size).toBe(2);
+  });
+});
+
+describe("packRects with one node's idle GPUs", () => {
+  it("keeps a node's idle pair in one piece (Codex review, 2026-11-17)", () => {
+    // two two-GPU nodes, one GPU held: before, the pair was filled in
+    // reading order and split diagonally ([u, A] / [A, B])
+    const out = packRects([
+      { key: "u", n: 1 },
+      { key: "A", n: 2, filler: true, whole: true },
+      { key: "B", n: 1, filler: true, whole: true },
+    ], 2, 2)!;
+    const at = (k: string) => [0, 1].flatMap((c) => [0, 1].filter((r) => out.grid[c][r]?.key === k).map((r) => [c, r]));
+    const [a, b] = at("A");
+    expect(Math.abs(a[0] - b[0]) + Math.abs(a[1] - b[1])).toBe(1);
+  });
+
+  it("keeps every idle node in one piece when many are alike (Codex review, 2026-11-17)", () => {
+    // 8 × 5: users of 8 and 5, then three free pairs, a free single and ten
+    // reserved pairs; the search used to run out on the pairs' permutations
+    // and fall back to columns, which split two of the pairs
+    const sizes = [2, 2, 2, 1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2];
+    const items = [
+      { key: "u8", n: 8 },
+      { key: "u5", n: 5 },
+      ...sizes.map((n, i) => ({ key: `f${i}`, n, filler: true, whole: true })),
+    ];
+    const out = packRects(items, 8, 5)!;
+    for (const f of items.slice(2)) {
+      const cells: number[][] = [];
+      for (let c = 0; c < 8; c++) for (let r = 0; r < 5; r++) if (out.grid[c][r]?.key === f.key) cells.push([c, r]);
+      expect(cells.length, f.key).toBe(f.n);
+      if (f.n === 2) expect(Math.abs(cells[0][0] - cells[1][0]) + Math.abs(cells[0][1] - cells[1][1]), f.key).toBe(1);
+    }
   });
 });

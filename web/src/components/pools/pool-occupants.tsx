@@ -1,6 +1,6 @@
 // Who is using a pool: per job (time left) or per user (an occupancy map).
 import { useEffect, useState } from "react";
-import { Clock, LayoutGrid } from "lucide-react";
+import { Clock, LayoutGrid, X } from "lucide-react";
 import { OccupancyMap, type OccupancyTile } from "@/components/common/occupancy-map";
 import { Segmented } from "@/components/common/segmented";
 import { jobSizeText } from "@/components/common/verdict-text";
@@ -9,7 +9,7 @@ import { coresText, type TFn } from "@/i18n";
 import { expandHostlist, gpuNodeParts, occupantsForPool, unschedulableCores } from "@/lib/derive";
 import { fmtCountdown, fmtDur, fmtMB, nf, parseDur } from "@/lib/format";
 import { occupancyMode } from "@/lib/occupancy-mode";
-import { idleGpuTiles, nodeParts } from "@/lib/occupancy-tiles";
+import { idleGpuTiles, userNodeParts } from "@/lib/occupancy-tiles";
 import { poolWaiters } from "@/lib/queue";
 import { partitionCap, wallLabelSec } from "@/lib/slurm";
 import { cn } from "@/lib/utils";
@@ -29,8 +29,13 @@ export function Occupants({ pool, t }: { pool: Pool; t: TFn }) {
   const isGpu = pool.kind === "gpu";
   const all = occupantsForPool(snap, pool.id); // pre-sorted by resource usage
   const needle = q.trim().toLowerCase();
+  // a whole user name (typed, or set by clicking their block) means that
+  // user alone: "ann" must not bring in "joann" or a node named "ann-01"
+  const exactUser = !!needle && all.some((o) => o.user.toLowerCase() === needle);
   const filtered = needle
-    ? all.filter((o) => o.user.toLowerCase().includes(needle) || o.nodelist.toLowerCase().includes(needle))
+    ? all.filter((o) => (exactUser
+      ? o.user.toLowerCase() === needle
+      : o.user.toLowerCase().includes(needle) || o.nodelist.toLowerCase().includes(needle)))
     : all;
   let list = filtered;
   if (sort === "ending") {
@@ -38,9 +43,10 @@ export function Occupants({ pool, t }: { pool: Pool; t: TFn }) {
   }
   const groupByUser = sort === "usage";
   const userGroups = groupByUser ? occupantUserGroups(filtered) : [];
-  const totalUserGroups = groupByUser ? occupantUserGroups(all).length : 0;
+  const totalUsers = occupantUserGroups(all).length;
   const shown = groupByUser ? userGroups.length : list.length;
-  const total = groupByUser ? totalUserGroups : all.length;
+  const total = groupByUser ? totalUsers : all.length;
+  const count = (n: number) => <span className="tnum font-normal text-muted-foreground">{n}</span>;
   // One shared ruler for every row in this pool — the longest wall-time cap among the
   // partitions sharing this hardware. Otherwise a job that maxes out its own (shorter)
   // partition policy looks "full" even though a sibling partition allows much longer.
@@ -48,7 +54,8 @@ export function Occupants({ pool, t }: { pool: Pool; t: TFn }) {
   return (
     <div className="mt-2">
       <div className="mb-2 flex flex-wrap items-center gap-2">
-        {/* two views, not two sorts: jobs by time left, or users as a map */}
+        {/* two views, not two sorts: the jobs (when GPUs free up) or the
+            users (who holds how much), each with its count */}
         <Segmented
           value={sort}
           onChange={setSort}
@@ -56,29 +63,48 @@ export function Occupants({ pool, t }: { pool: Pool; t: TFn }) {
           className="h-8"
           itemClassName="inline-flex items-center gap-1.5 px-3"
           options={[
-            { value: "ending", label: <><Clock aria-hidden className="size-3.5" />{t("pool.sortEnding")}</> },
-            { value: "usage", label: <><LayoutGrid aria-hidden className="size-3.5" />{t("pool.sortUsage")}</> },
+            { value: "ending", label: <><Clock aria-hidden className="size-3.5" />{t("pool.viewJobs")}{count(all.length)}</> },
+            { value: "usage", label: <><LayoutGrid aria-hidden className="size-3.5" />{t("pool.viewUsers")}{count(totalUsers)}</> },
           ]}
         />
-        <input
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-          placeholder={t("table.search")}
-          aria-label={t("table.search")}
-          className="h-8 w-40 rounded-md border border-border bg-background px-2 text-xs outline-none focus:border-primary"
-        />
-        <span className="tnum ms-auto text-xs text-muted-foreground">
-          {shown}/{total}
-        </span>
+        <div className="relative min-w-32 flex-1">
+          <input
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder={t("table.search")}
+            aria-label={t("table.search")}
+            className={cn("h-8 w-full rounded-md border border-border bg-background ps-2 text-xs outline-none focus:border-primary", needle ? "pe-20" : "pe-2")}
+          />
+          {/* the count only while a search narrows the view: the tabs carry the totals */}
+          {needle && (
+            <div className="absolute inset-y-0 end-1 flex items-center gap-1">
+              <span className="tnum text-xs text-muted-foreground">{shown}/{total}</span>
+              <button
+                type="button"
+                onClick={() => setQ("")}
+                aria-label={t("table.clear")}
+                className="rounded p-1 text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-primary/45"
+              >
+                <X aria-hidden className="size-3.5" />
+              </button>
+            </div>
+          )}
+        </div>
       </div>
       {/* by usage: the pool as one map, each user's tile its share; a search
           narrows it to a list of the matching users */}
       {groupByUser && !needle ? (
         <OccupancyMap
           tiles={poolOccupancyTiles(pool, snap, userGroups, t)}
-          ariaLabel={t("pool.sortUsage")}
+          ariaLabel={t("pool.viewUsers")}
+          // a user's block opens their jobs, soonest ending first
+          onPick={(tile) => {
+            setSort("ending");
+            setQ(tile.label ?? "");
+          }}
           restLabel={(k, amount) => ({ label: t("users.others", { n: k }), amount: isGpu ? `${nf(amount)} ${t("unit.gpu")}` : coresText(t, amount) })}
           nodeWord={t("spec.nodes")}
+          multiLabel={t("users.multiGpu")}
           {...occupancyMode(pool, snap)}
         />
       ) : (
@@ -124,11 +150,11 @@ function poolOccupancyTiles(pool: Pool, snap: Snapshot, groups: OccupantUserGrou
         sub: `${g.nodes} ${t("spec.nodes")}`,
         // the row layout prints one line: who, how much, how many nodes
         queued: queued > 0,
-        parts: nodeParts(perNode?.get(g.user), value),
+        parts: userNodeParts(perNode?.get(g.user), value, t),
+        queuedText: queued ? t("users.queuedJobs", { n: queued }) : undefined,
         details: [
           `${g.nodes} ${t("spec.nodes")} · ${t(g.jobs === 1 ? "users.job1" : "users.jobs", { n: g.jobs })}`,
           [isGpu ? coresText(t, g.cpus) : "", `${t("kpi.memory")} ${fmtMB(g.mem_mb)}`].filter(Boolean).join(" · "),
-          ...(queued ? [t("users.queuedJobs", { n: queued })] : []),
         ],
       };
     })

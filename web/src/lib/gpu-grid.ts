@@ -20,6 +20,8 @@ export interface GridItem {
   n: number;
   /** users are packed first; the rest fill what is left */
   filler?: boolean;
+  /** a filler kept in one piece, like a user (one node's idle GPUs) */
+  whole?: boolean;
 }
 
 /**
@@ -119,13 +121,19 @@ function shapesFor(n: number, cols: number, rows: number) {
 /**
  * One cell per unit, each user a rectangle where the counts allow it (else a
  * rectangle with a short horizontal tail), found by a bounded search that
- * fills the grid from the top-left; fillers (free, offline) take the cells
- * the users leave. Falls back to packColumns when the search runs out.
+ * fills the grid from the top-left; whole fillers (one node's idle GPUs) are
+ * placed the same way after the users, so a node's cells stay together; the
+ * other fillers (free, offline in bulk) take the cells left over. Falls back
+ * to packColumns when the search runs out.
  */
 export function packRects<T extends GridItem>(items: T[], cols: number, rows: number, budget = 60000):
   { grid: (T | null)[][]; blocks: Map<string, PlacedBlock> } | null {
-  const users = items.filter((i) => !i.filler && i.n > 0);
-  const fillers = items.filter((i) => i.filler && i.n > 0);
+  // users first, then whole fillers: the order the search tries them in
+  const users = [
+    ...items.filter((i) => !i.filler && i.n > 0),
+    ...items.filter((i) => i.filler && i.whole && i.n > 0),
+  ];
+  const fillers = items.filter((i) => i.filler && !i.whole && i.n > 0);
   const holes = fillers.reduce((a, f) => a + f.n, 0);
   const owner: (T | null | undefined)[][] = Array.from({ length: cols }, () => Array<T | null | undefined>(rows).fill(undefined));
   const blocks = new Map<string, PlacedBlock>();
@@ -141,8 +149,12 @@ export function packRects<T extends GridItem>(items: T[], cols: number, rows: nu
     const at = firstEmpty();
     if (!at) return used.size === users.length;
     const [c0, r0] = at;
+    // pieces of one size have the same shapes: trying a second one here
+    // only repeats the first one's search under another name
+    const triedSizes = new Set<number>();
     for (const u of users) {
-      if (used.has(u.key)) continue;
+      if (used.has(u.key) || triedSizes.has(u.n)) continue;
+      triedSizes.add(u.n);
       for (const s of shapes.get(u.key)!) {
         if (!s.cells.every(([dc, dr]) => c0 + dc < cols && r0 + dr < rows && owner[c0 + dc][r0 + dr] === undefined)) continue;
         for (const [dc, dr] of s.cells) owner[c0 + dc][r0 + dr] = u;
@@ -244,37 +256,45 @@ function greedyWalk(cells: [number, number][]): number[] {
  * Which part (a node) each of one owner's cells belongs to, so the cells of
  * a part touch: the owner's cells are walked as a snake, by rows or by
  * columns, whichever keeps the most parts in a straight line, and cut into
- * runs, the biggest parts first. Cells past the parts' total are one part
- * each. Returns a part id per cell, in the order given.
+ * runs, the biggest parts first. Per cell, in the order given: `part`, the
+ * index into `parts` (cells past the parts' total get one index each, from
+ * parts.length on), and `rank`, the cell's place along its part's run.
  */
-export function cellParts(cells: [number, number][], parts: number[]): number[] {
-  const sizes = parts.filter((p) => p > 0).sort((a, b) => b - a);
-  const cut = (order: number[]) => {
-    const out = new Array<number>(cells.length).fill(0);
-    let id = 0;
-    let left = sizes[0] ?? 1;
+export function cellParts(cells: [number, number][], parts: number[]): { part: number[]; rank: number[] } {
+  const bySize = parts.map((n, i) => ({ n, i })).filter((p) => p.n > 0).sort((a, b) => b.n - a.n || a.i - b.i);
+  const cutRanked = (order: number[]) => {
+    const part = new Array<number>(cells.length).fill(0);
+    const rank = new Array<number>(cells.length).fill(0);
+    let k = 0;
+    let extra = parts.length;
+    let id = bySize[0]?.i ?? extra++;
+    let left = bySize[0]?.n ?? 1;
+    let r = 0;
     for (const i of order) {
       if (left === 0) {
-        id += 1;
-        left = sizes[id] ?? 1;
+        k += 1;
+        id = bySize[k]?.i ?? extra++;
+        left = bySize[k]?.n ?? 1;
+        r = 0;
       }
-      out[i] = id;
+      part[i] = id;
+      rank[i] = r++;
       left -= 1;
     }
-    return out;
+    return { part, rank };
   };
+  const cut = (order: number[]) => cutRanked(order).part;
   const straight = (ids: number[]) => {
     const groups = new Map<number, [number, number][]>();
     ids.forEach((id, i) => groups.set(id, [...(groups.get(id) ?? []), cells[i]]));
     return [...groups.values()].filter((g) => g.every(([c]) => c === g[0][0]) || g.every(([, r]) => r === g[0][1])).length;
   };
-  let best: { ids: number[]; score: number } | null = null;
+  let best: { order: number[]; score: number } | null = null;
   for (const [byCol, flip] of [[false, false], [false, true], [true, false], [true, true]] as const) {
     const order = snake(cells, byCol, flip);
     if (!order.every((i, k) => k === 0 || touching(cells[order[k - 1]], cells[i]))) continue;
-    const ids = cut(order);
-    const score = straight(ids);
-    if (!best || score > best.score) best = { ids, score };
+    const score = straight(cut(order));
+    if (!best || score > best.score) best = { order, score };
   }
-  return best?.ids ?? cut(greedyWalk(cells));
+  return cutRanked(best?.order ?? greedyWalk(cells));
 }

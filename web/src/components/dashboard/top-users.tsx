@@ -7,7 +7,7 @@ import { coresText, poolTitle, useT, type TFn } from "@/i18n";
 import { fmtMB, nf } from "@/lib/format";
 import { gpuNodeParts, unschedulableCores } from "@/lib/derive";
 import { occupancyMode } from "@/lib/occupancy-mode";
-import { idleGpuTiles, nodeParts } from "@/lib/occupancy-tiles";
+import { idleGpuTiles, userNodeParts } from "@/lib/occupancy-tiles";
 import { groupUsage, poolUsage, type PoolUsage } from "@/lib/user-usage";
 import { cn } from "@/lib/utils";
 import type { Snapshot } from "@/types/snapshot";
@@ -88,6 +88,7 @@ function PoolPanel({ usage, snap, t }: { usage: PoolUsage; snap: Snapshot; t: TF
         ariaLabel={title}
         restLabel={(k, amount) => ({ label: t("users.others", { n: k }), amount: unitText(unit, amount, t) })}
         nodeWord={t("spec.nodes")}
+        multiLabel={t("users.multiGpu")}
         // a pool in focus is drawn the way its own card draws it, kept short
         {...(single ? occupancyMode(single, snap) : {})}
         className={single ? "max-h-72" : "aspect-[4/3]"}
@@ -120,12 +121,12 @@ function usageTiles(usage: PoolUsage, snap: Snapshot, t: TFn): OccupancyTile[] {
         label: u.user,
         amount: unitText(unit, value, t),
         queued: u.pending > 0,
-        parts: nodeParts(perNode?.get(u.user), value),
+        parts: userNodeParts(perNode?.get(u.user), value, t),
+        queuedText: u.pending ? t("users.queuedJobs", { n: u.pending }) : undefined,
         details: [
           t(u.running === 1 ? "users.job1" : "users.jobs", { n: u.running }),
           ...(models ? [models] : []),
           [unit === "gpus" ? coresText(t, u.held.cores) : "", `${t("kpi.memory")} ${fmtMB(u.held.memMb)}`].filter(Boolean).join(" · "),
-          ...(u.pending ? [t("users.queuedJobs", { n: u.pending })] : []),
         ],
       };
     })

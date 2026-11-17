@@ -20,7 +20,36 @@ export interface OccupancyTile {
   details: string[];
   /** units per node, where the tile spans nodes: on a grid one node's
    *  cells are drawn as one piece, a faint line only between nodes */
-  parts?: number[];
+  parts?: NodePart[];
+  /** "排队 3 个作业": the user still has jobs waiting (with queued) */
+  queuedText?: string;
+}
+
+/** One node's share of a tile. */
+export interface NodePart {
+  n: number;
+  /** jobs holding several GPUs on this node, in order: their GPUs come
+   *  first along the piece, hatched, one stripe direction per job */
+  multi?: { id: number | string; n: number }[];
+  /** hover lines for a cell of this node: the node, then its jobs */
+  lines?: string[];
+}
+
+type Tip = { tile: OccupancyTile; lines?: string[]; x: number; y: number };
+
+/** A user's own tile, not the strip's merged "others". */
+const pickable = (t: OccupancyTile) => t.kind === "user" && t.key !== "~rest";
+
+/** A line of facts, its numbers set in the tile's strong text so they are
+ *  read first, the words around them the same ink, faded: quieter than the
+ *  name and count above, without a second colour competing with them. */
+function Facts({ text, hue, className }: { text: string; hue: string; className?: string }) {
+  const bits = text.split(/(\d[\d,.]*)/);
+  return (
+    <div className={cn("truncate", className)} style={{ color: `color-mix(in oklab, var(--${hue}-12) 74%, transparent)` }}>
+      {bits.map((b, i) => (i % 2 ? <span key={i} className="tnum font-semibold" style={{ color: `var(--${hue}-12)` }}>{b}</span> : b))}
+    </div>
+  );
 }
 
 // one blue for every user (the gaps between tiles separate them), green
@@ -71,7 +100,8 @@ function layoutTiles(tiles: OccupancyTile[], w: number, h: number,
 function gridLayout(tiles: OccupancyTile[]) {
   const items = tiles
     .filter((t) => t.value > 0)
-    .map((t) => ({ ...t, n: t.value, filler: t.kind !== "user" }));
+    // one node's idle GPUs stay in one piece
+    .map((t) => ({ ...t, n: t.value, filler: t.kind !== "user", whole: t.kind !== "user" && !!t.parts }));
   if (items.some((t) => !Number.isInteger(t.n))) return null;
   const total = items.reduce((a, t) => a + t.n, 0);
   if (total === 0 || total > 400) return null;
@@ -82,12 +112,16 @@ function gridLayout(tiles: OccupancyTile[]) {
 
 /** One cell per GPU in a columns × rows grid; each owner a rectangle where
  *  the counts allow it, thick gaps between owners, faint lines between one
- *  owner's nodes (a node's GPUs read as one piece). The text sits over the block's rectangle and says as much
- *  as fits: name, count, nodes, then the hover card's lines. */
-function CellGrid({ tiles, ariaLabel, dashed, className }: { tiles: OccupancyTile[]; ariaLabel: string; dashed?: boolean; className?: string }) {
+ *  owner's nodes (a node's GPUs read as one piece), hatching where one job
+ *  holds several GPUs of a node. The text sits over the block's
+ *  rectangle and says as much as fits: name, count, nodes, then the hover
+ *  card's lines. */
+function CellGrid({ tiles, ariaLabel, dashed, multiLabel, onPick, className }: {
+  tiles: OccupancyTile[]; ariaLabel: string; dashed?: boolean; multiLabel?: string; onPick?: (t: OccupancyTile) => void; className?: string;
+}) {
   const ref = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ w: 0, h: 0 });
-  const [tip, setTip] = useState<{ tile: OccupancyTile; x: number; y: number } | null>(null);
+  const [tip, setTip] = useState<Tip | null>(null);
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
@@ -101,14 +135,38 @@ function CellGrid({ tiles, ariaLabel, dashed, className }: { tiles: OccupancyTil
   // the node each cell sits on: a tile with parts keeps a node's cells
   // together; one without has every cell on its own
   const part: number[][] = Array.from({ length: cols }, () => Array<number>(rows).fill(-1));
+  const info: (NodePart | undefined)[][] = Array.from({ length: cols }, () => Array<NodePart | undefined>(rows));
+  // the stripe direction of a cell held by a multi-GPU job (0 or 1), else -1:
+  // jobs alternate directions within an owner, so two jobs side by side
+  // differ and one job across nodes keeps one direction
+  const multi: number[][] = Array.from({ length: cols }, () => Array<number>(rows).fill(-1));
   let nextPart = 0;
   for (const t of tiles) {
     const mine: [number, number][] = [];
     for (let c = 0; c < cols; c++) for (let r = 0; r < rows; r++) if (grid[c][r]?.key === t.key) mine.push([c, r]);
-    const ids = t.parts ? cellParts(mine, t.parts) : mine.map((_, i) => i);
-    mine.forEach(([c, r], i) => (part[c][r] = nextPart + ids[i]));
-    nextPart += mine.length;
+    const split = t.parts ? cellParts(mine, t.parts.map((p) => p.n)) : { part: mine.map((_, i) => i), rank: mine.map(() => 0) };
+    const jobOf = (p: NodePart | undefined, rank: number) => {
+      let at = 0;
+      for (const j of p?.multi ?? []) {
+        at += j.n;
+        if (rank < at) return String(j.id);
+      }
+      return null;
+    };
+    const order = new Map<string, number>();
+    mine.forEach(([c, r], i) => {
+      const p = t.parts?.[split.part[i]];
+      part[c][r] = nextPart + split.part[i];
+      info[c][r] = p;
+      const job = t.kind === "user" ? jobOf(p, split.rank[i]) : null;
+      if (job !== null) {
+        if (!order.has(job)) order.set(job, order.size);
+        multi[c][r] = order.get(job)! % 2;
+      }
+    });
+    nextPart += mine.length + (t.parts?.length ?? 0);
   }
+  const anyMulti = multi.some((col) => col.some((m) => m >= 0));
   const cw = size.w / cols;
   const ch = size.h / rows;
   const cells: ReactNode[] = [];
@@ -116,7 +174,7 @@ function CellGrid({ tiles, ariaLabel, dashed, className }: { tiles: OccupancyTil
     for (let c = 0; c < cols; c++) {
       const it = grid[c][r];
       if (!it) continue;
-      const show = (e: { clientX: number; clientY: number }) => setTip({ tile: it, x: e.clientX, y: e.clientY });
+      const show = (e: { clientX: number; clientY: number }) => setTip({ tile: it, lines: info[c][r]?.lines, x: e.clientX, y: e.clientY });
       // a faint line where the cell meets another node of the same owner
       const lineL = c > 0 && grid[c - 1][r]?.key === it.key && part[c - 1][r] !== part[c][r];
       const lineT = r > 0 && grid[c][r - 1]?.key === it.key && part[c][r - 1] !== part[c][r];
@@ -124,9 +182,10 @@ function CellGrid({ tiles, ariaLabel, dashed, className }: { tiles: OccupancyTil
         <div
           key={`${c}-${r}`}
           onMouseMove={show}
-          onClick={show}
+          onClick={(e) => (onPick && pickable(it) ? onPick(it) : show(e))}
           className={cn(
             "min-w-0",
+            onPick && pickable(it) && "cursor-pointer",
             TONE[it.kind],
             dashed && CELL_DASH[it.kind],
             c > 0 && grid[c - 1][r]?.key !== it.key && "border-l-4 border-l-card",
@@ -135,6 +194,11 @@ function CellGrid({ tiles, ariaLabel, dashed, className }: { tiles: OccupancyTil
           style={{
             gridColumn: c + 1,
             gridRow: r + 1,
+            // one hatch for the whole grid, each cell showing its slice of
+            // it, so the lines run on across a node's cells without a seam
+            ...(multi[c][r] >= 0 && size.w > 0
+              ? { backgroundImage: MULTI_HATCH[multi[c][r]], backgroundSize: `${size.w}px ${size.h}px`, backgroundPosition: `${-c * cw}px ${-r * ch}px`, backgroundOrigin: "border-box" }
+              : {}),
             boxShadow: !dashed && (lineL || lineT) ? `inset ${lineL ? 1 : 0}px ${lineT ? 1 : 0}px 0 var(--${HUE[it.kind]}-7)` : undefined,
           }}
         />,
@@ -155,24 +219,40 @@ function CellGrid({ tiles, ariaLabel, dashed, className }: { tiles: OccupancyTil
       <div
         key={t.key}
         tabIndex={0}
-        aria-label={[t.label, t.amount, ...t.details].filter(Boolean).join(", ")}
+        aria-label={[t.label, t.amount, ...t.details, t.queuedText].filter(Boolean).join(", ")}
         onFocus={(e) => {
           const r = e.currentTarget.getBoundingClientRect();
           setTip({ tile: t, x: r.left + r.width / 2, y: r.top + r.height / 2 });
         }}
         onBlur={() => setTip(null)}
+        onKeyDown={(e) => {
+          if (onPick && pickable(t) && (e.key === "Enter" || e.key === " ")) {
+            e.preventDefault();
+            onPick(t);
+          }
+        }}
         className={cn(
-          "pointer-events-none relative z-[1] min-w-0 overflow-hidden px-2 py-1.5 text-xs leading-snug outline-none focus-visible:ring-2 focus-visible:ring-primary/60",
+          "pointer-events-none relative z-[1] min-w-0 overflow-hidden px-2 py-1.5 text-xs leading-tight outline-none focus-visible:ring-2 focus-visible:ring-primary/60",
           TONE[t.kind].split(" ")[1],
         )}
-        style={{ gridColumn: `${b.c + 1} / span ${b.w}`, gridRow: `${b.r + 1} / span ${b.h}` }}
+        style={{
+          gridColumn: `${b.c + 1} / span ${b.w}`,
+          gridRow: `${b.r + 1} / span ${b.h}`,
+          // a halo in the tile's fill keeps the text clear of hatching and lines
+          textShadow: `0 0 6px var(--${HUE[t.kind]}-4), 0 0 2px var(--${HUE[t.kind]}-4)`,
+        }}
       >
         {t.kind === "user" ? (
           <>
-            {named && <div className="truncate font-mono font-semibold">{t.label}</div>}
-            {roomy && <div className="truncate text-sm font-bold">{t.amount}</div>}
-            {withSub && !full && t.sub && <div className="truncate opacity-85">{t.sub}</div>}
-            {full && t.details.map((d) => <div key={d} className="truncate opacity-90">{d}</div>)}
+            {named && <div className="truncate pe-3 font-mono font-semibold">{t.label}</div>}
+            {roomy && <div className="tnum mt-0.5 truncate text-sm font-bold">{t.amount}</div>}
+            {withSub && !full && t.sub && <Facts text={t.sub} hue={HUE[t.kind]} className="mt-1" />}
+            {full && (
+              <div className="mt-1 space-y-px">
+                {t.details.map((d) => <Facts key={d} text={d} hue={HUE[t.kind]} />)}
+                {t.queuedText && <Facts text={t.queuedText} hue="amber" />}
+              </div>
+            )}
           </>
         ) : (
           named && (
@@ -182,28 +262,37 @@ function CellGrid({ tiles, ariaLabel, dashed, className }: { tiles: OccupancyTil
             </>
           )
         )}
-        {t.queued && <span aria-hidden className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-warn" />}
+        {t.queued && <span aria-hidden className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-warn ring-2 ring-[var(--blue-4)]" />}
       </div>,
     );
   }
   return (
-    <div
-      ref={ref}
-      role="img"
-      aria-label={ariaLabel}
-      onMouseLeave={() => setTip(null)}
-      dir="ltr"
-      className={cn("relative grid aspect-[16/9] w-full overflow-hidden rounded-lg", className)}
-      style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`, gridTemplateRows: `repeat(${rows}, minmax(0, 1fr))` }}
-    >
-      {cells}
-      {labels}
-      {tip && <TipCard tip={tip} />}
-    </div>
+    <>
+      <div
+        ref={ref}
+        role="img"
+        aria-label={ariaLabel}
+        onMouseLeave={() => setTip(null)}
+        dir="ltr"
+        className={cn("relative grid aspect-[16/9] w-full overflow-hidden rounded-lg", className)}
+        style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`, gridTemplateRows: `repeat(${rows}, minmax(0, 1fr))` }}
+      >
+        {cells}
+        {labels}
+        {tip && <TipCard tip={tip} />}
+      </div>
+      {/* the hatching is explained only where it shows */}
+      {anyMulti && multiLabel && (
+        <div className="mt-1.5 flex items-center gap-1.5 text-xs text-muted-foreground">
+          <span aria-hidden className="h-3.5 w-3.5 rounded-[3px] border border-[var(--blue-7)] bg-[var(--blue-4)]" style={{ backgroundImage: MULTI_HATCH[0] }} />
+          {multiLabel}
+        </div>
+      )}
+    </>
   );
 }
 
-function TipCard({ tip }: { tip: { tile: OccupancyTile; x: number; y: number } }) {
+function TipCard({ tip }: { tip: Tip }) {
   return (
     <div
       className="pointer-events-none fixed z-50 max-w-xs rounded-md bg-primary px-3 py-2 text-xs leading-relaxed text-primary-foreground shadow-md"
@@ -212,9 +301,22 @@ function TipCard({ tip }: { tip: { tile: OccupancyTile; x: number; y: number } }
       {tip.tile.label && <div className="font-mono font-semibold">{tip.tile.label}</div>}
       <div>{tip.tile.amount}</div>
       {tip.tile.details.map((d) => <div key={d}>{d}</div>)}
+      {tip.tile.queuedText && <div>{tip.tile.queuedText}</div>}
+      {/* the cell under the pointer: its node and the jobs on it */}
+      {tip.lines?.length ? (
+        <div className="mt-1 border-t border-primary-foreground/25 pt-1">
+          {tip.lines.map((l, i) => <div key={l} className={i === 0 ? "font-mono" : undefined}>{l}</div>)}
+        </div>
+      ) : null}
     </div>
   );
 }
+
+// one job holding several GPUs of a node: the same held blue (a new fill
+// would read as another user), hatched with thin diagonal lines, the two
+// directions telling neighbouring jobs apart
+const hatch = (deg: number) => `repeating-linear-gradient(${deg}deg, transparent 0 7px, color-mix(in oklab, var(--blue-7) 26%, transparent) 7px 8px)`;
+const MULTI_HATCH = [hatch(135), hatch(45)];
 
 // soft tints with dark text: large areas stay calm; the hue keeps its
 // meaning (blue held, green free, amber held by the scheduler, gray offline)
@@ -278,7 +380,7 @@ function layoutRows(tiles: OccupancyTile[], w: number, h: number, perRow: number
  * The pool as one box, each tile's area its share: who holds how much is the
  * first thing seen; cores, memory and jobs come up on hover (or a tap).
  */
-export function OccupancyMap({ tiles, ariaLabel, restLabel, perRow, nodeWord = "", grid, dashed, className }: {
+export function OccupancyMap({ tiles, ariaLabel, restLabel, perRow, nodeWord = "", grid, dashed, multiLabel, onPick, className }: {
   tiles: OccupancyTile[];
   ariaLabel: string;
   /** cores of one node, where every job holds whole nodes: then one row per
@@ -292,6 +394,10 @@ export function OccupancyMap({ tiles, ariaLabel, restLabel, perRow, nodeWord = "
   dashed?: boolean;
   /** "其余 {n} 位" for strip tiles merged when they do not fit across */
   restLabel: (n: number, amount: number) => { label: string; amount: string };
+  /** "多卡作业": the legend for the hatching, shown when a grid has it */
+  multiLabel?: string;
+  /** a click (or Enter) on a user's tile, in place of the hover card */
+  onPick?: (t: OccupancyTile) => void;
   className?: string;
 }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -304,7 +410,7 @@ export function OccupancyMap({ tiles, ariaLabel, restLabel, perRow, nodeWord = "
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
-  if (grid && gridLayout(tiles)) return <CellGrid tiles={tiles} ariaLabel={ariaLabel} dashed={dashed} className={className} />;
+  if (grid && gridLayout(tiles)) return <CellGrid tiles={tiles} ariaLabel={ariaLabel} dashed={dashed} multiLabel={multiLabel} onPick={onPick} className={className} />;
   const rects = perRow ? layoutRows(tiles, size.w, size.h, perRow) : layoutTiles(tiles, size.w, size.h, restLabel);
   return (
     <div
@@ -331,9 +437,15 @@ export function OccupancyMap({ tiles, ariaLabel, restLabel, perRow, nodeWord = "
           <div
             key={t.key}
             tabIndex={0}
-            aria-label={[t.label, t.amount, ...t.details].filter(Boolean).join(", ")}
+            aria-label={[t.label, t.amount, ...t.details, t.queuedText].filter(Boolean).join(", ")}
             onMouseMove={show}
-            onClick={show}
+            onClick={(e) => (onPick && pickable(t) ? onPick(t) : show(e))}
+            onKeyDown={(e) => {
+              if (onPick && pickable(t) && (e.key === "Enter" || e.key === " ")) {
+                e.preventDefault();
+                onPick(t);
+              }
+            }}
             onFocus={(e) => {
               const r = e.currentTarget.getBoundingClientRect();
               setTip({ tile: t, x: r.left + r.width / 2, y: r.top + r.height / 2 });
@@ -343,6 +455,7 @@ export function OccupancyMap({ tiles, ariaLabel, restLabel, perRow, nodeWord = "
               "absolute overflow-hidden rounded-md border-2 border-card px-2 py-1.5 text-xs leading-snug outline-none transition-[filter]",
               TONE[t.kind],
               HOVER[t.kind],
+              onPick && pickable(t) && "cursor-pointer",
             )}
             style={{ left: x, top: y, width: w, height: h, ...lines }}
           >
@@ -357,12 +470,17 @@ export function OccupancyMap({ tiles, ariaLabel, restLabel, perRow, nodeWord = "
             ) : (
               <>
                 {t.label && named && <div className="truncate font-mono font-semibold">{t.label}</div>}
-                {roomy && <div className="whitespace-nowrap text-sm font-bold">{t.amount}</div>}
-                {roomy && !full && t.sub && <div className="whitespace-nowrap opacity-85">{t.sub}</div>}
-                {full && t.details.map((d) => <div key={d} className="truncate opacity-90">{d}</div>)}
+                {roomy && <div className="tnum mt-0.5 whitespace-nowrap text-sm font-bold">{t.amount}</div>}
+                {roomy && !full && t.sub && <Facts text={t.sub} hue={HUE[t.kind]} className="mt-1" />}
+                {full && (
+                  <div className="mt-1 space-y-px">
+                    {t.details.map((d) => <Facts key={d} text={d} hue={HUE[t.kind]} />)}
+                    {t.queuedText && <Facts text={t.queuedText} hue="amber" />}
+                  </div>
+                )}
               </>
             )}
-            {t.queued && <span aria-hidden className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-warn" />}
+            {t.queued && <span aria-hidden className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-warn ring-2 ring-[var(--blue-4)]" />}
           </div>
         );
       })}
@@ -374,6 +492,7 @@ export function OccupancyMap({ tiles, ariaLabel, restLabel, perRow, nodeWord = "
           {tip.tile.label && <div className="font-mono font-semibold">{tip.tile.label}</div>}
           <div>{tip.tile.amount}</div>
           {tip.tile.details.map((d) => <div key={d}>{d}</div>)}
+          {tip.tile.queuedText && <div>{tip.tile.queuedText}</div>}
         </div>
       )}
     </div>

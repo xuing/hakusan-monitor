@@ -1,7 +1,7 @@
 // Tiles for the occupancy maps that the pool card and the overview share.
-import type { OccupancyTile } from "@/components/common/occupancy-map";
+import type { NodePart, OccupancyTile } from "@/components/common/occupancy-map";
 import type { TFn } from "@/i18n";
-import { idleGpuBucket, parseGpuCount } from "@/lib/derive";
+import { idleGpuBucket, parseGpuCount, type NodeGpus } from "@/lib/derive";
 import type { Pool, Snapshot } from "@/types/snapshot";
 
 /** The pool's idle GPUs as one tile per node and kind (free, reserved,
@@ -27,13 +27,20 @@ export function idleGpuTiles(pool: Pool, snap: Snapshot, unit: (n: number) => st
     amount: unit(r.n),
     sub: t(r.kind === "free" ? "users.free" : r.kind === "reserved" ? "users.reserved" : "users.offline"),
     details: [r.name, ...(r.kind === "reserved" ? [t("users.reservedDetail")] : [])],
-    parts: [r.n],
+    parts: [{ n: r.n }],
   }));
   return { tiles, ...sums };
 }
 
-/** The tile's GPUs per node, when they add up to the tile; else none (the
- *  grid then draws every cell on its own). */
-export function nodeParts(parts: number[] | undefined, value: number): number[] | undefined {
-  return parts && parts.reduce((a, b) => a + b, 0) === value ? parts : undefined;
+/** A user tile's GPUs node by node, when they add up to the tile (else
+ *  none: the grid then draws every cell on its own). A job's GPUs count as
+ *  several on a node when it holds two or more there; each cell's hover
+ *  names the node and the jobs on it. */
+export function userNodeParts(nodes: NodeGpus[] | undefined, value: number, t: TFn): NodePart[] | undefined {
+  if (!nodes || nodes.reduce((a, p) => a + p.n, 0) !== value) return undefined;
+  return nodes.map((p) => ({
+    n: p.n,
+    multi: p.jobs.filter((j) => j.n >= 2).map((j) => ({ id: j.id, n: j.n })),
+    lines: p.node ? [p.node, ...p.jobs.map((j) => t("users.partJob", { id: j.id, n: j.n }))] : undefined,
+  }));
 }
