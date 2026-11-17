@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { partitionGpuAvailability, poolGpuAvailability } from "./gpu-fit";
 import { gpuStartCount, gpuStatus, gpuVerdict, layoutFit } from "./gpu-partition";
 import { poolPick, poolTone } from "./pool-status";
 import { POOLS, SNAPSHOT } from "./queue.fixtures";
@@ -128,8 +129,10 @@ describe("gpuStatus: one precedence for every page", () => {
       node_count: 3, gpus: 6, cpus: 156, min_memory_mb: 1_545_918,
     })]);
     const packed = { key: "2x2", gpus: 4, nodes: 2, gpusPerNode: 2, packed: true, coresPerGpu: 26, flags: [] };
-    expect(layoutFit(snap, pool, "GPU-1", packed, 12 * 3600)).toEqual({ fits: 2, starts: true });
-    expect(layoutFit(snap, pool, "GPU-1", packed, 30 * 3600)).toEqual({ fits: 0, starts: false });
+    expect(layoutFit(snap, "GPU-1", packed, 12 * 3600)).toEqual({ fits: 2, starts: true });
+    expect(layoutFit(snap, "GPU-1", packed, 30 * 3600)).toEqual({ fits: 0, starts: false });
+    // -t 0 is no time limit (Slurm's own reading): it ends after any booking
+    expect(layoutFit(snap, "GPU-1", packed, 0)).toEqual({ fits: 0, starts: false });
   });
 
   it("finds no gap where a waiter that starts now takes the free GPU", () => {
@@ -153,5 +156,20 @@ describe("gpuStatus: one precedence for every page", () => {
     const running = waiter(9, { job_state: "RUNNING", nodelist: "elsewhere" });
     const s = gpuStatus(snapOf([node("g1")], [running, waiter(1)], {}, 2), pool, "GPU-1", {}, AT);
     expect(s.reason).toEqual({ kind: "group", running: 1, cap: 2 });
+  });
+});
+
+describe("a pool whose partitions own different nodes", () => {
+  it("counts every pool GPU once, each judged by a partition that lists its node", () => {
+    const snap = snapOf([node("g1"), node("g2", { partitions: ["GPU-L"] })]);
+    const policy = snap.policy!;
+    snap.partitions.push({ ...snap.partitions[0], name: "GPU-L" });
+    snap.part_pool["GPU-L"] = "a40";
+    policy.partition_caps!["GPU-L"] = policy.partition_caps!["GPU-1"];
+    policy.partition_defaults!["GPU-L"] = policy.partition_defaults!["GPU-1"];
+    const both = { ...pool, partitions: ["GPU-1", "GPU-L"] };
+    expect(partitionGpuAvailability(snap, both, "GPU-1").ready).toBe(2);   // g1 only
+    const whole = poolGpuAvailability(snap, both);
+    expect([whole.physicalIdle, whole.free, whole.ready]).toEqual([4, 4, 4]);
   });
 });

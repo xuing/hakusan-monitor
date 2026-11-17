@@ -2,14 +2,17 @@
 // start right now, or are the free GPUs stranded on nodes whose leftover
 // CPU/memory can't host it? Pure computation — no React, no i18n — so both the
 // Overview pool cards and the Partitions page share one verdict.
-import { expandHostlist, nodeIsBackfillCandidate, nodeIsSchedulerHeld, nodeNeedsAttention, parseGpuCount } from "@/lib/derive";
+import { expandHostlist, nodeIsBackfillCandidate, nodeIsSchedulerHeld, nodeNeedsAttention, parseGpuCount, partitionNodes } from "@/lib/derive";
 import {
   gpuAvailability,
   gpuPerGpuNeed,
+  summarizeGpuNodes,
   type GpuAvailability,
   type GpuDefaultRequest,
   type GpuNodeFacts,
+  type GpuNodeVerdict,
 } from "@/lib/gpu-availability";
+import { endsBeforeBooking } from "@/lib/node-select";
 import { BACKFILL_MARGIN_MS, mayUseNode, nodeOpenUntil, queueModel, shareOf, type Claim, type QueueModel, type Waiter } from "@/lib/queue";
 import { capPerGpu, minutesToSlurmTime, partitionCap, partitionDefaultRequest, type PartitionCap } from "@/lib/slurm";
 import type { Pool, RawJob, RawNode, Snapshot } from "@/types/snapshot";
@@ -56,7 +59,8 @@ export function gpuFitSnapshot(snap: Snapshot, pool: Pool, cap: PartitionCap, pa
 }
 
 /** `jobGpus`: GPUs one job really holds (the QoS gres cap), which divides
- *  the QoS cap into a per-GPU share; defaults to the QoS gres cap. */
+ *  the QoS cap into a per-GPU share; defaults to the QoS gres cap. Only the
+ *  partition's own nodes count (derive partitionNodes). */
 export function gpuFitFromNodes(nodes: RawNode[], jobs: RawJob[], pool: Pool, cap: PartitionCap,
                                 partition: string, request: GpuDefaultRequest,
                                 jobGpus: number | undefined = cap.maxGpus): GpuFitInfo {
@@ -70,7 +74,7 @@ export function gpuFitFromNodes(nodes: RawNode[], jobs: RawJob[], pool: Pool, ca
   const perGpuMemMb = need.memMb;
   let rawFree = 0;
   let slots = 0;
-  for (const node of nodes) {
+  for (const node of partitionNodes(nodes, partition)) {
     if (node.pool !== pool.id) continue;
     // In service = not taken out by an operator and not held by the
     // scheduler. That includes a CPU-full ALLOCATED node with an idle GPU:
@@ -168,30 +172,45 @@ export function gpuNodeFacts(nodes: RawNode[], pool: Pool, claims: Map<string, C
   }));
 }
 
-/** The pool's GPU verdict, judged against the most permissive of its sibling
- *  partitions (they share the hardware, so one policy able to default-request a
- *  GPU is enough to call it available). The ONE entry point for every GPU
+/** The pool's GPU verdict: every GPU of the pool counted once, judged by the
+ *  partition that does best on its node among those that list the node (one
+ *  policy able to default-request a GPU there is enough to call it
+ *  available). Physical counts span the whole pool; nothing is called ready
+ *  on a node no partition could start on. The ONE entry point for every GPU
  *  number, colour and "available" flag — pool cards, Partitions headers,
  *  filter chips, group headers and KPIs all read this, so a pool can never be
- *  green in one place and amber in the next. */
+ *  green in one place and amber in the next, and never promises less than a
+ *  partition row under it. */
 export function poolGpuAvailability(snap: Snapshot, pool: Pool): GpuAvailability {
-  const facts = gpuNodeFacts(snap.nodes, pool, queueModel(snap).claims);
   const parts = snap.partitions.filter((p) => p.pool === pool.id).map((p) => p.name);
-  const verdicts = (parts.length ? parts : [""]).map((name) => partitionVerdict(facts, snap, name));
-  return verdicts.reduce((best, next) => (next.ready > best.ready ? next : best));
+  const poolNodes = snap.nodes.filter((n) => n.pool === pool.id);
+  if (!parts.length) return partitionVerdict(snap, pool, "", poolNodes);
+  const verdicts = parts.map((name) => partitionGpuAvailability(snap, pool, name));
+  const best = verdicts.reduce((a, b) => (b.ready > a.ready ? b : a));
+  const judged = new Map<string, GpuNodeVerdict>();
+  for (const v of verdicts) {
+    for (const n of v.nodes) {
+      const prev = judged.get(n.name);
+      if (!prev || (n.counts.ready ?? 0) > (prev.counts.ready ?? 0)) judged.set(n.name, n);
+    }
+  }
+  // a pool node no partition lists keeps the best partition's reading of it
+  const orphans = poolNodes.filter((n) => !judged.has(n.name));
+  const orphanVerdicts = orphans.length ? partitionVerdict(snap, pool, best.need.partition, orphans).nodes : [];
+  return summarizeGpuNodes(best.need, [...poolNodes.flatMap((n) => judged.get(n.name) ?? []), ...orphanVerdicts]);
 }
 
-/** One partition's view of the shared pool verdict — the per-row number on
- *  the Partitions page, queue claims included, so a row can never promise
- *  more GPUs than the header it sits under. */
+/** One partition's verdict on its own nodes — the per-row number on the
+ *  Partitions page, queue claims included. The pool header is the best of
+ *  these, so a row can never promise more GPUs than the header it sits under. */
 export function partitionGpuAvailability(snap: Snapshot, pool: Pool, partition: string): GpuAvailability {
-  return partitionVerdict(gpuNodeFacts(snap.nodes, pool, queueModel(snap).claims), snap, partition);
+  return partitionVerdict(snap, pool, partition, partitionNodes(snap.nodes, partition));
 }
 
-function partitionVerdict(facts: GpuNodeFacts[], snap: Snapshot, partition: string) {
+function partitionVerdict(snap: Snapshot, pool: Pool, partition: string, nodes: RawNode[]) {
   const cap = partitionCap(partition, snap.policy);
   return gpuAvailability(
-    facts,
+    gpuNodeFacts(nodes, pool, queueModel(snap).claims),
     partitionDefaultRequest(partition, snap.policy),
     capPerGpu(cap, cap.maxGpus),
   );
@@ -335,17 +354,17 @@ export function gpuBackfillTipCommand(fit: GpuFitInfo, pool: Pool, q: QueueModel
   return bestTip;
 }
 
-/** True when a node the request fits once the queue has taken its share has
- *  a backfill window that still holds a job of `userTimeSec` — PLANNED nodes
- *  included — the basis for flipping "will queue" back to "can start" once
- *  the user picks a short enough -t. */
-export function withinBackfillWindow(fit: GpuFitInfo, q: Pick<QueueModel, "claims" | "bookings">, nowMs: number, userTimeSec: number): boolean {
-  if (userTimeSec <= 0) return false;
+/** True when a booked node — PLANNED ones included — that the request fits
+ *  once the queue has taken its share takes a job ending at `endsAt`
+ *  (slurm.ts requestEndsAt; undefined = no limit, which no booking takes):
+ *  the basis for flipping "will queue" back to "can start" once the user
+ *  picks a short enough -t. */
+export function withinBackfillWindow(fit: GpuFitInfo, q: Pick<QueueModel, "claims" | "bookings">, endsAt: number | undefined): boolean {
   return [...fit.fitNodes, ...fit.reservedNodes].some((row) => {
     if (!holdsNeed(fit, freeAfterClaims(row, q.claims))) return false;
-    // the CPU rule exactly (nodeOpenUntil); the tip's rounded -t is only a suggestion
+    // the CPU rule exactly; the tip's rounded -t is only a suggestion
     const until = nodeOpenUntil(q, row.node);
-    return until !== undefined && nowMs + userTimeSec * 1000 <= until;
+    return until !== undefined && endsBeforeBooking(until, endsAt);
   });
 }
 

@@ -114,7 +114,7 @@ export interface GpuPerGpuNeed {
   memMb: number;
 }
 
-interface GpuNodeVerdict extends GpuNodeFacts {
+export interface GpuNodeVerdict extends GpuNodeFacts {
   idleGpu: number;
   /** The node's dominant state (first non-empty in display order). */
   kind: GpuAvailabilityKind;
@@ -234,7 +234,13 @@ export function gpuAvailability(
   cap?: { cores?: number; memMb?: number },
 ): GpuAvailability {
   const need = gpuPerGpuNeed(request, poolShape(nodes, request), cap);
-  const verdicts = nodes.map((node) => classifyGpuNode(node, need));
+  return summarizeGpuNodes(need, nodes.map((node) => classifyGpuNode(node, need)));
+}
+
+/** Add judged nodes up into segments and totals; each node must appear once.
+ *  A pool whose partitions judge its nodes differently (gpu-fit
+ *  poolGpuAvailability) sums its per-node verdicts here. */
+export function summarizeGpuNodes(need: GpuPerGpuNeed, verdicts: GpuNodeVerdict[]): GpuAvailability {
   const counts = new Map<GpuAvailabilityKind, number>();
   for (const v of verdicts) {
     for (const [kind, n] of Object.entries(v.counts) as Array<[GpuAvailabilityKind, number]>) {

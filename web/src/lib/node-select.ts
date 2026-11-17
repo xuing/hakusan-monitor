@@ -48,8 +48,12 @@ export interface NodeRequest {
   minNodes: number;
   /** task count (squeue NumTasks); 0 = unknown */
   tasks: number;
-  /** -N's upper bound; 0 = not given */
+  /** the job's own -N upper bound (`-N min-max`); 0 = not given. Slurm aims
+   *  for it (nodeCounts) */
   maxNodes: number;
+  /** the most nodes the partition and QoS allow; 0 = no limit. It only caps
+   *  the count — Slurm never aims for it (nodeCounts) */
+  nodeLimit: number;
   /** total CPUs (squeue %C) */
   cpus: number;
   cpusPerTask: number;
@@ -86,10 +90,36 @@ export interface Take {
   gpus: number;
 }
 
+/** May a job that has ended by `endsAt` (undefined = no limit) use a node
+ *  booked from `until` (undefined = not booked)? Backfill lets a job onto a
+ *  booked node only when it ends before the booking. The one gap rule: CPU
+ *  placement, GPU layouts and the GPU backfill verdict all ask it. */
+export function endsBeforeBooking(until: number | undefined, endsAt: number | undefined): boolean {
+  return until === undefined || (endsAt !== undefined && endsAt <= until);
+}
+
+/** get_node_cnts() (slurmctld/node_scheduler.c): the fewest nodes, the
+ *  count Slurm aims for, and the most it may use. The ceiling is the job's
+ *  own -N maximum cut by the partition / QoS limit; Slurm aims for that
+ *  ceiling only when the job gave a maximum itself — a limit alone leaves the
+ *  aim at the minimum, so QoS MaxNodes=4 never spreads a 4-core job over 4
+ *  nodes. Without --ntasks-per-node a job uses at most as many nodes as
+ *  tasks. */
+export function nodeCounts(req: Pick<NodeRequest, "minNodes" | "maxNodes" | "nodeLimit" | "tasks" | "tasksPerNode">):
+  { min: number; want: number; max: number } {
+  const min = Math.max(1, req.minNodes);
+  const ceilings = [req.maxNodes, req.nodeLimit].filter((n) => n > 0);
+  const ceiling = ceilings.length ? Math.min(...ceilings) : Number.POSITIVE_INFINITY;
+  const want = req.maxNodes > 0 ? Math.max(min, ceiling) : min;
+  const byTasks = req.tasks > 0 && !req.tasksPerNode ? Math.max(req.tasks, min) : Number.POSITIVE_INFINITY;
+  const max = Math.min(ceiling, byTasks);
+  return { min, want, max };
+}
+
 /** Step 1 (_can_job_run_on_node): the CPUs this job can use on a node, 0 = none. */
 export function usableCpus(node: FreeNode, req: NodeRequest): number {
   if (req.excluded.includes(node.name)) return 0;
-  if (node.until !== undefined && !(req.endsAt !== undefined && req.endsAt <= node.until)) return 0;
+  if (!endsBeforeBooking(node.until, req.endsAt)) return 0;
   if (req.gpusPerNode > 0 && (node.gpus < req.gpusPerNode || (req.gpuType && req.gpuType !== node.gpuType))) return 0;
   const cpt = Math.max(1, req.cpusPerTask);
   let cpus = node.cores;
@@ -145,10 +175,12 @@ export function selectNodes(nodes: FreeNode[], req: NodeRequest, table: Switch[]
   const cpusOf = new Map(nodes.map((n) => [n.name, usableCpus(n, req)]));
   if (req.required.some((n) => !cpusOf.get(n))) return null;
   let candidates = nodes.filter((n) => (cpusOf.get(n.name) ?? 0) > 0);
-  let maxNodes = req.maxNodes > 0 ? req.maxNodes : Number.POSITIVE_INFINITY;
-  if (req.tasks > 0 && !req.tasksPerNode && maxNodes > req.tasks) maxNodes = Math.max(req.tasks, req.minNodes);
-  const minNodes = Math.max(1, req.minNodes);
-  const attempt = () => (candidates.length < minNodes ? null : evalTopo(candidates, req, table, cpusOf, maxNodes));
+  const counts = nodeCounts(req);
+  // get_node_cnts(): a ceiling under the minimum never starts
+  // (ESLURM_REQUESTED_PART_CONFIG_UNAVAILABLE)
+  if (counts.max < counts.min) return null;
+  const minNodes = counts.min;
+  const attempt = () => (candidates.length < minNodes ? null : evalTopo(candidates, req, table, cpusOf, counts));
   const first = attempt();
   if (first || candidates.length <= minNodes) return first;
   // drop the nodes with the fewest usable CPUs (+ GPUs), a step at a time
@@ -175,15 +207,13 @@ export function selectNodes(nodes: FreeNode[], req: NodeRequest, table: Switch[]
 /** One pass of _eval_nodes_topo over the candidate nodes. Cuts a node's
  *  usable CPUs when it gives fewer (Slurm keeps that cut for a retry). */
 function evalTopo(nodes: FreeNode[], req: NodeRequest, table: Switch[], cpusOf: Map<string, number>,
-                  maxNodesIn: number): Take[] | null {
+                  counts: ReturnType<typeof nodeCounts>): Take[] | null {
   const byName = new Map(nodes.map((n) => [n.name, n]));
   const switches = table.length ? table : [{ name: "", level: 0, nodes: new Set(nodes.map((n) => n.name)), parent: -1 }];
   const order = nodes.map((n) => n.name);
-  const minNodes = Math.max(1, req.minNodes);
-  // get_node_cnts(): aim for -N's maximum when one was given
-  const reqNodes = req.maxNodes > 0 ? Math.max(minNodes, req.maxNodes) : minNodes;
-  let maxNodes = maxNodesIn;
-  let remNodes = Math.max(minNodes, reqNodes);
+  const { min: minNodes, want: reqNodes } = counts;
+  let maxNodes = counts.max;
+  let remNodes = reqNodes;
   let minRemNodes = minNodes;
   let remCpus = req.cpus;
   let remMaxCpus = req.cpus;

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { expandHostlist, parseGpuCount } from "./derive";
 import { CAPTURE } from "./node-select.fixtures";
-import { selectNodes, switchTable, type FreeNode, type NodeRequest } from "./node-select";
+import { nodeCounts, selectNodes, switchTable, type FreeNode, type NodeRequest } from "./node-select";
 
 const BLOCKED = /^(DOWN|DRAIN|DRAINING|FAIL|FAILING|NOT_RESPONDING|MAINT|MAINTENANCE|POWERED_DOWN|POWERING_DOWN|REBOOT_ISSUED|REBOOT_REQUESTED|RESERVED)$/;
 const TABLE = switchTable(CAPTURE.topology, expandHostlist);
@@ -29,7 +29,7 @@ function requestOf(probe: (typeof CAPTURE.probes)[number]): NodeRequest {
   const tpn = flag(/--ntasks-per-node=(\d+)/);
   const gpus = flag(/--gres=gpu:(\d+)/) || (probe.partition.startsWith("GPU") ? 1 : 0);
   return {
-    minNodes: flag(/-N (\d+)/) || 1, maxNodes: flag(/-N (\d+)/), tasks: flag(/-n (\d+)/) || probe.processors / cpt,
+    minNodes: flag(/-N (\d+)/) || 1, maxNodes: flag(/-N (\d+)/), nodeLimit: 0, tasks: flag(/-n (\d+)/) || probe.processors / cpt,
     cpus: probe.processors, cpusPerTask: cpt, tasksPerNode: tpn, minCpusNode: tpn ? tpn * cpt : cpt,
     memPerCpuMb: flag(/--mem-per-cpu=(\d+)/) || (CAPTURE.def_mem_per_cpu as Record<string, number>)[probe.partition] || 0,
     memPerNodeMb: 0, gpusPerNode: gpus, gpuType: "", required: [], excluded: [],
@@ -58,7 +58,7 @@ const before: FreeNode[] = BEFORE.split(";").map((row) => {
   return { name, cores: Number(cores), memMb: Number(mem) * 6000, gpus: 0, gpuType: "" };
 });
 const cpuJob = (over: Partial<NodeRequest>): NodeRequest => ({
-  minNodes: 1, maxNodes: 0, tasks: 0, cpus: 0, cpusPerTask: 1, tasksPerNode: 0, minCpusNode: 1,
+  minNodes: 1, maxNodes: 0, nodeLimit: 0, tasks: 0, cpus: 0, cpusPerTask: 1, tasksPerNode: 0, minCpusNode: 1,
   memPerCpuMb: 6000, memPerNodeMb: 0, gpusPerNode: 0, gpuType: "", required: [], excluded: [], ...over,
 });
 
@@ -68,5 +68,28 @@ describe("node selection against real jobs (sbatch -p SMALL, started and cancell
     // allowed they cannot reach 48, so Slurm drops the smallest and retries
     const picked = selectNodes(before, cpuJob({ minNodes: 3, maxNodes: 3, tasks: 48, cpus: 48 }), TABLE);
     expect(picked?.map((t) => `${t.name}:${t.cpus}`)).toEqual(["lcpcc-056:16", "lcpcc-057:16", "lcpcc-072:16"]);
+  });
+});
+
+describe("node counts (get_node_cnts, slurmctld/node_scheduler.c)", () => {
+  const counts = (over: Partial<NodeRequest>) => nodeCounts(cpuJob(over));
+  it("aims for the minimum when only the partition / QoS limits the count", () => {
+    expect(counts({ cpus: 4, nodeLimit: 4 })).toEqual({ min: 1, want: 1, max: 4 });
+  });
+  it("aims for the job's own -N maximum, cut by the limit", () => {
+    expect(counts({ cpus: 8, maxNodes: 4 })).toEqual({ min: 1, want: 4, max: 4 });
+    expect(counts({ cpus: 8, maxNodes: 4, nodeLimit: 2 })).toEqual({ min: 1, want: 2, max: 2 });
+  });
+  it("never spans more nodes than tasks, and never above the limit", () => {
+    expect(counts({ cpus: 3, minNodes: 3, tasks: 1, nodeLimit: 2 }).max).toBe(2);
+  });
+  it("starts nothing when the limit is under -N's minimum", () => {
+    expect(selectNodes(before, cpuJob({ minNodes: 2, cpus: 2, memPerCpuMb: 0, nodeLimit: 1 }), [])).toBeNull();
+  });
+  it("puts a 4-core job on one node under a 4-node QoS limit", () => {
+    // every node holds the job; aiming for the limit would spread it over four
+    const roomy = before.filter((n) => n.cores >= 16);
+    const placed = selectNodes(roomy, cpuJob({ cpus: 4, tasks: 4, memPerCpuMb: 0, nodeLimit: 4 }), []);
+    expect(placed?.map((t) => [t.name, t.cpus])).toEqual([["lcpcc-056", 4]]);
   });
 });

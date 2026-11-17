@@ -218,6 +218,16 @@ export function defaultRequestSec(partition: string, policy?: PolicySnapshot): n
     ?? (wallLabelSec(policy?.partition_caps?.[partition]?.wall) || Number.POSITIVE_INFINITY);
 }
 
+/** When a request that starts at `startMs` has ended at the latest (ms), or
+ *  undefined when nothing bounds it. `timeSec` is the request's walltime:
+ *  absent = the partition's default (defaultRequestSec), 0 or Infinity = no
+ *  limit. The one place a request's walltime turns into an end — every
+ *  "ends before the booking" check (node-select endsBeforeBooking) reads it. */
+export function requestEndsAt(startMs: number, partition: string, policy: PolicySnapshot | undefined, timeSec?: number): number | undefined {
+  const sec = timeSec ?? defaultRequestSec(partition, policy);
+  return Number.isFinite(sec) && sec > 0 ? startMs + sec * 1000 : undefined;
+}
+
 /** Slurm -t forms: MM, MM:SS, HH:MM:SS, D-HH, D-HH:MM, D-HH:MM:SS. */
 export function parseWalltimeSec(text: string): number {
   const s = String(text || "").trim();

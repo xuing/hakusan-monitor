@@ -11,7 +11,7 @@
  * The CPU counterpart is cpu-partition.ts. Who is ahead in the queue comes
  * from queue.ts; this module only applies it to one partition's request.
  */
-import { coresPerNode, nodeIsBackfillCandidate, nodeIsSchedulable, parseGpuCount } from "@/lib/derive";
+import { coresPerNode } from "@/lib/derive";
 import {
   fitHasClearSlot,
   gpuBackfillTipCommand,
@@ -25,15 +25,17 @@ import {
   type GpuFitTipData,
 } from "@/lib/gpu-fit";
 import { gpuLayouts, type GpuLayout, type GpuNodeShape } from "@/lib/gpu-layout";
-import { nodeOpenUntil, poolContenders, queueModel } from "@/lib/queue";
-import { allowsMultiNode, defaultRequestSec, partitionCap, partitionDefaults, partitionDown, partitionPolicy } from "@/lib/slurm";
+import { endsBeforeBooking } from "@/lib/node-select";
+import { partitionRooms, poolContenders, queueModel } from "@/lib/queue";
+import { allowsMultiNode, partitionCap, partitionDefaults, partitionDown, partitionPolicy, requestEndsAt } from "@/lib/slurm";
 import type { Partition, Pool, Snapshot } from "@/types/snapshot";
 
 export interface GpuRequest {
   /** --mem per node (MB); 0 or absent = DefMemPerCPU x the default cores */
   memMb?: number;
   /** how long the request holds its slot (s): the plugin-pinned interactive
-   *  walltime or -t; 0 = unbounded; absent = the default request's */
+   *  walltime or -t; 0 = no limit; absent = the default request's
+   *  (slurm.ts requestEndsAt reads it) */
   timeSec?: number;
 }
 
@@ -79,7 +81,7 @@ export function gpuStatus(snap: Snapshot, pool: Pool, partition: string, req: Gp
   const part = snap.partitions.find((p) => p.name === partition);
   const base = gpuFitSnapshot(snap, pool, partitionCap(partition, snap.policy), partition);
   const fit = req.memMb ? gpuFitWithMemOverride(base, req.memMb) : base;
-  const hold = req.timeSec ?? defaultRequestSec(partition, snap.policy);
+  const endsAt = requestEndsAt(nowMs, partition, snap.policy, req.timeSec);
   const contenders = poolContenders(snap, pool.id);
   const out = (now: GpuStatus["now"], reason: GpuQueueReason | null, tips = true): GpuStatus => {
     // the tips name a --mem or -t for the DEFAULT request; a full group cap
@@ -94,7 +96,7 @@ export function gpuStatus(snap: Snapshot, pool: Pool, partition: string, req: Gp
     return out(null, { kind: "group", running: q.running(partition), cap: partitionPolicy(partition, snap.policy).grpJobs ?? 0 }, false);
   }
   if (fit.schedulable > 0 && fitHasClearSlot(fit, q.claims, q.bookings)) return out("clear", null);
-  if (withinBackfillWindow(fit, q, nowMs, Number.isFinite(hold) ? hold : 0)) return out("backfill", null);
+  if (withinBackfillWindow(fit, q, endsAt)) return out("backfill", null);
   if ((part?.available_nodes ?? 0) <= 0) return out(null, { kind: "no-node" });
   if ((part?.gpu?.free ?? 0) <= 0) return out(null, { kind: "no-gpu" });
   if (fit.rawFree > 0 && fit.schedulable <= 0) {
@@ -124,40 +126,30 @@ function partitionLayouts(snap: Snapshot, pool: Pool, partition: string): GpuLay
   return gpuLayouts(cap, shape, allowsMultiNode(cap, shape.cores)).layouts;
 }
 
-/** How many nodes hold a layout's per-node share now, once the queue has
- *  taken what it starts first: all of a node's GPUs and their cores
- *  (packed), or one GPU and its share (spread). A booked node counts only
- *  when the job ends before the booking (`timeSec`, else the default
- *  walltime) — the rule CPU requests follow (cpu-probes openNodes). */
-export function layoutFit(snap: Snapshot, pool: Pool, partition: string, layout: GpuLayout, timeSec?: number): { fits: number; starts: boolean } {
-  const q = queueModel(snap);
-  const type = pool.gpu?.type ?? "";
+/** How many of the partition's nodes hold a layout's per-node share now,
+ *  once the queue has taken what it starts first: all of a node's GPUs and
+ *  their cores (packed), or one GPU and its share (spread). The nodes and the
+ *  gap rule are the CPU request's (queue.ts partitionRooms, node-select
+ *  endsBeforeBooking); `timeSec` as in GpuRequest. */
+export function layoutFit(snap: Snapshot, partition: string, layout: GpuLayout, timeSec?: number,
+                          nowMs = snap.generated_at * 1000): { fits: number; starts: boolean } {
   const memPerCpu = partitionDefaults(partition, snap.policy).def_mem_per_cpu_mb ?? 0;
-  const endsAt = snap.generated_at * 1000 + (timeSec ?? defaultRequestSec(partition, snap.policy)) * 1000;
+  const endsAt = requestEndsAt(nowMs, partition, snap.policy, timeSec);
   const gpus = layout.gpusPerNode;
-  let fits = 0;
-  for (const n of snap.nodes) {
-    if (n.pool !== pool.id || !n.partitions.includes(partition)) continue;
-    if (!nodeIsSchedulable(n) && !nodeIsBackfillCandidate(n)) continue;
-    const until = nodeOpenUntil(q, n);
-    if (until !== undefined && endsAt > until) continue;
-    const claim = q.claims.get(n.name);
-    const freeGpu = parseGpuCount(n.gres, type) - parseGpuCount(n.gres_used, type) - (claim?.gpus ?? 0);
-    const freeCores = n.cpus - n.alloc_cpus - (claim?.cores ?? 0);
-    const freeMem = n.real_memory - n.alloc_memory - (claim?.memMb ?? 0);
-    if (freeGpu >= gpus && freeCores >= layout.coresPerGpu * gpus && freeMem >= layout.coresPerGpu * gpus * memPerCpu) fits += 1;
-  }
+  const cores = layout.coresPerGpu * gpus;
+  const fits = partitionRooms(snap, partition).filter((r) =>
+    endsBeforeBooking(r.until, endsAt) && r.gpus >= gpus && r.cores >= cores && r.memMb >= cores * memPerCpu).length;
   return { fits, starts: fits >= layout.nodes };
 }
 
 /** Most GPUs one job in the partition starts with now: one when the
  *  single-GPU request (as given) starts, more when a multi-GPU layout finds
  *  its nodes; 0 behind a full group cap or in maintenance. */
-export function gpuStartCount(snap: Snapshot, pool: Pool, partition: string, req: GpuRequest = {}): number {
-  const status = gpuStatus(snap, pool, partition, req);
+export function gpuStartCount(snap: Snapshot, pool: Pool, partition: string, req: GpuRequest = {}, nowMs = Date.now()): number {
+  const status = gpuStatus(snap, pool, partition, req, nowMs);
   if (status.reason?.kind === "maint" || status.reason?.kind === "group") return 0;
   const multi = partitionLayouts(snap, pool, partition)
-    .filter((l) => l.gpus > 1 && layoutFit(snap, pool, partition, l, req.timeSec).starts)
+    .filter((l) => l.gpus > 1 && layoutFit(snap, partition, l, req.timeSec, nowMs).starts)
     .map((l) => l.gpus);
   return Math.max(status.now ? 1 : 0, ...multi);
 }

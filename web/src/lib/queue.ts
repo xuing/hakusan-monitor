@@ -28,9 +28,9 @@
  * "starts now" verdict subtracts.
  */
 import { clusterMs, clusterTimeZone } from "@/lib/cluster-time";
-import { expandHostlist, nodeIsBackfillCandidate, nodeIsSchedulable, parseGpuCount } from "@/lib/derive";
+import { expandHostlist, nodeIsBackfillCandidate, nodeIsSchedulable, parseGpuCount, partitionNodes } from "@/lib/derive";
 import { selectNodes, switchTable, type FreeNode, type NodeRequest } from "@/lib/node-select";
-import { parseWalltimeSec, partitionCap, partitionPolicy, wallLabelSec } from "@/lib/slurm";
+import { parseWalltimeSec, partitionCap, partitionPolicy, requestEndsAt, wallLabelSec } from "@/lib/slurm";
 import type { RawJob, RawNode, Snapshot } from "@/types/snapshot";
 
 export type WaitKind =
@@ -97,6 +97,33 @@ export function nodeOpenUntil(q: Pick<QueueModel, "bookings">, node: RawNode): n
   const booked = q.bookings.get(node.name)?.[0];
   if (booked !== undefined) return booked - BACKFILL_MARGIN_MS;
   return nodeIsSchedulable(node) ? undefined : Number.NEGATIVE_INFINITY;
+}
+
+/** The partition's nodes a new job may use now, in Slurm's node order (the
+ *  snapshot's, which is scontrol's), with what is free once the queue has
+ *  started what it can (claims). In service, or PLANNED with its booked start
+ *  as `until`: a 16-core TINY job started in 19 s on PLANNED lcpcc-003
+ *  (2026-10-06), so a job that ends by then may use it. SINGLE's 51
+ *  Priority jobs all wanted a whole 256-core node and never touched a 16-core
+ *  request on a part-used node (2026-10-05) — the claims say exactly that.
+ *  The one node list every starts-now verdict judges against: CPU placement
+ *  (cpu-probes) and multi-GPU layouts (gpu-partition layoutFit). */
+export function partitionRooms(snap: QueueInput, partition: string): FreeNode[] {
+  const q = queueModel(snap);
+  const gpuType = new Map((snap.pools ?? []).map((p) => [p.id, p.gpu?.type ?? ""]));
+  return partitionNodes(snap.nodes, partition)
+    .filter((n) => nodeIsSchedulable(n) || nodeIsBackfillCandidate(n))
+    .map((n) => {
+      const { partitions: _partitions, ...room } = freeRoom(n, gpuType.get(n.pool) ?? "");
+      const claim = q.claims.get(n.name);
+      return {
+        ...room,
+        gpus: Math.max(0, room.gpus - (claim?.gpus ?? 0)),
+        cores: Math.max(0, room.cores - (claim?.cores ?? 0)),
+        memMb: Math.max(0, room.memMb - (claim?.memMb ?? 0)),
+        until: nodeOpenUntil(q, n),
+      };
+    });
 }
 
 const cache = new WeakMap<QueueInput, { zone: string | undefined; model: QueueModel }>();
@@ -273,9 +300,9 @@ function buildModel(snap: QueueInput): QueueModel {
       const u = left(userLeft, userKey, userCap(p), userRunning.get(userKey) ?? 0);
       if (g <= 0 || u <= 0) continue;
       const here = rooms.filter((r) => r.partitions.has(p));
-      const limitSec = parseWalltimeSec(w.job.time_limit || "");
+      // a waiter's time_limit is its own -t ("" / UNLIMITED: none)
       const request = { ...requestOf(w.job, gpuPool.has(partPool[p]), partitionCap(p, policy).maxNodes),
-        endsAt: limitSec > 0 ? nowMs + limitSec * 1000 : undefined };
+        endsAt: requestEndsAt(nowMs, p, policy, parseWalltimeSec(w.job.time_limit || "")) };
       const placed = selectNodes(here.map((r) => forJob(r, w.job)), request, switches);
       if (!placed) continue;
       for (const take of placed) {
@@ -361,15 +388,18 @@ export function mayUseNode(job: RawJob, nodeName: string): boolean {
 }
 
 /** A waiter's request as Slurm's node selection reads it. Snapshots from
- *  before the shape fields existed fall back to an equal split per node. */
-export function requestOf(job: RawJob, gpuPartition: boolean, partitionMaxNodes?: number): NodeRequest {
+ *  before the shape fields existed fall back to an equal split per node.
+ *  squeue's MaxNodes is the job's own -N maximum (accounting limits never
+ *  write it, they cap in get_node_cnts); the partition / QoS limit goes to
+ *  nodeLimit, which only caps. */
+export function requestOf(job: RawJob, gpuPartition: boolean, nodeLimit = 0): NodeRequest {
   const share = shareOf(job, gpuPartition);
   const cpt = Math.max(1, job.cpus_per_task || 1);
   const known = Boolean(job.mem_per_cpu_mb || job.mem_per_node_mb);
-  const maxNodes = [job.max_nodes || 0, partitionMaxNodes || 0].filter((n) => n > 0);
   return {
     minNodes: share.nodes,
-    maxNodes: maxNodes.length ? Math.min(...maxNodes) : 0,
+    maxNodes: job.max_nodes || 0,
+    nodeLimit: nodeLimit || 0,
     tasks: job.tasks || 0,
     cpus: Math.max(job.cpus || 0, share.nodes),
     cpusPerTask: cpt,

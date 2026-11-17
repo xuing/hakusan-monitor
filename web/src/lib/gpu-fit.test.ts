@@ -110,6 +110,15 @@ function snapOf(nodes: RawNode[], jobs: RawJob[]): QueueInput {
   return { nodes, jobs, pools: [pool], part_pool: { "GPU-1": "a40" }, policy: undefined, generated_at: 0 };
 }
 
+describe("a partition's fit", () => {
+  it("counts only the partition's own nodes, not a sibling partition's", () => {
+    const sibling = { ...idleNode("spcc-cld-gl09"), partitions: ["GPU-L"] };
+    const fit = gpuFitFromNodes([idleNode("spcc-cld-gl02"), sibling], [], pool, { maxGpus: 1, maxCores: 26, maxMemGb: 256 }, "GPU-1", REQUEST_GPU_1);
+    expect(fit.fitNodes.map((row) => row.node.name)).toEqual(["spcc-cld-gl02"]);
+    expect(fit.rawFree).toBe(2);
+  });
+});
+
 describe("a stranded slot and the queue", () => {
   const nodes = [idleNode("spcc-cld-gl02"), idleNode("spcc-cld-gl03")];
   const fit = gpuFitFromNodes(nodes, [], pool, { maxGpus: 1, maxCores: 26, maxMemGb: 256 }, "GPU-1", REQUEST_GPU_1);

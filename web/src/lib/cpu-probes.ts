@@ -1,7 +1,7 @@
-import { expandHostlist, nodeIsBackfillCandidate, nodeIsSchedulable } from "@/lib/derive";
-import { selectNodes, switchTable, type FreeNode, type NodeRequest, type Switch, type Take } from "@/lib/node-select";
-import { nodeOpenUntil, queueModel } from "@/lib/queue";
-import { allowsMultiNode, defaultRequestSec, partitionCap } from "@/lib/slurm";
+import { expandHostlist, partitionNodes } from "@/lib/derive";
+import { selectNodes, switchTable, type NodeRequest, type Switch, type Take } from "@/lib/node-select";
+import { partitionRooms, queueModel } from "@/lib/queue";
+import { allowsMultiNode, partitionCap, requestEndsAt } from "@/lib/slurm";
 import type { CpuSubmitProbe, Pool, Snapshot } from "@/types/snapshot";
 
 export type CpuProbeState = "now" | "queued" | "failed" | "unknown";
@@ -64,7 +64,8 @@ export interface CpuRequest {
   nodes?: number;
   /** --mem per node in MB; 0 = DefMemPerCPU per CPU */
   memMb?: number;
-  /** how long it holds its nodes (s); absent = the partition's default */
+  /** how long it holds its nodes (s); absent = the partition's default,
+   *  0 = no limit (slurm.ts requestEndsAt) */
   timeSec?: number;
 }
 
@@ -80,27 +81,6 @@ function switchesOf(snap: Snapshot): Switch[] {
     tables.set(policy, table);
   }
   return table;
-}
-
-/** The partition's nodes a new job may use, in Slurm's node order, with
- *  what the queue leaves once it has started what it can (queue.ts claims).
- *  SINGLE's 51 Priority jobs all want a whole 256-core node and never
- *  touched a 16-core request on a part-used node (measured 2026-10-05). A
- *  PLANNED node carries its booked start: only a job ending by then may use
- *  it — a 16-core TINY job started in 19 s on PLANNED lcpcc-003 (2026-10-06). */
-function openNodes(snap: Snapshot, partition: string): FreeNode[] {
-  const q = queueModel(snap);
-  return snap.nodes
-    .filter((n) => n.partitions.includes(partition) && (nodeIsSchedulable(n) || nodeIsBackfillCandidate(n)))
-    .map((n) => {
-      const claim = q.claims.get(n.name);
-      return {
-        name: n.name, gpus: 0, gpuType: "",
-        cores: Math.max(0, n.cpus - n.alloc_cpus - (claim?.cores ?? 0)),
-        memMb: Math.max(0, n.real_memory - n.alloc_memory - (claim?.memMb ?? 0)),
-        until: nodeOpenUntil(q, n),
-      };
-    });
 }
 
 /** The request as Slurm reads it. Flagless: the submit plugin's tasks and
@@ -124,11 +104,11 @@ function newRequest(snap: Snapshot, partition: string, req: CpuRequest): NodeReq
     tasks = 1;
     cpt = cores;
   }
-  const hold = req.timeSec ?? defaultRequestSec(partition, snap.policy);
   return {
-    endsAt: Number.isFinite(hold) && hold > 0 ? snap.generated_at * 1000 + hold * 1000 : undefined,
+    endsAt: requestEndsAt(snap.generated_at * 1000, partition, snap.policy, req.timeSec),
     minNodes: req.nodes || 1,
-    maxNodes: req.nodes || cap.maxNodes || 0,
+    maxNodes: req.nodes || 0,
+    nodeLimit: cap.maxNodes || 0,
     tasks, cpus: tasks * cpt, cpusPerTask: cpt, tasksPerNode: 0, minCpusNode: cpt,
     memPerCpuMb: req.memMb ? 0 : d.def_mem_per_cpu_mb ?? 0,
     memPerNodeMb: req.memMb ?? 0,
@@ -137,12 +117,12 @@ function newRequest(snap: Snapshot, partition: string, req: CpuRequest): NodeReq
 }
 
 const maxNodeCores = (snap: Snapshot, partition: string) =>
-  Math.max(0, ...snap.nodes.filter((n) => n.partitions.includes(partition)).map((n) => n.cpus));
+  Math.max(0, ...partitionNodes(snap.nodes, partition).map((n) => n.cpus));
 
 /** Where the request would land now, or null when it queues. */
 function placeNow(snap: Snapshot, partition: string, req: CpuRequest): Take[] | null {
   const request = newRequest(snap, partition, req);
-  return request ? selectNodes(openNodes(snap, partition), request, switchesOf(snap)) : null;
+  return request ? selectNodes(partitionRooms(snap, partition), request, switchesOf(snap)) : null;
 }
 
 export function liveCpuStart(snap: Snapshot, partition: string, req: CpuRequest = {}): "now" | "queued" | null {
@@ -179,7 +159,7 @@ function largest(lo: number, hi: number, ok: (n: number) => boolean): number {
 export function cpuStartLimits(snap: Snapshot, partition: string, req: Pick<CpuRequest, "nodes" | "memMb" | "timeSec"> = {}): CpuStartLimits | null {
   if (!snap.policy?.partition_defaults?.[partition]?.cores) return null;
   const cap = partitionCap(partition, snap.policy);
-  const free = openNodes(snap, partition).reduce((sum, n) => sum + n.cores, 0);
+  const free = partitionRooms(snap, partition).reduce((sum, n) => sum + n.cores, 0);
   const lo = Math.max(1, cap.minCores ?? 1, req.nodes || 1);
   const best = largest(lo, Math.min(cap.maxCores ?? free, free), (cores) => placeNow(snap, partition, { ...req, cores }) !== null);
   const maxCores = best >= lo ? best : 0;
@@ -191,7 +171,7 @@ export function cpuStartLimits(snap: Snapshot, partition: string, req: Pick<CpuR
  *  starts with now — the exact point where liveCpuStart flips; 0 = the
  *  cores do not start at any --mem. */
 export function cpuStartMemMb(snap: Snapshot, partition: string, cores: number, nodes = 0, timeSec?: number): number {
-  const most = Math.max(0, ...openNodes(snap, partition).map((n) => n.memMb));
+  const most = Math.max(0, ...partitionRooms(snap, partition).map((n) => n.memMb));
   const mem = largest(1, most, (memMb) => placeNow(snap, partition, { cores: Math.max(1, cores), nodes, memMb, timeSec }) !== null);
   return Math.max(0, mem);
 }

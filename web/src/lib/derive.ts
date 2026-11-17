@@ -86,6 +86,13 @@ export function unschedulableCores(nodes: RawNode[], poolId: string) {
 }
 
 /** Backend-owned scheduling verdict, with a strict fallback for older snapshots. */
+/** The nodes a partition may use (each node's scontrol Partitions). Every
+ *  per-partition verdict starts from this list, never from the pool's nodes:
+ *  sibling partitions of one pool need not share all of its nodes. */
+export function partitionNodes(nodes: RawNode[], partition: string): RawNode[] {
+  return nodes.filter((n) => n.partitions.includes(partition));
+}
+
 export function nodeIsSchedulable(n: RawNode): boolean {
   if (typeof n.schedulable === "boolean") return n.schedulable;
   const states = new Set(n.state.map((s) => s.toUpperCase()));
